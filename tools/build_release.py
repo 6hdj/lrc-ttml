@@ -58,6 +58,35 @@ SIDE_FILES = ["index.html", "README.md", "LICENSE", "CHANGELOG.md", "启动.bat"
 SIDE_DIRS = ["examples"]
 
 # 便携版（portable zip）里的一键安装脚本。内容在 build_portable 里落地。
+# ⚠️ 三个 .bat 里的中文都用 **GBK(936)** 写：cmd.exe 按本机 ANSI 代码页读批处理，
+#    写 UTF-8 会让提示全变乱码。脚本开头仍 `chcp 65001`，那是给 Python 用的。
+INSTALL_BAT = """@echo off
+chcp 65001 >nul
+title Lyric2TTML - 安装 / 补全
+cd /d "%~dp0"
+
+set "PY="
+where python >nul 2>nul && set "PY=python"
+if not defined PY ( where py >nul 2>nul && set "PY=py -3" )
+if not defined PY (
+  echo [错误] 没找到 Python。
+  echo.
+  echo   请到 https://www.python.org/downloads/ 下载 Python 3.10 或更高版本，
+  echo   安装时**务必勾选** "Add Python to PATH"，然后重新运行本脚本。
+  echo.
+  pause
+  exit /b 1
+)
+
+REM 已经有虚拟环境就用它（说明之前装过）
+set "VPY=%~dp0.venv\\Scripts\\python.exe"
+if not exist "%VPY%" set "VPY=%PY%"
+
+"%VPY%" install.py --yes
+echo.
+echo 装完可以双击 启动.bat 使用。
+pause
+"""
 SETUP_BAT = """@echo off
 chcp 65001 >nul
 title Lyric2TTML - 首次安装
@@ -314,11 +343,9 @@ def build_portable() -> str:
         os.makedirs(os.path.dirname(dst) or out, exist_ok=True)
         shutil.copy2(f, dst)
 
-    # 三个一键脚本（详见文件上方 SETUP_BAT / CHECK_BAT / DLMODEL_BAT 的注释）
-    # ⚠️ .bat 里的中文用 **GBK(936)** 写：cmd.exe 默认按本机 ANSI 代码页读批处理，
-    # 写成 UTF-8 会让中文全变乱码（虽然脚本还能跑，但提示看不懂就白费了）。
-    # 脚本开头仍然 `chcp 65001`，那是为了 Python 子进程的输出能正常显示。
+    # 四个一键脚本（详见文件上方 SETUP_BAT / INSTALL_BAT / CHECK_BAT / DLMODEL_BAT）
     for fname, content in (("首次安装.bat", SETUP_BAT),
+                           ("安装.bat", INSTALL_BAT),
                            ("检查环境.bat", CHECK_BAT),
                            ("下载模型.bat", DLMODEL_BAT)):
         io.open(os.path.join(out, fname), "w", encoding="gbk",

@@ -89,10 +89,15 @@ def main() -> int:
     except Exception:
         pass
 
-    # 环境体检 / 下载模型：这两个是"安装期"命令，直接转发，不走 argparse
+    # 环境体检 / 安装补全 / 下载模型：这些是"安装期"命令，直接转发，不走 argparse
     if any(a in ("--doctor", "-doctor", "doctor") for a in argv):
         import doctor
         return doctor.main()
+    if any(a in ("--install", "-install", "install") for a in argv):
+        import install
+        rest = [a for a in argv if a not in ("--install", "-install", "install")]
+        sys.argv = ["install.py"] + rest
+        return install.main()
     if any(a in ("--download-model", "download-model") for a in argv):
         import download_model
         # 复用它的参数（--model small 之类）
