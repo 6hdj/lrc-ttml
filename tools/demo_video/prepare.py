@@ -75,7 +75,7 @@ def main() -> int:
 
     # 写 .ps1（UTF-8 **带 BOM**，见文件头说明）
     # ⚠️ 路径用**正斜杠**：PowerShell 的双引号字符串里 `\\` 不是转义字符
-    # （跟 Python 不一样），写成 `E:\\HXJ\\...` 会得到两个字面反斜杠 → 路径无效，
+    # （跟 Python 不一样），写成 `E:\某目录\...` 会得到两个字面反斜杠 → 路径无效，
     # 表现是 TTS 一个文件都没产出、后面读 wav 报 EOFError。
     ps_path = os.path.abspath(os.path.join(OUT, "synth.ps1"))
     ps = PS_TEMPLATE.format(root=os.path.abspath(OUT).replace("\\", "/"))

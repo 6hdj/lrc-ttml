@@ -76,6 +76,34 @@
 
 ## 快速开始
 
+### 最快的用法（Windows，不用装 Python）
+
+1. 从 [Releases](https://github.com/6hdj/lrc-ttml/releases) 下载
+   **`Lyric2TTML-1.0.0-win64-lite.zip`**（约 94 MB），解压到任意目录
+2. 下载 **`Lyric2TTML-1.0.0-installer.exe`**，**放进刚解压的那个目录**
+3. 双击 **`安装程序.exe`** —— 它会：
+   * 逐个检查运行需要的东西（**22 项**：显卡 / CUDA 运行库 / 语音识别模型 /
+     声纹分声部模型 / 依赖库 / 磁盘空间 …）
+   * **告诉你缺什么**（每项都写明"缺了会怎样"）
+   * 点「开始补全」后**自动下载安装**
+   * 全部就绪后按钮变成 **「▶ 启动软件」**，点一下就开了
+
+之后每次使用只要双击 **`启动.bat`**，浏览器会自动打开界面。
+
+> **模型不随包分发**（3 GB 语音识别模型 + 300 MB 声纹权重 + 2 GB CUDA 运行库），
+> 所以第一次要用安装程序补一次；**装完之后完全离线**。
+
+### 从源码运行（开发 / 全功能）
+
+```bash
+git clone https://github.com/6hdj/lrc-ttml
+cd lrc-ttml
+python -m venv .venv && .venv\Scripts\activate
+pip install -r requirements.txt
+python install.py          # 检查并补全缺的东西（推荐）
+python web_server.py       # 或直接 python main.py --audio 歌.wav --lyrics 歌.lrc
+```
+
 ### 0. 环境要求
 
 * **Python 3.10+**（开发时用的是 3.14）
@@ -158,12 +186,34 @@ ctranslate2.get_cuda_device_count() > 0  →  device="cuda", compute_type="float
 | 4:48 整首 ASR | 199s | **28s** |
 | 端到端（32 行歌） | 265s | **87s** |
 
-GPU 需要 `cublas64_12.dll` / `cudnn*64_9.dll`；用 `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12`
-装上后 `asr.py` 会自动注册 DLL 目录（不用改系统 PATH）。
-**初始化失败会自动回退 CPU，不会让任务失败。**
+GPU 需要 `cublas64_12.dll` / `cublasLt64_12.dll` / `cudnn*64_9.dll`。三种拿到它的方式
+（安装程序会自动做第 1 种）：
 
-强制指定设备：`--device cuda` / `--device cpu`。纯 CPU 推理要显式给
-`--compute-type int8`（见 `main.py --help`）。
+1. 双击 `安装程序.exe` → 自动从 PyPI 取 wheel、把 DLL 解到程序目录的 `cuda\`
+2. `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12`（源码运行时）
+3. 手动把三个 DLL 放进程序目录的 `cuda\` 文件夹
+
+`asr.py` 会自动把这些目录加进 DLL 搜索路径（不用改系统 PATH）。
+
+> ### ⚠️ 本项目**强制使用 GPU**，没有 CPU 降级
+>
+> 用 CPU 处理一首歌要几分钟，**静默降级只会让人以为"程序就是这么慢"**，
+> 根本不知道其实是没用上显卡。所以：
+>
+> * 设备参数只有 `--device cuda`（默认）和 `--device auto`（等同 cuda），**没有 `cpu`**；
+> * 界面上「计算设备」也只有 GPU 两项；
+> * 检测不到可用显卡时**直接明确报错**，并列出排查步骤（驱动 / 显卡型号 / CUDA 运行库），
+>   而不是偷偷换成 CPU 把活干完。
+
+**性能参考**（同一台机器，RTX 4060 Laptop）：
+
+| 项目 | CPU (int8, 20 线程) | GPU (float16) |
+|------|-------------------|---------------|
+| 12 秒片段识别 | 10.9s | **3.3s** |
+| 4:48 整首 ASR | 199s | **28s** |
+| 端到端（32 行歌） | 265s | **87s** |
+
+（CPU 那列只是留档对照，现在的版本不会走 CPU。）
 
 ### 3. 两种用法
 
@@ -277,16 +327,16 @@ python main.py --check-only 歌曲.ttml
 ```
 [ti:在出发之前]
 [ar:陶典/hanser]
-[00:04.37]站在旅途的尽头
-[00:08.19]面对 下一个 岔路口
+[00:04.37]夜色落在窗台上
+[00:08.19]风把旧信翻了几行
 [01:10.95]（一路践行）
 ```
 
 ### 纯文本
 
 ```
-[v1]站在旅途的尽头
-[duet-a]面对 下一个 岔路口
+[v1]夜色落在窗台上
+[duet-a]风把旧信翻了几行
 [duet-b]我一直在等你
 [narration]那一年的夏天
 有你为我践行(一路践行)

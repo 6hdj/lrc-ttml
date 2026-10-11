@@ -40,8 +40,8 @@ def check(name: str, cond: bool, detail: str = ""):
 # --------------------------------------------------------------------------
 def test_scan_line():
     print("\n[1] 歌词切分")
-    u = scan_line("站在旅途的尽头")
-    check("中文按字切分", [x.core for x in u] == list("站在旅途的尽头"), str([x.core for x in u]))
+    u = scan_line("夜色落在窗台上")
+    check("中文按字切分", [x.core for x in u] == list("夜色落在窗台上"), str([x.core for x in u]))
 
     u = scan_line("有你为我践行(一路践行)")
     check("括号识别为背景人声",
@@ -54,7 +54,7 @@ def test_scan_line():
     check("英文按词切分", [x.core for x in u] == ["Hello", "beautiful", "world"], str([x.core for x in u]))
     check("英文单词之间的空格保留", u[1].leading == " " and u[2].leading == " ", repr([x.leading for x in u]))
 
-    u = scan_line("面对 下一个 岔路口")
+    u = scan_line("风把旧信翻了几行")
     check("中文之间的分隔空格不输出", all(x.leading == "" for x in u), repr([x.leading for x in u]))
 
     u = scan_line("想去 see the world")
@@ -67,8 +67,8 @@ def test_scan_line():
 
 def test_dp():
     print("\n[2] 动态规划对齐")
-    targets = [Unit(core=c) for c in "站在旅途的尽头"]
-    sources = [Unit(core=c) for c in "站在旅途的尽头"]
+    targets = [Unit(core=c) for c in "夜色落在窗台上"]
+    sources = [Unit(core=c) for c in "夜色落在窗台上"]
     m = align_sequences(targets, sources)
     check("完全一致时一一对应", m == list(range(len(targets))), str(m))
 
@@ -78,13 +78,13 @@ def test_dp():
     m = align_sequences(targets, sources)
     check("错别字仍能对齐", sum(1 for x in m if x is not None) >= len(targets) - 2, str(m))
 
-    targets = [Unit(core=c) for c in "站在旅途的尽头"]
-    sources = [Unit(core=c) for c in "站在旅途的尽头站在旅途的尽头"]
+    targets = [Unit(core=c) for c in "夜色落在窗台上"]
+    sources = [Unit(core=c) for c in "夜色落在窗台上夜色落在窗台上"]
     m = align_sequences(targets, sources)
     check("识别重复整句时对齐到先出现的那一遍",
           m == list(range(len(targets))), str(m))
 
-    targets = [Unit(core=c) for c in "站在旅途的尽头"]
+    targets = [Unit(core=c) for c in "夜色落在窗台上"]
     sources = [Unit(core=c) for c in "站旅途尽头"]
     m = align_sequences(targets, sources)
     check("漏字时能跳过", sum(1 for x in m if x is None) == 2, str(m))
@@ -146,10 +146,10 @@ def build_lrc(lines: List[Tuple[float, str]]) -> str:
 def test_end_to_end():
     print("\n[3] 端到端对齐（合成数据）")
     truth = [
-        (5.0, "站在旅途的尽头"),
-        (10.0, "面对下一个岔路口"),
-        (18.0, "张开手心它看似很空"),
-        (25.0, "其实已包含所有"),
+        (5.0, "夜色落在窗台上"),
+        (10.0, "风把旧信翻了几行"),
+        (18.0, "走过了很远的地方"),
+        (25.0, "才懂归途也是远方"),
         (32.0, "一次次向后回望想起最初的模样"),
         (45.0, "目光的方向"),
         (49.0, "染上了霞光"),
@@ -481,7 +481,7 @@ def test_apple_style():
     # 1. 行尾不得用句号/逗号
     check("去掉行尾句号", strip_trailing_punct("I'll keep barking.") == "I'll keep barking")
     check("去掉行尾逗号", strip_trailing_punct("hello,") == "hello")
-    check("中文行尾句号也去掉", strip_trailing_punct("站在旅途的尽头。") == "站在旅途的尽头")
+    check("中文行尾句号也去掉", strip_trailing_punct("夜色落在窗台上。") == "夜色落在窗台上")
     check("保留感叹号/问号", strip_trailing_punct("Are you sure?!") == "Are you sure?!")
     check("中间标点不动", strip_trailing_punct("hello, world,") == "hello, world")
 
@@ -489,7 +489,7 @@ def test_apple_style():
     check("行首首字母大写", capitalize_english("i'll keep barking") == "I'll keep barking")
     check("括号内首词大写", capitalize_english("(ooh) yeah") == "(Ooh) yeah")
     check("不破坏已有的大小写", capitalize_english("NASA and iPhone") == "NASA and iPhone")
-    check("中文行不受影响", capitalize_english("站在旅途的尽头") == "站在旅途的尽头")
+    check("中文行不受影响", capitalize_english("夜色落在窗台上") == "夜色落在窗台上")
 
     # 3. 屏蔽词
     masked, n = mask_profanity("I'm the fucking man")
@@ -643,8 +643,8 @@ def test_ttml_roundtrip_and_normalize():
         return al
 
     samples = [
-        ("AMLL 基本", dict(mode="amll"), [mkline("站在旅途的尽头", 4.0),
-                                          mkline("面对下一个岔路口", 8.0)]),
+        ("AMLL 基本", dict(mode="amll"), [mkline("夜色落在窗台上", 4.0),
+                                          mkline("风把旧信翻了几行", 8.0)]),
         ("含 x-bg 和声", dict(mode="amll"),
          [mkline("有你为我践行一路践行", 10.0, bg_from=6)]),
         ("Apple + songPart", dict(mode="apple", song_part="Verse"),
@@ -1102,7 +1102,7 @@ def test_agent_from_reference():
         return al
 
     # 参考文件：4 行，其中第 2、3 行**文本完全相同**（副歌重复），但 agent 不同
-    ref_lines = [mk("站在旅途的尽头", 1.0, 3.0, "v1"),
+    ref_lines = [mk("夜色落在窗台上", 1.0, 3.0, "v1"),
                  mk("相同的副歌", 4.0, 6.0, "v1"),
                  mk("相同的副歌", 7.0, 9.0, "v2"),
                  mk("最后一句", 10.0, 12.0, "v2")]
@@ -1113,7 +1113,7 @@ def test_agent_from_reference():
         f.write(ref_ttml)
 
     # 本次对齐结果：同样 4 行，时间略有偏移
-    my_lines = [mk("站在旅途的尽头", 1.2, 3.2),
+    my_lines = [mk("夜色落在窗台上", 1.2, 3.2),
                 mk("相同的副歌", 4.1, 6.1),
                 mk("相同的副歌", 7.1, 9.1),
                 mk("最后一句", 10.1, 12.1)]
@@ -1372,7 +1372,7 @@ def test_textread():
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d, exist_ok=True)
 
-    simp = "[00:01.00]站在旅途的尽头\n[00:05.00]面对下一个岔路口\n"
+    simp = "[00:01.00]夜色落在窗台上\n[00:05.00]风把旧信翻了几行\n"
     trad = "[00:01.00]站在旅途的盡頭\n[00:05.00]面對下一個岔路口\n"
 
     def put(name, data):
@@ -1382,10 +1382,12 @@ def test_textread():
         return p
 
     cases = [
-        ("gbk.lrc", simp.encode("gb18030"), "尽", "gb18030", False),
-        ("u8.lrc", simp.encode("utf-8"), "尽", "utf-8", False),
-        ("u8bom.lrc", b"\xef\xbb\xbf" + simp.encode("utf-8"), "尽", "utf-8-sig", False),
-        ("u16.lrc", simp.encode("utf-16"), "尽", "utf-16", False),
+        # ⚠️ 预期字符必须取自 `simp` 里真实存在的字（示例歌词"夜色落在窗台上"）。
+        # 以前用的是旧测试歌词里的"尽"，换掉那段歌词后这里就再也匹配不到了。
+        ("gbk.lrc", simp.encode("gb18030"), "窗", "gb18030", False),
+        ("u8.lrc", simp.encode("utf-8"), "窗", "utf-8", False),
+        ("u8bom.lrc", b"\xef\xbb\xbf" + simp.encode("utf-8"), "窗", "utf-8-sig", False),
+        ("u16.lrc", simp.encode("utf-16"), "窗", "utf-16", False),
         ("ascii.lrc", b"[00:01.00]hello world\n", "hello", "utf-8", False),
     ]
     for name, data, want, want_enc, want_dirty in cases:
@@ -1411,7 +1413,7 @@ def test_textread():
         check("垃圾字节不抛异常", False, str(e))
 
     check("read_text 直接给文本", textread.read_text(
-        os.path.join(d, "gbk.lrc")).startswith("[00:01.00]站在"))
+        os.path.join(d, "gbk.lrc")).startswith("[00:01.00]夜色"))
     check("describe 说明编码", "GBK" in textread.describe(os.path.join(d, "gbk.lrc")),
           textread.describe(os.path.join(d, "gbk.lrc")))
 

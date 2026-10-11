@@ -468,7 +468,7 @@
         <h2>🎵 歌曲信息（可选，写进 TTML 元数据）</h2>
         <div class="form-group">
           <label>歌曲名</label>
-          <input type="text" id="songTitle" placeholder="在出发之前">
+          <input type="text" id="songTitle" placeholder="示例歌曲">
         </div>
         <div class="form-group">
           <label>歌手（多个用逗号分隔）</label>
@@ -634,7 +634,7 @@ function isOn(id) { return document.getElementById(id).classList.contains('activ
 function val(id) { return document.getElementById(id).value; }
 
 /* 从上传文件名里自动填标题/艺人。
-   上传的文件名通常形如「在出发之前 - 陶典&hanser&爆裂菊是也&HOYO-MiX.wav」，
+   上传的文件名通常形如「歌手名 - 歌名.mp3」，
    艺人字段空着的话 TTML 元数据就缺 artists，分声部也就失去了"到底几个人"的先验
    （音频内部判不出来，见 README）。所以这里顺手填上，用户仍可改。 */
 /* 从文件名猜「歌名 / 艺人」。
@@ -669,8 +669,8 @@ function splitTitleArtists(base) {
   const la = artistScore(left), ra = artistScore(right);
   if (ra > la) return {title: left, artists: right};      // 「歌名 - 艺人1&艺人2」
   if (la > ra) return {title: right, artists: left};      // 「艺人1 _ 艺人2 - 歌名」
-  // 两边都没有线索时是**本质歧义**（`于文文 - 体面` 与 `体面 - 于文文` 长得一样）。
-  // 按音乐文件下载的通行约定取「艺人 - 歌名」（如「周杰伦 - 晴天.mp3」）。
+  // 两边都没有线索时是**本质歧义**（「歌手 - 歌名」与「歌名 - 歌手」 长得一样）。
+  // 按音乐文件下载的通行约定取「艺人 - 歌名」（如「歌手名 - 歌名.mp3」）。
   return {title: right, artists: left};
 }
 
