@@ -87,8 +87,8 @@ class Installer:
 
         root.title("Lyric2TTML 安装程序")
         root.configure(bg=BG)
-        root.geometry("760x560")
-        root.minsize(680, 500)
+        root.geometry("860x700")
+        root.minsize(760, 620)
         try:
             root.iconbitmap(default="")
         except Exception:
@@ -111,15 +111,38 @@ class Installer:
                             font=("Microsoft YaHei UI", 11, "bold"))
         self.sub.pack(anchor="w", padx=28, pady=(14, 4))
 
-        # 清单（行由检查结果动态生成 —— 见 _check_worker）
-        box = tk.Frame(self.root, bg="#161a24", highlightthickness=1,
-                       highlightbackground="#252b3a")
-        box.pack(fill="both", expand=False, padx=28, pady=(4, 10))
-        self.rows_box = box
+        # 清单：**必须能滚动**。
+        # ⚠️ 检查项有 20+ 行，直接 pack 进窗口会把下面的日志和按钮挤出可视区
+        # （真踩过：用户截图里清单只显示到一半，按钮根本看不见）。
+        # 所以套一层 Canvas + Scrollbar，并给它一个固定高度上限；
+        # 日志区用 expand=True 吃掉剩余空间，窗口拉大时也自适应。
+        wrap = tk.Frame(self.root, bg=BG)
+        wrap.pack(fill="x", padx=28, pady=(4, 10))
+        self.canvas = tk.Canvas(wrap, bg="#161a24", highlightthickness=1,
+                                highlightbackground="#252b3a", height=250, bd=0)
+        self.canvas.pack(side="left", fill="x", expand=True)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
+        sb.pack(side="right", fill="y")
+        self.canvas.configure(yscrollcommand=sb.set)
+
+        self.rows_box = tk.Frame(self.canvas, bg="#161a24")
+        self._rows_win = self.canvas.create_window((0, 0), window=self.rows_box,
+                                                   anchor="nw")
+        # 内容变高 → 更新可滚动范围；Canvas 变宽 → 内层跟着变宽
+        self.rows_box.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfigure(self._rows_win, width=e.width))
+        # 滚轮：只在指针位于清单上时生效，别抢走日志框的滚动
+        # 滚轮：清单里的行是 canvas 的子控件，事件不会冒泡到 canvas，
+        # 所以直接在整个窗口上接，再判断指针是不是落在清单区域。
+        self.root.bind_all("<MouseWheel>", self._on_wheel)
         self.rows: dict = {}
 
         # 日志
-        self.log = tk.Text(self.root, height=9, bg="#0b0e14", fg="#c8d2e0",
+        self.log = tk.Text(self.root, height=7, bg="#0b0e14", fg="#c8d2e0",
                            insertbackground=FG, relief="flat", wrap="word",
                            font=("Consolas", 9), padx=10, pady=8)
         self.log.pack(fill="both", expand=True, padx=28)
@@ -135,6 +158,32 @@ class Installer:
         self.btn_go = self._btn(bar, "开始补全", self.start_install,
                                 side="right", primary=True)
         self.btn_go.configure(state="disabled")
+
+    def _on_wheel(self, event) -> None:
+        """鼠标滚轮滚动清单。
+
+        ⚠️ 行是 canvas 的子控件，滚轮事件不会冒泡到 canvas，所以在窗口上统一接；
+        但要**判断指针是否落在清单区域**，否则会抢走日志框的滚动。
+        """
+        try:
+            w = self.root.winfo_containing(event.x_root, event.y_root)
+            p = w
+            for _ in range(6):
+                if p is None:
+                    break
+                if p in (self.canvas, self.rows_box):
+                    self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+                    return
+                p = getattr(p, "master", None)
+        except Exception:
+            pass
+
+    def _scroll_top(self) -> None:
+        """每次重新检查时把清单滚回顶部，否则会停在上一轮的滚动位置"""
+        try:
+            self.canvas.yview_moveto(0)
+        except Exception:
+            pass
 
     def _btn(self, parent, text, cmd, side="right", primary=False):
         b = tk.Button(parent, text=text, command=cmd, relief="flat",
@@ -157,8 +206,20 @@ class Installer:
     def set_sub(self, text: str, color: str = ACCENT) -> None:
         self.q.put(("sub", text, color))
 
+    def _pump_now(self) -> None:
+        """同步把队列里积压的消息处理一轮（给自动化测试用）。
+
+        `_pump` 是靠 `after(120ms)` 自循环的，测试里没有 mainloop 就永远不跑；
+        这个入口让测试能直接推进一次，不必起窗口。
+        """
+        self._drain()
+
     def _pump(self) -> None:
         """主线程里消费后台线程发来的消息（tkinter 只能主线程碰控件）"""
+        self._drain()
+        self.root.after(120, self._pump)
+
+    def _drain(self) -> None:
         try:
             while True:
                 m = self.q.get_nowait()
@@ -188,6 +249,13 @@ class Installer:
                                    font=("Microsoft YaHei UI", 9))
                     det.pack(side="left", fill="x", expand=True)
                     self.rows[key] = (icon, det)
+                    # 显式刷新可滚动范围：只靠 <Configure> 有时会晚一拍，
+                    # 表现是"滚轮/滚动条一开始滚不动"。
+                    try:
+                        self.canvas.configure(
+                            scrollregion=self.canvas.bbox("all"))
+                    except Exception:
+                        pass
                 elif kind == "row":
                     _, key, state, detail = m
                     if key not in self.rows:
@@ -214,7 +282,8 @@ class Installer:
                         self.btn_go.configure(command=self.start_install)
         except queue.Empty:
             pass
-        self.root.after(120, self._pump)
+        # ⚠️ 这里**不要**再 after 一次：定时器由 _pump 统一续，
+        # 两处都调会让每一轮多排一个定时器（指数增长，很快就卡死）。
 
     # ------------------------------------------------------------ 检查
     def start_check(self) -> None:
@@ -222,6 +291,7 @@ class Installer:
             return
         self.busy = True
         self.btn_go.configure(state="disabled")
+        self._scroll_top()          # 重新检查时清单滚回顶部，别停在上一轮的位置
         self.set_sub("正在检查你的电脑…")
         threading.Thread(target=self._check_worker, daemon=True).start()
 
