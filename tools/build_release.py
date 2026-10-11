@@ -358,6 +358,47 @@ def build_portable() -> str:
     return out
 
 
+def build_installer() -> str:
+    """把 installer_gui.py 打包成单文件「安装程序.exe」。
+
+    ⚠️ 与主程序 exe 的关键区别：**不能排除 tkinter**（主程序的 UNUSED 列表里有它）。
+    另外用 --onefile：安装程序就该是"一个 exe，双击就跑"，
+    用户把它和程序放在同一个文件夹里执行即可（`sys.executable` 就是它自己的路径，
+    所以 `installer_gui.BASE` 能正确指到程序目录）。
+    """
+    out = os.path.join("dist", "安装程序.exe")
+    cmd = [sys.executable, "-m", "PyInstaller",
+           "--noconfirm", "--clean", "--onefile",
+           "--name", "安装程序",
+           # installer_gui 会 import install（复用检查逻辑），
+           # install 又会 import asr（取模型仓库映射）—— 静态分析能跟上，
+           # 但显式写出来更稳。
+           "--hidden-import", "install",
+           "--hidden-import", "download_model",
+           "--hidden-import", "asr",
+           "--collect-data", "pypinyin",
+           "--copy-metadata", "faster-whisper",
+           "--copy-metadata", "ctranslate2",
+           # 只排除明显用不到的重家伙；tkinter 必须留
+           "--exclude-module", "torch",
+           "--exclude-module", "demucs",
+           "--exclude-module", "numpy",
+           "--exclude-module", "ctranslate2",
+           "--exclude-module", "onnxruntime",
+           "--exclude-module", "matplotlib",
+           "installer_gui.py"]
+    if run(cmd) != 0:
+        raise SystemExit("安装程序打包失败")
+    if os.path.exists(out):
+        print(f"\n  → {out}  （{os.path.getsize(out)/1024/1024:.1f} MB）")
+    else:
+        cand = os.path.join("dist", "安装程序")
+        if os.path.exists(cand):
+            shutil.move(cand, out)
+            print(f"\n  → {out}  （{os.path.getsize(out)/1024/1024:.1f} MB）")
+    return out
+
+
 def smoke_test(out: str) -> bool:
     exe = os.path.join(out, f"{APP}.exe")
     if not os.path.exists(exe):
@@ -410,12 +451,16 @@ def main() -> int:
     g.add_argument("--lite", action="store_true", help="轻量版 exe（默认）")
     g.add_argument("--full", action="store_true", help="完整版 exe（含 torch）")
     g.add_argument("--portable", action="store_true", help="便携 ZIP（源码 + 安装脚本）")
+    g.add_argument("--installer", action="store_true", help="图形化安装程序 exe")
     ap.add_argument("--no-smoke", action="store_true", help="跳过冒烟测试")
     args = ap.parse_args()
 
     clean()
     if args.portable:
         build_portable()
+        return 0
+    if args.installer:
+        build_installer()
         return 0
 
     out = build_exe(full=args.full)
