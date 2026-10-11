@@ -73,12 +73,20 @@ def folder_size(path: str) -> int:
     return total
 
 
-def clean() -> None:
-    for d in ("build", "dist", f"{APP}.spec"):
+def clean(keep_dist: bool = True) -> None:
+    """清理中间产物。
+
+    ⚠️ **不要整个删 dist/** —— 那样"先打 lite、再打 portable"会把刚做好的
+    附件删掉（真踩过：跑完 --portable，94MB 的 lite zip 没了）。
+    只清 PyInstaller 的中间目录和 spec；dist 里各变体的子目录由各自函数清。
+    """
+    for d in ("build", f"{APP}.spec"):
         if os.path.isdir(d):
             shutil.rmtree(d, ignore_errors=True)
         elif os.path.exists(d):
             os.remove(d)
+    if not keep_dist:
+        shutil.rmtree("dist", ignore_errors=True)
 
 
 def build_exe(full: bool) -> str:
