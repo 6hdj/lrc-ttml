@@ -72,6 +72,7 @@ secrets.json
 # ---- 编译产物 ----
 dist/
 build/
+*.spec
 *.exe
 *.dll
 *.so
