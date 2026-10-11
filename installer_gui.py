@@ -162,6 +162,25 @@ class Installer:
                             font=("Microsoft YaHei UI", 11, "bold"))
         self.sub.pack(anchor="w", padx=28, pady=(14, 4))
 
+        # 安装位置：**必须让用户能改**。默认装到用户目录（不需要管理员权限，
+        # 也不会有 Program Files 的写权限问题），但想装哪儿应该由用户说了算。
+        self.pathbar = tk.Frame(self.root, bg=BG)
+        self.pathbar.pack(fill="x", padx=28, pady=(2, 6))
+        tk.Label(self.pathbar, text="安装到：", bg=BG, fg=DIM,
+                 font=("Microsoft YaHei UI", 10)).pack(side="left")
+        self.path_var = tk.StringVar(value=self.install_dir)
+        self.path_entry = tk.Entry(
+            self.pathbar, textvariable=self.path_var, bg="#0b0e14", fg=FG,
+            insertbackground=FG, relief="flat", font=("Microsoft YaHei UI", 10))
+        self.path_entry.pack(side="left", fill="x", expand=True, padx=(2, 8),
+                             ipady=5)
+        self.btn_browse = tk.Button(
+            self.pathbar, text="浏览…", command=self.choose_dir, relief="flat",
+            bg="#252b3a", fg=FG, activebackground="#303848",
+            activeforeground=FG, font=("Microsoft YaHei UI", 9),
+            padx=12, pady=4, cursor="hand2", bd=0)
+        self.btn_browse.pack(side="left")
+
         # 清单：**必须能滚动**。
         # ⚠️ 检查项有 20+ 行，直接 pack 进窗口会把下面的日志和按钮挤出可视区
         # （真踩过：用户截图里清单只显示到一半，按钮根本看不见）。
@@ -415,7 +434,116 @@ class Installer:
             return False
         self._rebind(dest)
         self._app_ready = True
+        # 装完顺手做两件用户会期待的事：桌面快捷方式 + 卸载程序
+        self.set_sub("正在创建快捷方式…")
+        self.make_shortcut()
+        self.write_uninstaller()
         return True
+
+    def choose_dir(self) -> None:
+        """让用户选安装目录"""
+        from tkinter import filedialog
+        d = filedialog.askdirectory(title="选择安装位置",
+                                    initialdir=os.path.dirname(self.install_dir))
+        if d:
+            self.install_dir = os.path.join(d, "Lyric2TTML")
+            self.path_var.set(self.install_dir)
+
+    # ------------------------------------------------- 快捷方式 / 卸载程序
+    def make_shortcut(self) -> None:
+        """在桌面建快捷方式。
+
+        ⚠️ 用 PowerShell 的 WScript.Shell，不引第三方库。
+        `.lnk` 指向 `启动.bat`（用户双击能直接起服务并打开浏览器）。
+        """
+        desk = os.path.join(os.path.expanduser("~"), "Desktop")
+        if not os.path.isdir(desk):
+            try:
+                import ctypes
+                from ctypes import wintypes
+                buf = ctypes.create_unicode_buffer(260)
+                ctypes.windll.shell32.SHGetFolderPathW(None, 0, None, 0, buf)
+                d2 = buf.value
+                if d2:
+                    desk = d2
+            except Exception:
+                pass
+        if not os.path.isdir(desk):
+            self.say("[跳过] 找不到桌面目录，未建快捷方式。")
+            return
+        lnk = os.path.join(desk, "Lyric2TTML.lnk")
+        target = os.path.join(self.install_dir, "启动.bat")
+        exe = os.path.join(self.install_dir, "Lyric2TTML.exe")
+        if not os.path.exists(target) and os.path.exists(exe):
+            target = exe
+        ps = (
+            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%s');"
+            "$s.TargetPath='%s';$s.WorkingDirectory='%s';"
+            "$s.IconLocation='%s';$s.Description='歌词转 Apple Music / AMLL 逐字 TTML';"
+            "$s.Save()" % (lnk, target, self.install_dir,
+                           os.path.join(self.install_dir, "Lyric2TTML.exe"))
+        )
+        try:
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           timeout=60, capture_output=True)
+            if os.path.exists(lnk):
+                self.say(f"[完成] 桌面快捷方式：{lnk}")
+            else:
+                self.say("[提示] 快捷方式没建成功，可以手动把 启动.bat 发到桌面。")
+        except Exception as e:
+            self.say(f"[提示] 建快捷方式失败：{type(e).__name__}")
+
+    def write_uninstaller(self) -> None:
+        """写一个能"一键卸载"的 `卸载程序.bat`。
+
+        卸载要删的东西：整个安装目录 + 桌面快捷方式 + 卸载快捷方式自己。
+        ⚠️ 用 `%~dp0` 定位自己，绝不写死路径 —— 用户可能装到任何地方。
+        ⚠️ 删自己所在目录时，bat 必须**先 cd 到别处**，否则 Windows 会因为
+        "文件正在使用"删不掉。
+        """
+        bat = os.path.join(self.install_dir, "卸载程序.bat")
+        desk = os.path.join(os.path.expanduser("~"), "Desktop")
+        content = (
+            "@echo off\r\n"
+            "chcp 65001 >nul\r\n"
+            "title 卸载 Lyric2TTML\r\n"
+            "set \"DIR=%~dp0\"\r\n"
+            "if \"%DIR:~-1%\"==\"\\\" set \"DIR=%DIR:~0,-1%\"\r\n"
+            "echo 将要删除：%DIR%\r\n"
+            "echo 桌面快捷方式、以及所有已下载的模型都会被删掉。\r\n"
+            "echo.\r\n"
+            "set /p Y=确定卸载吗？输入 y 回车： \r\n"
+            "if /i not \"%Y%\"==\"y\" ( echo 已取消。& pause & exit /b 0 )\r\n"
+            "echo.\r\n"
+            "echo 正在删除桌面快捷方式…\r\n"
+            f"del /q \"{desk}\\Lyric2TTML.lnk\" 2>nul\r\n"
+            f"del /q \"{desk}\\卸载 Lyric2TTML.lnk\" 2>nul\r\n"
+            "echo 正在删除程序文件（模型较大，可能需要几十秒）…\r\n"
+            "cd /d \"%TEMP%\"\r\n"
+            "rmdir /s /q \"%DIR%\"\r\n"
+            "echo.\r\n"
+            "if exist \"%DIR%\" ( echo [未完全删除] 可能有文件被占用，请关掉程序后重试。 ) "
+            "else ( echo [完成] 已卸载干净。 )\r\n"
+            "pause\r\n"
+        )
+        try:
+            import io as _io
+            with _io.open(bat, "w", encoding="gbk", newline="") as f:
+                f.write(content)
+            self.say(f"[完成] 卸载程序：{bat}")
+            # 桌面也放一个卸载快捷方式，用户不用进目录找
+            lnk = os.path.join(desk, "卸载 Lyric2TTML.lnk")
+            ps = (
+                "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%s');"
+                "$s.TargetPath='%s';$s.WorkingDirectory='%s';"
+                "$s.Description='卸载 Lyric2TTML';$s.Save()"
+                % (lnk, bat, self.install_dir)
+            )
+            if os.path.isdir(desk):
+                subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                               timeout=60, capture_output=True)
+        except Exception as e:
+            self.say(f"[提示] 写卸载脚本失败：{type(e).__name__}: {e}")
 
     def start_install_app(self) -> None:
         """「开始安装」：解压主程序 → 接着做环境检查。"""

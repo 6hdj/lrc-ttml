@@ -22,7 +22,25 @@ from typing import Callable, List, Optional, Sequence
 # 国内镜像（必须在 huggingface 相关导入前设置），仅在没有本地缓存时才需要
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hf_cache")
+def _default_cache_dir() -> str:
+    """模型缓存目录。
+
+    ⚠️ **冻结打包后不能用 `__file__`**：它指向 `_internal/`，于是默认缓存变成
+    `<安装目录>\\_internal\\.hf_cache` —— 藏在包内部。后果：
+      * 安装程序/doctor/huggingface_hub 都按 `<安装目录>\\.hf_cache` 走，
+        这里却是 `_internal\\.hf_cache` → **装的地方和找的地方不是同一个**，
+        "模型明明下好了，程序说本地缓存里没有"（真踩过）；
+      * `_internal` 在升级/重装时被覆盖，模型跟着丢。
+    所以冻结时以 **exe 所在目录**为准，源码运行时才用 `__file__`。
+    """
+    import sys as _sys
+    if getattr(_sys, "frozen", False):
+        return os.path.join(os.path.dirname(os.path.abspath(_sys.executable)),
+                            ".hf_cache")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hf_cache")
+
+
+DEFAULT_CACHE_DIR = _default_cache_dir()
 
 # faster-whisper 的 HF 仓库名映射
 _REPO_MAP = {
@@ -130,7 +148,24 @@ class WhisperASR:
             _sys.executable if getattr(_sys, "frozen", False) else __file__))
         candidates = [os.path.join(app_dir, "cuda"),
                       os.path.join(app_dir, "cuda", "bin")]
-        for base in candidates + list(_sys.path):
+        # ① **程序目录下的 `cuda\` —— 直接注册这个目录本身。**
+        # ⚠️ 不能把它混进下面那个 `nvidia/*/bin` 通配里：安装程序是把 DLL **摊平**
+        # 放进 `cuda\` 的，通配 `cuda/nvidia/*/bin` 一个都匹配不到，
+        # 结果一个目录都没 add_dll_directory ——
+        # **检测说"DLL 都在"（检测有自己的搜索路径），一跑就报
+        # `Library cublas64_12.dll is not found or cannot be loaded`**。真踩过。
+        for d in candidates:
+            if os.path.isdir(d) and d not in seen:
+                seen.add(d)
+                added.append(d)
+                try:
+                    if hasattr(os, "add_dll_directory"):
+                        os.add_dll_directory(d)
+                except Exception:
+                    pass
+                os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+
+        for base in list(_sys.path):
             if not base or not os.path.isdir(base):
                 continue
             for d in glob.glob(os.path.join(base, "nvidia", "*", "bin")):

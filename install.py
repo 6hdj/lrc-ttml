@@ -285,34 +285,103 @@ def fetch_cuda() -> bool:
     return n > 0
 
 
+def _http_get(url: str, dst: str, timeout: int = 120) -> bool:
+    """带进度、带**字节校验**的下载。
+
+    ⚠️ 以前是"读到空就算下载完" —— 连接中途断掉会被当成成功，
+    然后拿一个残缺文件去解压，报 `BadZipFile: File is not a zip file`。
+    真踩过：cublas 528MB 只下了 489MB、cudnn 709MB 只下了 478MB。
+    现在必须 **实收字节数 == Content-Length**，否则算失败。
+    """
+    import urllib.request
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Lyric2TTML"})
+        with urllib.request.urlopen(req, timeout=timeout) as r, open(dst, "wb") as out:
+            total = int(r.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = r.read(4 * 1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                got += len(chunk)
+                if total:
+                    say(f"      {got / 1024 / 1024:.0f} / {total / 1024 / 1024:.0f} MB")
+        if total and got != total:
+            say(f"    [失败] 只下到 {got} 字节，应为 {total}（连接被截断）")
+            return False
+        return got > 0
+    except Exception as e:
+        say(f"    [失败] {type(e).__name__}: {str(e)[:120]}")
+        return False
+
+
+# CAM++ 权重的候选下载地址：**一个不通就换下一个**，不能只有一条路。
+CAMPP_SOURCES = [
+    # ModelScope 的 HTTP 直取接口（不需要装 modelscope 包）
+    ("ModelScope 官方",
+     "https://www.modelscope.cn/api/v1/models/iic/speech_campplus_sv_zh-cn_16k-common"
+     "/repo?Revision=master&FilePath={f}"),
+    ("ModelScope 镜像",
+     "https://modelscope.cn/api/v1/models/iic/speech_campplus_sv_zh-cn_16k-common"
+     "/repo?Revision=master&FilePath={f}"),
+]
+CAMPP_FILES = ["campplus_cn_common.bin", "configuration.json", "config.yaml"]
+
+
 def fetch_campp() -> bool:
-    """下载 CAM++ 声纹权重（对唱分声部必需）。"""
+    """下载 CAM++ 声纹权重（对唱分声部必需）。
+
+    **多路尝试**：ModelScope 官方接口 → ModelScope 镜像 → 已安装的 modelscope 包。
+    任何一条路成功即可。全失败时把每条路的结果都打出来，用户知道该找谁。
+    """
     say(f"\n  下载 CAM++ 声纹权重（约 300 MB）→ {CAMPP_DIR}")
     os.makedirs(CAMPP_DIR, exist_ok=True)
-    # 首选 ModelScope（国内快）
+
+    # ① 直连 HTTP（不需要额外装任何包）
+    for label, tpl in CAMPP_SOURCES:
+        say(f"    尝试 {label} …")
+        ok_all = True
+        for f in CAMPP_FILES:
+            dst = os.path.join(CAMPP_DIR, f)
+            if os.path.exists(dst) and os.path.getsize(dst) > 0:
+                continue
+            if not _http_get(tpl.format(f=f), dst):
+                ok_all = False
+                break
+        if ok_all and any(
+                fn.endswith(".bin") for fn in os.listdir(CAMPP_DIR)):
+            say(f"    [OK] {label} 下载成功")
+            return True
+        say(f"    [{label} 这条路不通]")
+
+    # ② 退回 modelscope 包（源码模式下才有意义）
     try:
         import importlib
         importlib.import_module("modelscope")
         from modelscope.hub.snapshot_download import snapshot_download
-        p = snapshot_download(CAMPP_REPO, cache_dir=os.path.join(BASE, ".ms_cache"))
-        copied = 0
+        say("    尝试 modelscope 包 …")
+        p = snapshot_download(CAMPP_REPO,
+                              cache_dir=os.path.join(BASE, ".ms_cache"))
+        n = 0
         for r, _, fs in os.walk(p):
             for f in fs:
-                if f.endswith((".onnx", ".pt", ".bin", ".pth")):
+                if f.endswith((".onnx", ".pt", ".bin", ".pth", ".json", ".yaml")):
                     shutil.copy2(os.path.join(r, f), os.path.join(CAMPP_DIR, f))
-                    copied += 1
-        say(f"  [OK] 复制 {copied} 个权重文件")
-        return copied > 0
+                    n += 1
+        if n:
+            say(f"    [OK] 复制 {n} 个文件")
+            return True
     except ImportError:
-        pass
+        say("    （没装 modelscope 包，跳过这条路）")
     except Exception as e:
-        say(f"  ModelScope 下载失败：{type(e).__name__}: {str(e)[:120]}")
+        say(f"    [失败] modelscope 包：{type(e).__name__}: {str(e)[:100]}")
 
-    say("  [需要手动] 没装 modelscope，无法自动下载。两种办法：")
-    say("       ① 装一下再重跑：pip install modelscope")
-    say(f"       ② 手动从 ModelScope 下载 {CAMPP_REPO}")
-    say(f"          把权重文件放进 {CAMPP_DIR}\\")
-    say("      ⚠️ 缺了它，「对唱分声部」会退化成'按单人处理' —— 看起来像没生效。")
+    say("  [失败] 三条路都没走通。")
+    say(f"    请手动把 campplus_cn_common.bin 放到：{CAMPP_DIR}\\")
+    say("    来源：https://www.modelscope.cn/models/"
+        "iic/speech_campplus_sv_zh-cn_16k-common/files")
+    say("    ⚠️ 缺了它，「对唱分声部」会退化成按单人处理 —— 看起来像没生效")
     return False
 
 
