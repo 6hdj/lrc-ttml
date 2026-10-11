@@ -55,12 +55,22 @@ class WhisperASR:
         model: str = "large-v3",
         device: str = "auto",
         compute_type: Optional[str] = None,
-        cache_dir: str = DEFAULT_CACHE_DIR,
+        cache_dir: str = "",
         cpu_threads: Optional[int] = None,
         log: Callable[[str], None] = print,
     ):
         self.model_name = model
-        self.cache_dir = cache_dir
+        # ⚠️ **一定要认 `HUGGINGFACE_HUB_CACHE`**，不能只用 DEFAULT_CACHE_DIR。
+        # 冻结打包后 `__file__` 指向 `_internal/`，于是默认缓存变成
+        # `<安装目录>\_internal\.hf_cache` —— 藏在包内部：
+        #   * 安装程序/主程序里凡是走环境变量的地方（doctor、download_model、
+        #     huggingface_hub 自己）都指向 `<安装目录>\.hf_cache`，
+        #     而这里指向 `_internal\.hf_cache` → **两边不是同一个目录**，
+        #     于是"装好了模型，程序却说找不到"（真踩过，用户直接炸了）。
+        #   * 升级/重装 `_internal` 被覆盖，模型跟着丢。
+        self.cache_dir = (cache_dir
+                          or os.environ.get("HUGGINGFACE_HUB_CACHE")
+                          or DEFAULT_CACHE_DIR)
         self.cpu_threads = cpu_threads or (os.cpu_count() or 4)
         self.log = log
         self._model = None

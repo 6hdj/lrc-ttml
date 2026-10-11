@@ -510,8 +510,14 @@ class Installer:
                 else:
                     self.say(f"[缺] {it.name}" + (f"：{it.detail}" if it.detail else ""))
                     if it.level == envcheck.CRIT:
-                        self.items.append((it.key, it.name,
-                                           actions.get(it.key, it.action)))
+                        # ⚠️ `it` 是从 JSON 建的 SimpleNamespace，**没有 action 字段**
+                        # （doctor --json 只输出 key/name/why/level/ok/detail/fix）。
+                        # 直接取 `it.action` 会 AttributeError —— 真踩过：
+                        # 检查在 CUDA 那一项崩掉，后面的模型/权重没能进待装列表，
+                        # 于是"什么都没装"却报"安装完成"，用户一启动就报模型缺失。
+                        self.items.append(
+                            (it.key, it.name,
+                             actions.get(it.key, getattr(it, "action", None))))
 
             if pkg_missing:
                 names = [it.name for it in pkg_missing]
@@ -624,10 +630,15 @@ class Installer:
             self.say("可以关掉重试，或把日志发给开发者。")
             self.q.put(("done", "normal", "重试"))
         else:
-            self.set_sub("安装完成，可以使用了", OK)
+            # ⚠️ **不能装完就直接给「启动软件」**。真踩过：检查中途崩掉、
+            # 待装列表是残的，这一步照样报"安装完成"，用户一点启动就报
+            # "本地缓存未找到模型" —— 等于把该装的东西甩给用户手动下。
+            # 所以补全之后**必须重新检查一遍**，确认真的不缺了才允许启动。
             self.say("\n" + "=" * 46)
-            self.say("  ✅ 安装完成！点下面的「▶ 启动软件」开始使用。")
-            self.q.put(("done", "normal", "▶ 启动软件", "launch"))
+            self.say("  补全完成，正在**重新检查**确认没有遗漏…")
+            self.set_sub("正在复查…", ACCENT)
+            self.q.put(("run", self.start_check))
+            return
         self.q.put(("quitbtn", None))
         self.root.after(0, lambda: self.btn_quit.configure(state="normal"))
 
