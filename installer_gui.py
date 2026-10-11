@@ -31,7 +31,8 @@ sys.path.insert(0, HERE)
 FROZEN = getattr(sys, "frozen", False)
 BASE = os.path.dirname(os.path.abspath(sys.executable)) if FROZEN else HERE
 
-# 复用 install.py 的检查逻辑，避免两套判定漂移
+# 复用 install.py 的补全动作 + envcheck.py 的**穷尽式**检查
+import envcheck  # noqa: E402
 import install as core  # noqa: E402
 
 BG = "#0f1117"
@@ -47,8 +48,9 @@ class Installer:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.q: queue.Queue = queue.Queue()
-        self.items: list = []          # [(键, 名称, 说明, 状态, 补全函数)]
+        self.items: list = []          # [(键, 名称, 补全函数)]
         self.busy = False
+        self.model = "large-v3"        # 补全时要下的 Whisper 模型（跟 exe 默认一致）
 
         root.title("Lyric2TTML 安装程序")
         root.configure(bg=BG)
@@ -76,30 +78,12 @@ class Installer:
                             font=("Microsoft YaHei UI", 11, "bold"))
         self.sub.pack(anchor="w", padx=28, pady=(14, 4))
 
-        # 清单
+        # 清单（行由检查结果动态生成 —— 见 _check_worker）
         box = tk.Frame(self.root, bg="#161a24", highlightthickness=1,
                        highlightbackground="#252b3a")
         box.pack(fill="both", expand=False, padx=28, pady=(4, 10))
+        self.rows_box = box
         self.rows: dict = {}
-        for key, name, why in (
-            ("python", "Python 运行环境", "跑程序用（打包版自带）"),
-            ("pkgs", "Python 依赖库", "语音识别 / 音频处理"),
-            ("whisper", "语音识别模型", "约 3 GB，只需下载一次"),
-            ("cuda", "CUDA 运行库", "约 2 GB，显卡加速必需"),
-            ("campp", "声纹分声部模型", "约 300 MB，对唱分声部必需"),
-            ("ffmpeg", "ffmpeg", "可选，个别音频格式需要"),
-        ):
-            r = tk.Frame(box, bg="#161a24")
-            r.pack(fill="x", padx=14, pady=7)
-            icon = tk.Label(r, text="•", bg="#161a24", fg=DIM, width=3,
-                            font=("Segoe UI Symbol", 13))
-            icon.pack(side="left")
-            tk.Label(r, text=name, bg="#161a24", fg=FG, width=18, anchor="w",
-                     font=("Microsoft YaHei UI", 11)).pack(side="left")
-            det = tk.Label(r, text=why, bg="#161a24", fg=DIM, anchor="w",
-                           font=("Microsoft YaHei UI", 9))
-            det.pack(side="left", fill="x", expand=True)
-            self.rows[key] = (icon, det)
 
         # 日志
         self.log = tk.Text(self.root, height=9, bg="#0b0e14", fg="#c8d2e0",
@@ -151,8 +135,30 @@ class Installer:
                     self.log.insert("end", m[1] + "\n")
                     self.log.see("end")
                     self.log.configure(state="disabled")
+                elif kind == "addrow":
+                    # 行是检查完才建的 —— 检查项有 20+ 个，固定几行装不下，
+                    # 而且"要检查什么"应该由 envcheck 说了算，不该在界面里硬编码。
+                    _, key, name, why, level = m
+                    r = tk.Frame(self.rows_box, bg="#161a24")
+                    r.pack(fill="x", padx=14, pady=4)
+                    icon = tk.Label(r, text="•", bg="#161a24", fg=DIM, width=3,
+                                    font=("Segoe UI Symbol", 13))
+                    icon.pack(side="left")
+                    tag = {"crit": "必需", "opt": "可选", "info": ""}[level]
+                    tk.Label(r, text=name, bg="#161a24", fg=FG, width=22,
+                             anchor="w", font=("Microsoft YaHei UI", 10)
+                             ).pack(side="left")
+                    tk.Label(r, text=(f"[{tag}]" if tag else ""), bg="#161a24",
+                             fg=WARN, width=6, anchor="w",
+                             font=("Microsoft YaHei UI", 8)).pack(side="left")
+                    det = tk.Label(r, text=why, bg="#161a24", fg=DIM, anchor="w",
+                                   font=("Microsoft YaHei UI", 9))
+                    det.pack(side="left", fill="x", expand=True)
+                    self.rows[key] = (icon, det)
                 elif kind == "row":
                     _, key, state, detail = m
+                    if key not in self.rows:
+                        continue
                     icon, det = self.rows[key]
                     icon.configure(text={"ok": "✓", "bad": "✕", "skip": "–",
                                          "wait": "•", "work": "…"}.get(state, "•"),
@@ -181,83 +187,83 @@ class Installer:
         threading.Thread(target=self._check_worker, daemon=True).start()
 
     def _check_worker(self) -> None:
+        """跑**穷尽式**检查（envcheck），需要的行动态建、缺的项自动排好补全动作。
+
+        ⚠️ 检查项有 20 多个（每个依赖包、每个 CUDA DLL、模型文件的完整性…），
+        不能在界面里硬编码几行就算数 —— 那正是上一版"只检查一小部分"的原因。
+        """
         try:
             self.items = []
+            cache = os.environ.get("HUGGINGFACE_HUB_CACHE") \
+                or os.path.join(BASE, ".hf_cache")
+            print(f"[检查] 程序目录 {BASE}", flush=True)
+            rows = envcheck.check_all(BASE, cache, frozen=FROZEN)
 
-            # 1. Python
-            v = sys.version_info
-            if FROZEN:
-                self.set_row("python", "ok", f"打包版自带 {v.major}.{v.minor}")
-                self.say(f"[OK] Python（打包版内置 {v.major}.{v.minor}.{v.micro}）")
-            elif (v.major, v.minor) >= (3, 10):
-                self.set_row("python", "ok", f"{v.major}.{v.minor}.{v.micro}")
-                self.say(f"[OK] Python {v.major}.{v.minor}.{v.micro}")
-            else:
-                self.set_row("python", "bad", "需要 3.10 或更高")
-                self.say("[缺] Python 版本过低。请到 python.org 装 3.10+，"
-                         "安装时勾选 Add Python to PATH")
-                self.items.append(("python", "Python 3.10+", None))
+            # 先给每一项建行并显示现状
+            for it in rows:
+                self.q.put(("addrow", it.key, it.name, it.why, it.level))
 
-            # 2. 依赖
-            miss = [] if FROZEN else core.missing_pkgs()
-            if miss:
-                self.set_row("pkgs", "bad", "、".join(miss))
-                self.say(f"[缺] 依赖库：{'、'.join(miss)}")
-                self.items.append(("pkgs", "Python 依赖库",
-                                   lambda: core.install_pkgs(miss)))
-            else:
-                self.set_row("pkgs", "ok", "齐全")
-                self.say("[OK] 依赖库齐全")
+            # 需要补全的动作映射（envcheck 只负责"诊断"，动作在 install 里）
+            actions = {
+                "whisper": lambda: core.fetch_whisper(self.model),
+                "campp": core.fetch_campp,
+            }
+            # 任何一个 CUDA DLL 缺 → 一次把三个都装齐（同一个 wheel 里）
+            cuda_missing = [it for it in rows
+                            if it.key.startswith("cuda_") and not it.ok]
+            if cuda_missing:
+                actions["cuda_gether"] = core.fetch_cuda
+            # 缺的包合并成一次 pip
+            pkg_missing = [it for it in rows
+                           if it.key.startswith("pkg_") and not it.ok
+                           and it.level == envcheck.CRIT]
 
-            # 3. Whisper 模型
-            wm = core.whisper_models()
-            if wm:
-                best = max(wm, key=lambda k: wm[k])
-                self.set_row("whisper", "ok",
-                             f"{best}（{wm[best] / 1024 / 1024:.0f} MB）")
-                self.say(f"[OK] 语音识别模型：{'、'.join(wm)}")
-            else:
-                self.set_row("whisper", "bad", "未下载")
-                self.say("[缺] 语音识别模型（约 3 GB）")
-                self.items.append(("whisper", "语音识别模型",
-                                   lambda: core.fetch_whisper("large-v3")))
+            for it in rows:
+                self.set_row(it.key, "ok" if it.ok else "bad",
+                             it.detail + ("" if it.ok else
+                                          ("　" + it.fix.splitlines()[0]
+                                           if it.fix else "")))
+                if it.ok:
+                    self.say(f"[OK] {it.name}"
+                             + (f"：{it.detail}" if it.detail else ""))
+                else:
+                    self.say(f"[缺] {it.name}" + (f"：{it.detail}" if it.detail else ""))
+                    if it.level == envcheck.CRIT:
+                        self.items.append((it.key, it.name,
+                                           actions.get(it.key, it.action)))
 
-            # 4. CUDA
-            if core.cuda_dlls_present():
-                self.set_row("cuda", "ok", "已就位")
-                self.say("[OK] CUDA 运行库已就位")
-            else:
-                self.set_row("cuda", "bad", "未安装（显卡加速需要）")
-                self.say("[缺] CUDA 运行库（cublas/cudnn，约 2 GB）")
-                self.items.append(("cuda", "CUDA 运行库", core.fetch_cuda))
+            if pkg_missing:
+                names = [it.name for it in pkg_missing]
+                self.say(f"\n→ 一次性安装缺的依赖：{'、'.join(names)}")
+                self.items.insert(0, ("pkg_all", "Python 依赖库",
+                                      lambda: core.install_pkgs(names)))
+            if "cuda_gether" in actions:
+                # 三个 CUDA DLL 合成一项，避免重复下载同一个 wheel
+                for k in ("cuda_cublas64_12.dll", "cuda_cublasLt64_12.dll",
+                          "cuda_cudnn64_9.dll"):
+                    self.items = [t for t in self.items if t[0] != k]
+                self.items.append(("cuda_gether", "CUDA 运行库（3 个 DLL）",
+                                   actions["cuda_gether"]))
 
-            # 5. CAM++
-            if core.campp_present():
-                self.set_row("campp", "ok", "已就位")
-                self.say("[OK] 声纹分声部模型已就位")
-            else:
-                self.set_row("campp", "bad", "未安装（对唱分声部需要）")
-                self.say("[缺] 声纹分声部模型（约 300 MB）")
-                self.items.append(("campp", "声纹分声部模型", core.fetch_campp))
-
-            # 6. ffmpeg（可选）
-            ff = core.ffmpeg_present()
-            self.set_row("ffmpeg", "ok" if ff else "skip",
-                         ff or "未安装（可选）")
-            self.say(("[OK] ffmpeg：" + ff) if ff else
-                     "[跳过] 没装 ffmpeg —— 可选，个别格式解不开时再装")
-
-            n = len(self.items)
-            if n == 0:
+            mc, mo = envcheck.summarize(rows)
+            if not mc and not mo:
                 self.set_sub("全部就绪，可以直接使用", OK)
-                self.say("\n✅ 什么都不缺。点「退出」，然后双击 启动.bat 就行。")
+                self.say(f"\n✅ 检查了 {len(rows)} 项，什么都不缺。"
+                         f"点「退出」，然后双击 启动.bat。")
                 self.q.put(("done", "disabled", "全部就绪"))
+            elif not mc:
+                self.set_sub(f"核心功能可用（{len(mo)} 项可选未装）", WARN)
+                self.say(f"\n核心功能已就绪；另有 {len(mo)} 项可选未装。")
+                self.q.put(("done", "disabled", "可以使用"))
             else:
-                self.set_sub(f"发现 {n} 项需要补全", BAD)
-                self.say(f"\n共 {n} 项需要补全，点下面的「开始补全」继续。")
-                self.q.put(("done", "normal", f"开始补全（{n} 项）"))
+                self.set_sub(f"发现 {len(mc)} 项必需缺失，可以自动补全", BAD)
+                self.say(f"\n检查了 {len(rows)} 项，缺 {len(mc)} 项必需的。"
+                         f"点「开始补全」，它会自动下载安装。")
+                self.q.put(("done", "normal", f"开始补全（{len(mc)} 项）"))
         except Exception as e:
+            import traceback
             self.say(f"[错误] 检查时出问题：{type(e).__name__}: {e}")
+            self.say(traceback.format_exc()[-600:])
             self.set_sub("检查失败", BAD)
             self.q.put(("done", "normal", "重试"))
 
