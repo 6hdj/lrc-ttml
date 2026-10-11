@@ -367,37 +367,56 @@ def build_portable() -> str:
 
 
 def build_installer() -> str:
-    """把 installer_gui.py 打包成单文件「安装程序.exe」。
+    """打包**真正的安装程序**：一个 exe 里同时带 GUI 和主程序本体。
 
-    ⚠️ 与主程序 exe 的关键区别：**不能排除 tkinter**（主程序的 UNUSED 列表里有它）。
-    另外用 --onefile：安装程序就该是"一个 exe，双击就跑"，
-    用户把它和程序放在同一个文件夹里执行即可（`sys.executable` 就是它自己的路径，
-    所以 `installer_gui.BASE` 能正确指到程序目录）。
+    ⚠️ 以前是"安装程序.exe + lite.zip 两个文件，用户得先解压再点安装程序" ——
+    用户直接骂了："那不脱裤子放屁吗？" 对，正常的软件安装程序就该**一个文件**：
+    双击 → 选目录 → 解压安装 → 检查环境 → 缺什么装什么 → 能用。
+
+    做法：先把主程序（onedir）打成一份 zip 当**载荷**，再用 `--add-data` 塞进安装程序。
+    运行时 `installer_gui` 把载荷解到用户选的目录，然后照常检查/补全/启动。
     """
+    # ① 先把主程序构建出来（安装包里要有东西可装）
+    app_dir = os.path.join("dist", APP)
+    if not os.path.isdir(app_dir) or not os.path.exists(
+            os.path.join(app_dir, f"{APP}.exe")):
+        print("  先构建主程序（lite）…")
+        run([sys.executable, __file__, "--lite"])
+
+    # ② 打成载荷 zip
+    os.makedirs("build", exist_ok=True)
+    payload = os.path.join("build", "_app_payload.zip")
+    if os.path.exists(payload):
+        os.remove(payload)
+    print(f"  打包载荷 → {payload}")
+    zip_dir(app_dir, payload)
+    if not os.path.exists(payload):
+        raise SystemExit("载荷打包失败")
+
+    # ③ 安装程序本体（GUI + 载荷）
     out = os.path.join("dist", "安装程序.exe")
     cmd = [sys.executable, "-m", "PyInstaller",
            "--noconfirm", "--clean", "--onefile",
            "--name", "安装程序",
-           # installer_gui 会 import install（复用检查逻辑），
-           # install 又会 import asr（取模型仓库映射）—— 静态分析能跟上，
-           # 但显式写出来更稳。
+           "--add-data", f"{payload}{os.pathsep}payload",
            "--hidden-import", "install",
            "--hidden-import", "download_model",
            "--hidden-import", "asr",
-           # ⚠️ 安装程序**必须显式排除**这些重家伙（它只要跑界面 + 下载），
-           # 但因此**它自己 import numpy/ctranslate2 必然失败** ——
-           # 所以它**不能检查自己**，必须去问主程序（见 installer_gui.ask_app_report）。
+           "--hidden-import", "envcheck",
+           # 安装程序只要 GUI + 下载能力；重的推理件一律排除（载荷里已经有一份）
            "--exclude-module", "torch",
            "--exclude-module", "demucs",
            "--exclude-module", "numpy",
            "--exclude-module", "ctranslate2",
            "--exclude-module", "onnxruntime",
+           "--exclude-module", "faster_whisper",
            "--exclude-module", "matplotlib",
            "installer_gui.py"]
     if run(cmd) != 0:
         raise SystemExit("安装程序打包失败")
     if os.path.exists(out):
-        print(f"\n  → {out}  （{os.path.getsize(out)/1024/1024:.1f} MB）")
+        print(f"\n  → {out}  （{os.path.getsize(out)/1024/1024:.1f} MB，"
+              f"含主程序本体）")
     else:
         cand = os.path.join("dist", "安装程序")
         if os.path.exists(cand):
