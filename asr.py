@@ -106,12 +106,21 @@ class WhisperASR:
 
         ctranslate2 的 CUDA 版需要 ``cublas64_12.dll`` / ``cudnn*64_9.dll``，
         这些 DLL 在 ``site-packages/nvidia/<lib>/bin`` 下，必须显式注册。
+
+        ⚠️ 另外也扫 **程序目录下的 ``cuda\\``**：打包版**没有**带这些 DLL
+        （cublas+cudnn 合计 2 GB，超过 GitHub Release 单文件上限），
+        所以给用户留一个"把 DLL 丢进来就能用显卡"的位置，不用去动系统。
         """
         import glob
         import sys as _sys
         added: List[str] = []
         seen = set()
-        for base in list(_sys.path):
+        # 程序目录（冻结时是 exe 所在目录）下的 cuda/ 与 cuda/**/bin
+        app_dir = os.path.dirname(os.path.abspath(
+            _sys.executable if getattr(_sys, "frozen", False) else __file__))
+        candidates = [os.path.join(app_dir, "cuda"),
+                      os.path.join(app_dir, "cuda", "bin")]
+        for base in candidates + list(_sys.path):
             if not base or not os.path.isdir(base):
                 continue
             for d in glob.glob(os.path.join(base, "nvidia", "*", "bin")):
@@ -144,6 +153,19 @@ class WhisperASR:
     def ensure_loaded(self):
         if self._model is not None:
             return self._model
+
+        # ⚠️ **本项目强制 GPU**：CPU 跑一首歌要几分钟，静默降级只会让人
+        # "觉得程序很慢"却不知道原因。所以这里直接拒绝，并把怎么修说清楚。
+        if self.device != "cuda":
+            raise RuntimeError(
+                "没有可用的显卡，语音识别无法运行。\n"
+                "  本项目**强制使用 GPU**（CPU 处理一首歌要几分钟，因此没有做 CPU 降级）。\n"
+                "  请依次确认：\n"
+                "    1) 机器上有 NVIDIA 显卡，且驱动正常（命令行跑 nvidia-smi 能出表格）\n"
+                "    2) 显卡支持 CUDA 12（GTX 10 系及以后基本都可以）\n"
+                "    3) CUDA 运行库已就位：双击「首次安装.bat」或「检查环境.bat」\n"
+            )
+
         try:
             from faster_whisper import WhisperModel
         except ImportError as e:  # pragma: no cover
@@ -170,28 +192,45 @@ class WhisperASR:
             name = type(e).__name__
             msg = str(e)
 
-            # ⚠️⚠️ **先分辨"模型没下载到"和"显卡用不了"** —— 这两件事的处置完全不同，
-            # 而老代码把它们混成了一句"GPU 初始化失败"，害得用户去查显卡驱动，
-            # 真正的原因（模型没下下来 / 连不上 HuggingFace）被完全盖住。
-            # 真踩过：用户在发布包里跑，本地没有 .hf_cache、hf-mirror 又连不上，
-            # 日志显示"GPU 初始化失败"，然后回退 CPU 又失败一次，最后抛一句
-            # LocalEntryNotFoundError 的天书堆栈。
+            # ⚠️⚠️ **先分辨"模型没下载到"和"显卡/CUDA 用不了"** —— 两件事的处置完全不同。
+            # （老代码把它们混成一句"GPU 初始化失败"，害得用户去查显卡驱动。）
             if self._is_download_error(e):
                 raise RuntimeError(self._offline_help(path, name, msg)) from e
 
-            if self.device != "cuda":
-                raise
-            # 到这里才是真的显卡不可用（缺 DLL、显存不足…）→ 退回 CPU，别让任务失败
-            self.log(f"[ASR] ⚠ GPU 初始化失败（{name}: {msg[:120]}），回退 CPU")
-            self.device = "cpu"
-            self.compute_type = "int8"
-            self._model = WhisperModel(
-                path,
-                device="cpu",
-                compute_type="int8",
-                cpu_threads=self.cpu_threads,
-            )
+            # 显卡不可用 → **不再偷偷退回 CPU**（CPU 太慢，用户明确要求强制 GPU），
+            # 而是直接报错并说清怎么修。静默降级的代价是"跑得慢还以为正常"。
+            raise RuntimeError(self._gpu_help(name, msg)) from e
         return self._model
+
+    def _gpu_help(self, name: str, msg: str) -> str:
+        """显卡用不了时的提示。
+
+        本项目**强制用 GPU**（CPU 跑一首歌要几分钟，体验不可接受），
+        所以这里不降级，只负责把"怎么修"说清楚。
+        """
+        tip = (
+            "CUDA 运行库缺失（cublas/cudnn）"
+            if self._is_cuda_runtime_error(Exception(msg)) else "显卡初始化失败"
+        )
+        return (
+            f"无法在显卡上运行语音识别：{tip}（{name}）。\n"
+            f"  原始报错：{msg[:200]}\n"
+            "\n"
+            "  本项目**强制使用 GPU**（用 CPU 处理一首歌要几分钟，所以没有做 CPU 降级）。\n"
+            "  按下面任一条修好即可：\n"
+            "\n"
+            "  ① 让程序自己补齐（推荐，双击就行）\n"
+            "       「首次安装.bat」→ 会自动把 CUDA 运行库装到程序目录\n"
+            "     或双击「检查环境.bat」看看具体缺什么\n"
+            "\n"
+            "  ② 手动放 DLL：把 cublas64_12.dll / cublasLt64_12.dll / cudnn*64_9.dll\n"
+            "     放进程序目录下的 cuda\\ 文件夹（程序会自动把它加进搜索路径）\n"
+            "\n"
+            "  ③ 用 pip 装（源码运行时）\n"
+            "       pip install nvidia-cublas-cu12 nvidia-cudnn-cu12\n"
+            "\n"
+            "  另外确认显卡驱动是新的（nvidia-smi 能正常输出），且显卡支持 CUDA 12。"
+        )
 
     @staticmethod
     def _is_download_error(e: BaseException) -> bool:
@@ -274,7 +313,11 @@ class WhisperASR:
         model = self.ensure_loaded()
         if isinstance(audio, str):
             audio = self.load_audio(audio)
+        return self._generate(model, audio, language, initial_prompt, beam_size,
+                              word_timestamps, vad_filter, temperature)
 
+    def _generate(self, model, audio, language, initial_prompt, beam_size,
+                  word_timestamps, vad_filter, temperature) -> List[AsrWord]:
         segments, _info = model.transcribe(
             audio,
             language=language or None,
@@ -292,6 +335,19 @@ class WhisperASR:
         if det:
             self.last_language = det
         return self._collect(segments)
+
+    @staticmethod
+    def _is_cuda_runtime_error(e: BaseException) -> bool:
+        """是不是"显卡在，但 CUDA 运行库（cublas/cudnn）用不了"。
+
+        保留这个判断是为了**给出有针对性的报错**（告诉用户去跑
+        `首次安装.bat` 补 CUDA 运行库），而不是笼统一句"失败了"。
+        """
+        text = str(e).lower()
+        return any(k in text for k in (
+            "cublas", "cudnn", "cufft", "curand", "nvrtc",
+            "is not found or cannot be loaded",
+            "no kernel image is available"))
 
     def transcribe_slice(
         self,

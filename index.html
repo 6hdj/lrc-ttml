@@ -361,10 +361,12 @@
           <div class="form-group">
             <label>计算设备</label>
             <select id="device">
-              <option value="auto" selected>自动</option>
-              <option value="cpu">CPU</option>
-              <option value="cuda">GPU (CUDA)</option>
+              <option value="cuda" selected>GPU (CUDA) · 必选</option>
+              <option value="auto">自动（等同 GPU）</option>
             </select>
+            <div class="hint">本项目<b>强制用 GPU</b> —— 用 CPU 处理一首歌要几分钟，
+              所以没有做 CPU 降级。没有可用的显卡时会直接明确报错，
+              而不是悄悄变慢。</div>
           </div>
           <div class="form-group">
             <label>演唱者 / 角色标记</label>

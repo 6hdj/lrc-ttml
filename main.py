@@ -44,7 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "⚠️ 界面默认是 auto；**命令行默认仍是 zh**，"
                         "为的是让评估脚本可复现（改默认值会动到 85.0%% 那条基线）")
     p.add_argument("--model", default="large-v3", help="whisper 模型（默认 large-v3，small 更快）")
-    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="计算设备")
+    p.add_argument("--device", default="cuda", choices=["cuda", "auto"],
+                   help="计算设备：cuda（默认，本项目强制用 GPU）/ auto（等价于 cuda）。"
+                        "⚠️ 故意不提供 CPU —— 用 CPU 处理一首歌要几分钟，"
+                        "静默降级只会让人觉得程序很慢，所以没有可用的显卡时直接明确报错")
     p.add_argument("--title", default="", help="歌曲名")
     p.add_argument("--artist", action="append", default=[], help="歌手（可重复）")
     p.add_argument("--album", default="", help="专辑名")

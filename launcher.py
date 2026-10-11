@@ -40,6 +40,15 @@ def _rehome() -> str:
     if not _frozen():
         return base
 
+    # ⚠️ **必须在 import 其它模块之前**设好模型缓存目录。
+    # main.py / web_server.py / asr.py 里都是 `os.environ.setdefault(
+    # "HUGGINGFACE_HUB_CACHE", os.path.join(HERE, ".hf_cache"))`，而冻结后
+    # HERE 指向 _internal —— 于是 3GB 的模型会被下到**包内部**：
+    # 升级/重装就丢，用户也根本找不到。放在 exe 旁边才是对的。
+    hub = os.path.join(base, ".hf_cache")
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", hub)
+    os.makedirs(hub, exist_ok=True)
+
     # web_server：HERE 决定 index.html 去哪找，UPLOAD_DIR/OUTPUT_DIR 决定写到哪
     import web_server
     web_server.HERE = base
@@ -53,9 +62,9 @@ def _rehome() -> str:
         mod = sys.modules.get(modname)
         if mod is None:
             continue
-        for attr in ("_HERE", "HERE", "BASE_DIR", "_BASE_DIR"):
+        for attr in ("_HERE", "HERE", "BASE_DIR", "_BASE_DIR", "DEFAULT_CACHE_DIR"):
             if hasattr(mod, attr):
-                setattr(mod, attr, base)
+                setattr(mod, attr, base if attr != "DEFAULT_CACHE_DIR" else hub)
     return base
 
 
@@ -70,6 +79,15 @@ def _banner(base: str) -> None:
 def main() -> int:
     argv = sys.argv[1:]
     base = _rehome()
+
+    # ⚠️ 先进 UTF-8 控制台模式再说话：冻结进程的 stdout 默认走控制台代码页
+    # （简体中文 = GBK），而我们输出里有 ⚠️ 这类不在 GBK 里的字符，
+    # 不处理就是乱码甚至直接 UnicodeEncodeError。--doctor 这种纯文本输出尤其明显。
+    try:
+        import main as _m
+        _m.ensure_utf8_console()
+    except Exception:
+        pass
 
     # 环境体检 / 下载模型：这两个是"安装期"命令，直接转发，不走 argparse
     if any(a in ("--doctor", "-doctor", "doctor") for a in argv):
