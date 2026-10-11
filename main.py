@@ -132,7 +132,37 @@ def cmd_check_only(path: str, strict: bool = False) -> int:
     return 0 if res.ok else 1
 
 
+def ensure_utf8_console() -> None:
+    """让控制台输出不会因为"字符不在本机代码页里"而崩。
+
+    ⚠️ 真踩过：``--help`` 文本里有一个 ``⚠️``（U+26A0）。**简体中文 Windows 的
+    控制台代码页是 GBK，里面没有这个字符** —— 于是 ``argparse.print_help()``
+    在写这一行时直接抛 ``UnicodeEncodeError: 'gbk' codec can't encode character
+    '\\u26a0'``，**整个 ``--help`` 崩掉、退出码 1**。
+    打包成 exe 后必现（冻结进程的 stdout 走控制台代码页），源码运行时用
+    ``chcp 65001`` 或 IDE 控制台则不一定复现 —— 属于"只在发布物上炸"的那类 bug。
+
+    处理：
+    1. 先把控制台输出代码页切到 UTF-8（Windows）；
+    2. 再给 stdout/stderr 加 ``errors="replace"`` 兜底 ——
+       即使切不过去（重定向到文件、老系统），最差也只是显示成 ``?``，**不会崩**。
+    """
+    try:
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def main(argv=None) -> int:
+    ensure_utf8_console()
     args = build_parser().parse_args(argv)
 
     if args.check_only:

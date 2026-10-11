@@ -1368,8 +1368,14 @@ async function openEditor() {
     renderEditor();
     setEditorStatus(`已载入 ${d.stats.lines} 行 / ${d.stats.words} 字（来源：${d.source}）`);
     switchEditMode(editMode);
+    // 用 ?task= 进来时，加载完滚到编辑台（他点这个链接就是想看编辑台）
+    if (_scrollToEditorAfterLoad) {
+      _scrollToEditorAfterLoad = false;
+      try { panel.scrollIntoView({block: 'start'}); } catch (e) {}
+    }
   } catch (e) { setEditorStatus('⚠ 网络错误：' + e.message); }
 }
+let _scrollToEditorAfterLoad = false;
 
 function closeEditor() {
   document.getElementById('editorPanel').style.display = 'none';
@@ -1470,7 +1476,48 @@ document.addEventListener('DOMContentLoaded', () => {
     if (el) el.addEventListener('input', renderIdSearchLinks);
   });
   renderIdSearchLinks();
+  openTaskFromUrl();
 });
+
+/* 支持用 `?task=<id>` 直接打开某个任务的编辑台。
+   两个真实用途：
+     ① **服务重启后接着改** —— 转换产物 outputs/<id>.ttml 还在磁盘上，
+        但页面上没有任何入口能回到它（TASKS 已清空）；
+     ② 把编辑台地址存成书签，下次直接进。
+   ⚠️ 只在页面加载时读一次：之后用户自己操作不要再被 URL 拉回去。 */
+function openTaskFromUrl() {
+  let id = '';
+  let mode = '';
+  try {
+    const q = new URLSearchParams(location.search);
+    id = (q.get('task') || '').trim();
+    mode = (q.get('mode') || '').trim();
+    // 也支持 #agent / #text / #time 这种短写法
+    const h = (location.hash || '').replace('#', '').trim();
+    if (!mode && ['time', 'agent', 'text'].indexOf(h) >= 0) mode = h;
+  } catch (e) { return; }
+  if (['time', 'agent', 'text'].indexOf(mode) >= 0) editMode = mode;
+  if (!id) {
+    if (mode) switchEditMode(mode);      // 只切标签页、没有任务
+    return;
+  }
+  const tag = document.getElementById('taskId');
+  if (tag) tag.textContent = id;
+  currentTaskId = id;
+  // ⚠️ 编辑台在 `#resultSection` 里面，而那个容器**默认 display:none**、
+  // 要等转换完成才打开。用 ?task= 直接进来时不会经过转换流程 ——
+  // 不手动放出来的话，编辑台会**渲染在 DOM 里但完全不可见**（尺寸为 0）。
+  // 这个坑很隐蔽：CDP 里查 `editorPanel.style.display` 是 'block'、
+  // `editorBody` 也有 13 个子节点，但 getBoundingClientRect 全是 0。
+  const sec = document.getElementById('resultSection');
+  if (sec) sec.style.display = 'block';
+  const lc = document.getElementById('logCard');
+  if (lc) lc.style.display = 'none';       // 没有转换日志，别显示空日志卡
+  // 用 ?task= 进来的人，想看的就是编辑台 —— 加载完自动滚过去
+  _scrollToEditorAfterLoad = true;
+  // openEditor 内部会用 editMode 决定渲染哪个标签页，所以先设好再调
+  openEditor();
+}
 
 
 /* ==================================================================

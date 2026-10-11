@@ -348,6 +348,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"doc": task.doc.to_dict(), "version": task.doc.version,
                         "source": "memory", "stats": task.doc.stats()})
             return
+        # ⚠️ 服务重启后 TASKS 是空的，磁盘上只有 outputs/<id>.ttml（转换产物）
+        # 和可选的 <id>.edit.json（用户保存过的进度）。
+        # 以前这里只认 .edit.json，于是"**转换完但还没点保存**"的任务，
+        # 重启后编辑台会报"没有可编辑的内容" —— 明明 .ttml 就在旁边。
+        # 现在退回读产物 TTML（load_doc 会走 draft 分支重建）。
+        if not ttml and not os.path.exists(edit_path):
+            safe = "".join(c for c in task_id if c.isalnum() or c in "-_")
+            cand = os.path.join(OUTPUT_DIR, f"{safe}.ttml")
+            if safe and os.path.exists(cand):
+                ttml = textread.read_text(cand)
         doc, source = edit_api.load_doc(ttml, edit_path)   # 损坏会降级为 draft
         if task:
             task.doc = doc
