@@ -53,8 +53,114 @@ UNUSED = ["tkinter", "matplotlib", "PyQt5", "PyQt6", "PySide2", "PySide6",
           "pandas", "PIL", "setuptools", "pip", "wheel"]
 
 # 挨着 exe 放的"用户能看见/能改"的东西
-SIDE_FILES = ["index.html", "README.md", "LICENSE", "CHANGELOG.md", "启动.bat"]
+SIDE_FILES = ["index.html", "README.md", "LICENSE", "CHANGELOG.md", "启动.bat",
+              "检查环境.bat", "下载模型.bat"]
 SIDE_DIRS = ["examples"]
+
+# 便携版（portable zip）里的一键安装脚本。内容在 build_portable 里落地。
+SETUP_BAT = """@echo off
+chcp 65001 >nul
+title Lyric2TTML - 首次安装
+cd /d "%~dp0"
+
+echo ================================================================
+echo   Lyric2TTML 首次安装
+echo   联网一次装依赖 + 下模型，之后**完全离线**使用
+echo ================================================================
+echo.
+
+REM ---------- 1. 找 Python ----------
+set "PY="
+where python >nul 2>nul && set "PY=python"
+if not defined PY ( where py >nul 2>nul && set "PY=py -3" )
+if not defined PY (
+  echo [错误] 没找到 Python。
+  echo.
+  echo   请到 https://www.python.org/downloads/ 下载 Python 3.10 或更高版本，
+  echo   安装时**务必勾选** "Add Python to PATH"，然后重新运行本脚本。
+  echo.
+  pause
+  exit /b 1
+)
+echo [1/5] Python 就绪
+
+REM ---------- 2. 虚拟环境 ----------
+if exist ".venv\\Scripts\\python.exe" (
+  echo [2/5] 虚拟环境已存在，跳过
+) else (
+  echo [2/5] 创建虚拟环境 .venv ...
+  %PY% -m venv .venv
+  if errorlevel 1 ( echo [错误] 创建虚拟环境失败 & pause & exit /b 1 )
+)
+set "VPY=%~dp0.venv\\Scripts\\python.exe"
+
+REM ---------- 3. 依赖 ----------
+echo [3/5] 安装依赖（第一次要几分钟，请耐心等）...
+"%VPY%" -m pip install --upgrade pip
+"%VPY%" -m pip install -r requirements.txt
+if errorlevel 1 (
+  echo.
+  echo [错误] 依赖安装失败。请检查网络后重新运行本脚本。
+  pause
+  exit /b 1
+)
+
+REM ---------- 4. 语音识别模型（关键，最常出问题的一步）----------
+echo.
+echo [4/5] 下载语音识别模型（large-v3 约 3GB，只需一次）
+echo       国内直连 HuggingFace 常失败，脚本会自动先试 hf-mirror 镜像。
+"%VPY%" download_model.py
+if errorlevel 1 (
+  echo.
+  echo [警告] 模型没下完 —— 不影响安装，但**转换时会失败**。
+  echo        可以稍后双击 下载模型.bat 重试（支持断点续传），
+  echo        或先用小模型：编辑 下载模型.bat 改成 --model small
+  echo.
+)
+
+REM ---------- 5. 体检 ----------
+echo.
+echo [5/5] 环境体检
+"%VPY%" doctor.py
+
+echo.
+echo ================================================================
+echo   安装结束。以后双击「启动.bat」就能用。
+echo   有任何问题，双击「检查环境.bat」看缺什么。
+echo ================================================================
+pause
+"""
+
+CHECK_BAT = """@echo off
+chcp 65001 >nul
+title Lyric2TTML - 检查环境
+cd /d "%~dp0"
+set "VPY=%~dp0.venv\\Scripts\\python.exe"
+if not exist "%VPY%" (
+  echo 还没安装。请先双击「首次安装.bat」。
+  pause
+  exit /b 1
+)
+"%VPY%" doctor.py
+pause
+"""
+
+DLMODEL_BAT = """@echo off
+chcp 65001 >nul
+title Lyric2TTML - 下载模型
+cd /d "%~dp0"
+set "VPY=%~dp0.venv\\Scripts\\python.exe"
+if not exist "%VPY%" (
+  echo 还没安装。请先双击「首次安装.bat」。
+  pause
+  exit /b 1
+)
+echo 下载 large-v3（约 3GB）。想要小一点的，把 download_model.py 后面
+echo 加上 --model small 即可（可编辑本文件）。
+echo.
+"%VPY%" download_model.py
+pause
+"""
 
 
 def run(cmd: list, **kw) -> int:
@@ -130,6 +236,30 @@ def build_exe(full: bool) -> str:
     for f in SIDE_FILES:
         if os.path.exists(f):
             shutil.copy2(f, os.path.join(out, f))
+
+    # exe 版的两个助手脚本：直接调 exe 自己（打包版不需要装 Python）
+    for fname, args, title in (("检查环境.bat", "--doctor", "检查环境"),
+                               ("下载模型.bat", "--download-model", "下载模型")):
+        io.open(os.path.join(out, fname), "w", encoding="gbk", newline="\r\n").write(
+            "@echo off\r\n"
+            "chcp 65001 >nul\r\n"
+            f"title Lyric2TTML - {title}\r\n"
+            "cd /d \"%~dp0\"\r\n"
+            f"\"%~dp0{APP}.exe\" {args}\r\n"
+            "pause\r\n")
+    # 首次安装.bat 对打包版没意义（自带 Python），放一个说明性的转发即可
+    io.open(os.path.join(out, "首次安装.bat"), "w", encoding="gbk", newline="\r\n").write(
+        "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
+        "title Lyric2TTML - 首次安装\r\n"
+        "cd /d \"%~dp0\"\r\n"
+        "echo 打包版自带运行环境，不用装 Python。\r\n"
+        "echo 只需要把语音识别模型下载一次（约 3GB，之后完全离线）。\r\n"
+        "echo.\r\n"
+        f"\"%~dp0{APP}.exe\" --download-model\r\n"
+        "echo.\r\n"
+        "echo 完成后双击「检查环境.bat」确认，全绿就能用了。\r\n"
+        "pause\r\n")
     for d in SIDE_DIRS:
         if os.path.isdir(d):
             dst = os.path.join(out, d)
@@ -184,29 +314,15 @@ def build_portable() -> str:
         os.makedirs(os.path.dirname(dst) or out, exist_ok=True)
         shutil.copy2(f, dst)
 
-    io.open(os.path.join(out, "首次安装.bat"), "w", encoding="gbk",
-            newline="\r\n").write(
-        "@echo off\r\n"
-        "chcp 65001 >nul\r\n"
-        "title Lyric2TTML - 首次安装\r\n"
-        "cd /d \"%~dp0\"\r\n"
-        "echo.\r\n"
-        "echo  正在安装运行环境（首次需要联网，之后可完全离线）\r\n"
-        "echo.\r\n"
-        "where python >nul 2>nul\r\n"
-        "if errorlevel 1 (\r\n"
-        "  echo  [错误] 没有找到 Python。请先安装 Python 3.10+\r\n"
-        "  echo         https://www.python.org/downloads/\r\n"
-        "  echo         安装时记得勾选 \"Add Python to PATH\"\r\n"
-        "  pause & exit /b 1\r\n"
-        ")\r\n"
-        "python -m venv .venv\r\n"
-        "call .venv\\Scripts\\activate.bat\r\n"
-        "python -m pip install --upgrade pip\r\n"
-        "python -m pip install -r requirements.txt\r\n"
-        "echo.\r\n"
-        "echo  装好了。以后双击 启动.bat 即可使用。\r\n"
-        "pause\r\n")
+    # 三个一键脚本（详见文件上方 SETUP_BAT / CHECK_BAT / DLMODEL_BAT 的注释）
+    # ⚠️ .bat 里的中文用 **GBK(936)** 写：cmd.exe 默认按本机 ANSI 代码页读批处理，
+    # 写成 UTF-8 会让中文全变乱码（虽然脚本还能跑，但提示看不懂就白费了）。
+    # 脚本开头仍然 `chcp 65001`，那是为了 Python 子进程的输出能正常显示。
+    for fname, content in (("首次安装.bat", SETUP_BAT),
+                           ("检查环境.bat", CHECK_BAT),
+                           ("下载模型.bat", DLMODEL_BAT)):
+        io.open(os.path.join(out, fname), "w", encoding="gbk",
+                newline="\r\n").write(content)
 
     zip_path = os.path.join("dist", f"{name}.zip")
     zip_dir(out, zip_path)

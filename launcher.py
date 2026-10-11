@@ -71,6 +71,17 @@ def main() -> int:
     argv = sys.argv[1:]
     base = _rehome()
 
+    # 环境体检 / 下载模型：这两个是"安装期"命令，直接转发，不走 argparse
+    if any(a in ("--doctor", "-doctor", "doctor") for a in argv):
+        import doctor
+        return doctor.main()
+    if any(a in ("--download-model", "download-model") for a in argv):
+        import download_model
+        # 复用它的参数（--model small 之类）
+        rest = [a for a in argv if a not in ("--download-model", "download-model")]
+        sys.argv = ["download_model.py"] + rest
+        return download_model.main()
+
     # 走命令行：有参数、且不是 --web/--port 这类界面参数
     cli_like = bool(argv) and not any(
         a in ("--web", "--gui", "--server") for a in argv)
