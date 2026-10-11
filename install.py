@@ -164,7 +164,34 @@ def ffmpeg_present() -> str:
 
 
 # =============================================================== 补全动作
+def _frozen() -> bool:
+    return getattr(sys, "frozen", False)
+
+
+def main_exe() -> str:
+    """旁边的主程序。**没有它就不许补全** —— 见 install_pkgs 的说明。"""
+    p = os.path.join(BASE, "Lyric2TTML.exe")
+    return p if os.path.exists(p) else ""
+
+
 def install_pkgs(pkgs: list) -> bool:
+    """安装 pip 依赖。
+
+    ⚠️⚠️ **冻结（打包）之后绝对不能调 `sys.executable -m pip`**：
+    PyInstaller 里 ``sys.executable`` 就是**这个安装程序自己**，
+    于是 "pip install ..." 变成重新启动自己 —— 用户点一次「开始补全」
+    就弹出一个新的安装程序窗口，点一次弹一次，看起来像病毒（真踩过）。
+
+    而且打包版本来就把核心依赖（faster-whisper / ctranslate2 / numpy / av /
+    tokenizers）**内置**了，根本不需要 pip；缺的只是 torch / demucs 这类可选件。
+
+    所以：冻结时**什么都不做**，只把话说清楚。
+    """
+    if _frozen():
+        say("  打包版已内置核心依赖，不需要 pip 安装。")
+        say(f"  未内置的（{'、'.join(pkgs)}）属于可选功能，"
+            f"要完整功能请用源码版：pip install -r requirements.txt")
+        return True
     say(f"\n  安装依赖：{' '.join(pkgs)}")
     cmd = [sys.executable, "-m", "pip", "install", "--upgrade"] + pkgs
     say("  $ " + " ".join(cmd))
@@ -177,46 +204,85 @@ def install_pkgs(pkgs: list) -> bool:
 
 
 def fetch_whisper(model: str) -> bool:
+    """下载 Whisper 模型。
+
+    **交给主程序做**（`Lyric2TTML.exe --download-model`），不要在安装程序里自己下：
+    主程序知道自己的缓存目录在哪（`<exe>/.hf_cache`），而且它内置了 huggingface_hub。
+    安装程序是另一个进程，自己下的位置很可能跟主程序找的位置对不上。
+    """
     say(f"\n  下载 Whisper 模型：{model}")
-    cmd = [sys.executable, os.path.join(BASE, "download_model.py"), "--model", model]
-    return subprocess.call(cmd) == 0
+    exe = main_exe()
+    if not exe:
+        say("  [失败] 旁边没有找到 Lyric2TTML.exe，无法确定该下到哪里。")
+        say("         请把「安装程序.exe」放进主程序所在的那个文件夹里再运行。")
+        return False
+    return subprocess.call([exe, "--download-model", "--model", model]) == 0
 
 
 def fetch_cuda() -> bool:
-    """从 PyPI 下 cublas/cudnn 的 wheel，把 DLL 解到 <程序目录>/cuda/。
+    """下载 CUDA 运行库（cublas / cudnn）。
 
-    不解 CUDA Toolkit、不改系统 PATH、不要管理员权限。
+    ⚠️ **不用 pip**：直接向 PyPI 取 wheel 的下载地址、用 urllib 拉下来、
+    用 zipfile 解出 DLL。原因是 pip 在冻结环境里没法安全调用
+    （`sys.executable` 指向安装程序自己），而 wheel 本质就是个 zip，
+    自己解反而更可控、还能显示进度。
     """
     say(f"\n  下载 CUDA 运行库（cublas + cudnn，约 2 GB）→ {CUDA_DIR}")
-    say("  这一步让语音识别能跑在显卡上；没有它只能 CPU，慢很多。")
-    tmp = tempfile.mkdtemp(prefix="l2t_cuda_")
-    try:
-        cmd = [sys.executable, "-m", "pip", "download", "--only-binary=:all:",
-               "--no-deps", "-d", tmp] + CUDA_PKGS
-        say("  $ " + " ".join(cmd))
-        if subprocess.call(cmd) != 0:
-            say("  [失败] 拉不到 wheel。可以换镜像重试：")
-            say("         python -m pip download --only-binary=:all: --no-deps "
-                "-d .\\_cuda -i https://pypi.tuna.tsinghua.edu.cn/simple "
-                + " ".join(CUDA_PKGS))
-            return False
-        os.makedirs(CUDA_DIR, exist_ok=True)
-        n = 0
-        for f in os.listdir(tmp):
-            if not f.endswith(".whl"):
+    say("  这一步让语音识别能跑在 GPU 上；没有它只能 CPU，慢很多。")
+    import json as _json
+    import urllib.request
+    os.makedirs(CUDA_DIR, exist_ok=True)
+    n = 0
+    for pkg in CUDA_PKGS:
+        try:
+            say(f"    查询 {pkg} 的最新版本…")
+            with urllib.request.urlopen(
+                    f"https://pypi.org/pypi/{pkg}/json", timeout=30) as r:
+                meta = _json.loads(r.read().decode("utf-8", "replace"))
+            ver = meta["info"]["version"]
+            url = ""
+            for f in meta["releases"].get(ver, []):
+                fn = f.get("filename", "")
+                if fn.endswith(".whl") and "win_amd64" in fn:
+                    url = f["url"]
+                    break
+            if not url:
+                say(f"    [失败] {pkg} {ver} 没有 Windows 版 wheel")
                 continue
-            with zipfile.ZipFile(os.path.join(tmp, f)) as z:
+            say(f"    下载 {os.path.basename(url)} …")
+            tmp = os.path.join(CUDA_DIR, "_tmp.whl")
+            with urllib.request.urlopen(url, timeout=120) as r, \
+                    open(tmp, "wb") as out:
+                total = int(r.headers.get("Content-Length") or 0)
+                got = 0
+                step = 8 * 1024 * 1024
+                while True:
+                    chunk = r.read(step)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    got += len(chunk)
+                    if total:
+                        say(f"      {got / 1024 / 1024:.0f} / "
+                            f"{total / 1024 / 1024:.0f} MB")
+            with zipfile.ZipFile(tmp) as z:
                 for name in z.namelist():
                     if name.lower().endswith(".dll"):
-                        # wheel 里是 nvidia/<lib>/bin/xxx.dll → 摊平到 cuda/
+                        # wheel 内是 nvidia/<lib>/bin/xxx.dll → 摊平到 cuda/
                         dst = os.path.join(CUDA_DIR, os.path.basename(name))
                         with z.open(name) as src, open(dst, "wb") as out:
                             shutil.copyfileobj(src, out)
                         n += 1
-        say(f"  [OK] 解出 {n} 个 DLL → {CUDA_DIR}")
-        return n > 0
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+            os.remove(tmp)
+            say(f"    [OK] {pkg} 解出 DLL")
+        except Exception as e:
+            say(f"    [失败] {pkg}：{type(e).__name__}: {str(e)[:140]}")
+    say(f"  [{'OK' if n else '失败'}] 解出 {n} 个 DLL → {CUDA_DIR}")
+    if not n:
+        say("  可以换镜像手动下：https://mirrors.aliyun.com/pypi/simple/ 搜 "
+            + "、".join(CUDA_PKGS))
+        say(f"  把 wheel 解出来的 DLL 放进 {CUDA_DIR}\\ 即可")
+    return n > 0
 
 
 def fetch_campp() -> bool:

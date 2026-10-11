@@ -314,8 +314,29 @@ class Installer:
                 rows = [types.SimpleNamespace(**d) for d in rep["items"]]
                 print("[检查] 用主程序 Lyric2TTML.exe --doctor --json 的报告",
                       flush=True)
+            elif FROZEN:
+                # ⚠️⚠️ **打包版找不到主程序时必须停下，不能退回自检。**
+                # 因为安装程序自己的临时 Python 环境里没有 numpy/ctranslate2
+                # （打包时特意排除了），自检必然谎报"未安装" —— 用户看到一排
+                # 假红叉，接着点补全又会往那个临时环境里装，装了也没用。
+                # 真踩过。这里明确告诉用户怎么放，并禁用补全按钮。
+                print("[检查] 没找到主程序，中止", flush=True)
+                self.set_sub("没找到主程序，无法检查", BAD)
+                self.say("⚠️ 这个文件夹里没有找到 Lyric2TTML.exe。")
+                self.say("")
+                self.say("   本安装程序需要和**主程序放在同一个文件夹**里 ——")
+                self.say("   它要读取主程序自己的运行环境报告，才能知道缺什么。")
+                self.say("   单独运行（主程序不在旁边）会误报一堆'未安装'，")
+                self.say("   所以这里不做检查、也不提供补全。")
+                self.say("")
+                self.say("   正确做法：")
+                self.say("     1. 把 Lyric2TTML-1.0.0-win64-lite.zip 解压到某个文件夹")
+                self.say("     2. 把「安装程序.exe」放进那个文件夹")
+                self.say("     3. 再双击「安装程序.exe」")
+                self.q.put(("done", "disabled", "需要放到主程序旁边"))
+                return
             else:
-                # ② 没有主程序（源码模式）才在进程内自检
+                # ② 源码模式才在进程内自检
                 rows = envcheck.check_all(BASE, cache, frozen=FROZEN)
                 print("[检查] 源码模式：进程内自检", flush=True)
 
@@ -405,6 +426,12 @@ class Installer:
                 subprocess.Popen(["cmd", "/c", bat], cwd=base, close_fds=True)
                 self.say("[启动] 启动.bat")
             elif os.path.exists(srv):
+                # ⚠️ 冻结时 sys.executable 是**这个安装程序自己**，用它启动
+                # web_server.py 等于重开安装程序（点一次弹一次）。源码模式才安全。
+                if FROZEN:
+                    self.say("[提示] 只找到 web_server.py，但打包版不能这样启动。")
+                    self.say("        请解压完整的 lite 包后运行 启动.bat。")
+                    return
                 subprocess.Popen([sys.executable, srv], cwd=base, close_fds=True)
                 self.say("[启动] web_server.py")
             else:
