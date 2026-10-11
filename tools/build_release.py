@@ -249,6 +249,14 @@ def build_exe(full: bool) -> str:
            "--copy-metadata", "huggingface-hub",
            "--copy-metadata", "numpy",
            "--copy-metadata", "onnxruntime",
+           # ⚠️ 这几个是在 launcher.main() 里**条件 import** 的
+           # （--doctor / --install / --download-model），PyInstaller 的静态分析
+           # 追不到条件分支，必须显式列出；漏了就会出现
+           # "Lyric2TTML.exe --doctor 报 ModuleNotFoundError"。
+           "--hidden-import", "doctor",
+           "--hidden-import", "envcheck",
+           "--hidden-import", "install",
+           "--hidden-import", "download_model",
            ]
     for m in UNUSED:
         cmd += ["--exclude-module", m]
@@ -376,10 +384,9 @@ def build_installer() -> str:
            "--hidden-import", "install",
            "--hidden-import", "download_model",
            "--hidden-import", "asr",
-           "--collect-data", "pypinyin",
-           "--copy-metadata", "faster-whisper",
-           "--copy-metadata", "ctranslate2",
-           # 只排除明显用不到的重家伙；tkinter 必须留
+           # ⚠️ 安装程序**必须显式排除**这些重家伙（它只要跑界面 + 下载），
+           # 但因此**它自己 import numpy/ctranslate2 必然失败** ——
+           # 所以它**不能检查自己**，必须去问主程序（见 installer_gui.ask_app_report）。
            "--exclude-module", "torch",
            "--exclude-module", "demucs",
            "--exclude-module", "numpy",

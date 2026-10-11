@@ -176,6 +176,31 @@ ICON = {True: "[OK]  ", False: "[--]  "}
 
 
 def main() -> int:
+    # --json：给**安装程序**读的机器可读输出。
+    # ⚠️ 为什么必须有这条路：安装程序是独立 exe，它自己的 Python 环境是
+    # PyInstaller 打的临时环境 —— 在那里 import numpy/ctranslate2 必然失败，
+    # 于是把"没装"报給用户（**假报错**，真踩过）。
+    # 正确的做法是让**主程序报自己的环境**，安装程序只负责读结果 + 补全。
+    if "--json" in sys.argv:
+        import json
+        import os as _os
+
+        sys.path.insert(0, HERE)
+        _os.environ.setdefault(
+            "HUGGINGFACE_HUB_CACHE", _os.path.join(BASE, ".hf_cache"))
+        try:
+            import envcheck
+            items = envcheck.check_all(
+                BASE, _os.environ["HUGGINGFACE_HUB_CACHE"], frozen=_frozen())
+            out = [{"key": i.key, "name": i.name, "why": i.why, "level": i.level,
+                    "ok": i.ok, "detail": i.detail, "fix": i.fix} for i in items]
+            print(json.dumps({"base": BASE, "frozen": _frozen(),
+                              "items": out}, ensure_ascii=False))
+        except Exception as e:
+            print(json.dumps({"error": f"{type(e).__name__}: {e}"},
+                             ensure_ascii=False))
+        return 0
+
     os.chdir(BASE)
     print("=" * 74)
     print("  Lyric2TTML 环境体检")

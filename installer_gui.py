@@ -45,6 +45,38 @@ WARN = "#ffc857"
 ACCENT = "#4aa8ff"
 
 
+def ask_app_report() -> dict:
+    """问**主程序**要环境报告。
+
+    ⚠️⚠️ 这是这个安装程序最要紧的一处设计。**不能让安装程序检查自己**：
+    它是独立的 PyInstaller onefile，进程里的 Python 是打包时的临时环境，
+    为了减小体积又特意排除了 numpy / ctranslate2 / onnxruntime ——
+    于是 `importlib.import_module("numpy")` 必然抛 ModuleNotFoundError，
+    界面就会谎报"numpy 未安装 / faster-whisper 未安装"（**真踩过**，
+    用户看到一排红叉，其实主程序跑得好好的）。
+
+    正确分工：**主程序报自己的环境，安装程序只负责读结果 + 补全**。
+    找不到主程序（比如源码模式）才退回进程内自检。
+    """
+    import json
+    exe = os.path.join(BASE, "Lyric2TTML.exe")
+    if not os.path.exists(exe):
+        return {}
+    try:
+        r = subprocess.run([exe, "--doctor", "--json"], cwd=BASE,
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=180)
+        line = ""
+        for ln in (r.stdout or "").splitlines():
+            ln = ln.strip()
+            if ln.startswith("{"):
+                line = ln
+                break
+        return json.loads(line) if line else {}
+    except Exception:
+        return {}
+
+
 class Installer:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -204,9 +236,19 @@ class Installer:
             cache = os.environ.get("HUGGINGFACE_HUB_CACHE") \
                 or os.path.join(BASE, ".hf_cache")
             print(f"[检查] 程序目录 {BASE}", flush=True)
-            rows = envcheck.check_all(BASE, cache, frozen=FROZEN)
 
-            # 先给每一项建行并显示现状
+            # ① 优先让**主程序**报自己的环境（见 ask_app_report 的说明）
+            rep = ask_app_report()
+            if rep and rep.get("items"):
+                import types
+                rows = [types.SimpleNamespace(**d) for d in rep["items"]]
+                print("[检查] 用主程序 Lyric2TTML.exe --doctor --json 的报告",
+                      flush=True)
+            else:
+                # ② 没有主程序（源码模式）才在进程内自检
+                rows = envcheck.check_all(BASE, cache, frozen=FROZEN)
+                print("[检查] 源码模式：进程内自检", flush=True)
+
             for it in rows:
                 self.q.put(("addrow", it.key, it.name, it.why, it.level))
 
