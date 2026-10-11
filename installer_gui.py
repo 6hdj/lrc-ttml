@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import queue
+import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -173,6 +174,12 @@ class Installer:
                     self.busy = False
                     self.btn_quit.configure(state="normal")
                     self.btn_go.configure(state=m[1], text=m[2])
+                    # 全部就绪时，主按钮变成「启动软件」——用户就不用再去找 启动.bat
+                    if len(m) > 3 and m[3] == "launch":
+                        self.btn_go.configure(command=self.launch_app,
+                                              text="▶ 启动软件（完成）")
+                    else:
+                        self.btn_go.configure(command=self.start_install)
         except queue.Empty:
             pass
         self.root.after(120, self._pump)
@@ -248,13 +255,13 @@ class Installer:
             mc, mo = envcheck.summarize(rows)
             if not mc and not mo:
                 self.set_sub("全部就绪，可以直接使用", OK)
-                self.say(f"\n✅ 检查了 {len(rows)} 项，什么都不缺。"
-                         f"点「退出」，然后双击 启动.bat。")
-                self.q.put(("done", "disabled", "全部就绪"))
+                self.say(f"\n✅ 检查了 {len(rows)} 项，什么都不缺。")
+                self.say("   点下面的「▶ 启动软件」就能开始用了。")
+                self.q.put(("done", "normal", "▶ 启动软件", "launch"))
             elif not mc:
                 self.set_sub(f"核心功能可用（{len(mo)} 项可选未装）", WARN)
-                self.say(f"\n核心功能已就绪；另有 {len(mo)} 项可选未装。")
-                self.q.put(("done", "disabled", "可以使用"))
+                self.say(f"\n核心功能已就绪；另有 {len(mo)} 项可选未装（不影响使用）。")
+                self.q.put(("done", "normal", "▶ 启动软件", "launch"))
             else:
                 self.set_sub(f"发现 {len(mc)} 项必需缺失，可以自动补全", BAD)
                 self.say(f"\n检查了 {len(rows)} 项，缺 {len(mc)} 项必需的。"
@@ -266,6 +273,36 @@ class Installer:
             self.say(traceback.format_exc()[-600:])
             self.set_sub("检查失败", BAD)
             self.q.put(("done", "normal", "重试"))
+
+    # ------------------------------------------------------------ 启动
+    def launch_app(self) -> None:
+        """启动主程序。
+
+        找不到主程序就明确说 —— 安装程序是"把环境补齐"，
+        程序本体（Lyric2TTML.exe / 启动.bat）得在同一个文件夹里。
+        """
+        base = BASE
+        exe = os.path.join(base, "Lyric2TTML.exe")
+        bat = os.path.join(base, "启动.bat")
+        srv = os.path.join(base, "web_server.py")
+        try:
+            if os.path.exists(exe):
+                subprocess.Popen([exe], cwd=base, close_fds=True)
+                self.say("[启动] Lyric2TTML.exe")
+            elif os.path.exists(bat):
+                subprocess.Popen(["cmd", "/c", bat], cwd=base, close_fds=True)
+                self.say("[启动] 启动.bat")
+            elif os.path.exists(srv):
+                subprocess.Popen([sys.executable, srv], cwd=base, close_fds=True)
+                self.say("[启动] web_server.py")
+            else:
+                self.say("[提示] 这个文件夹里没有找到主程序。")
+                self.say("        请把「安装程序.exe」放到主程序（Lyric2TTML.exe 或 启动.bat）")
+                self.say("        所在的那个文件夹里，再运行一次。")
+                return
+            self.set_sub("已启动，浏览器会自动打开界面", OK)
+        except Exception as e:
+            self.say(f"[错误] 启动失败：{type(e).__name__}: {e}")
 
     # ------------------------------------------------------------ 补全
     def start_install(self) -> None:
@@ -307,10 +344,10 @@ class Installer:
             self.say("可以关掉重试，或把日志发给开发者。")
             self.q.put(("done", "normal", "重试"))
         else:
-            self.set_sub("全部就绪，可以使用了", OK)
+            self.set_sub("安装完成，可以使用了", OK)
             self.say("\n" + "=" * 46)
-            self.say("  安装完成！关掉本窗口，双击 启动.bat 开始使用。")
-            self.q.put(("done", "normal", "重新检查"))
+            self.say("  ✅ 安装完成！点下面的「▶ 启动软件」开始使用。")
+            self.q.put(("done", "normal", "▶ 启动软件", "launch"))
         self.q.put(("quitbtn", None))
         self.root.after(0, lambda: self.btn_quit.configure(state="normal"))
 

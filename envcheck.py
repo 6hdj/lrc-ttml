@@ -121,40 +121,62 @@ def _pip(names: list) -> bool:
 
 # ---------------------------------------------------------------- 显卡
 def check_gpu() -> list:
-    """NVIDIA 显卡 + 驱动。用 nvidia-smi（最准），失败再看 CTranslate2。"""
+    """NVIDIA 显卡 + 驱动。用 nvidia-smi（最准），失败再看 CTranslate2。
+
+    ⚠️ 要**明确识别 RTX 系列**并显示型号 —— 用户要的就是"本机是不是 RTX N 卡"。
+    但**不把非 RTX 判成致命**：CUDA 12 只要求算力 ≥ 5.0，
+    GTX 10 系（1080/1050 等）同样能跑，只是慢些。
+    判成致命会让这些人莫名其妙用不了，所以降级为"能用但没加速优势"的提示。
+    """
     out = []
     smi = shutil.which("nvidia-smi")
-    detail, ok = "", False
+    name, driver, vram = "", "", ""
+    ok_gpu = False
     if smi:
         try:
-            r = subprocess.run([smi, "--query-gpu=name,driver_version,memory.total",
-                                "--format=csv,noheader"],
-                               capture_output=True, text=True, timeout=20,
-                               encoding="utf-8", errors="replace")
+            r = subprocess.run(
+                [smi, "--query-gpu=name,driver_version,memory.total",
+                 "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=20,
+                encoding="utf-8", errors="replace")
             if r.returncode == 0 and (r.stdout or "").strip():
-                ok = True
-                detail = (r.stdout or "").strip().splitlines()[0]
+                first = (r.stdout or "").strip().splitlines()[0]
+                parts = [p.strip() for p in first.split(",")]
+                name = parts[0] if parts else first
+                driver = parts[1] if len(parts) > 1 else ""
+                vram = parts[2] if len(parts) > 2 else ""
+                ok_gpu = True
         except Exception as e:
-            detail = f"nvidia-smi 执行失败：{type(e).__name__}"
+            name = f"nvidia-smi 执行失败：{type(e).__name__}"
     else:
-        detail = "没找到 nvidia-smi"
-    if not ok:
+        name = "没找到 nvidia-smi"
+
+    if not ok_gpu:
         try:
             import ctranslate2
             n = ctranslate2.get_cuda_device_count()
             if n > 0:
-                ok = True
-                detail = f"CTranslate2 看到 {n} 个 CUDA 设备（无 nvidia-smi）"
+                ok_gpu = True
+                name = f"CTranslate2 看到 {n} 个 CUDA 设备（无 nvidia-smi）"
         except Exception:
             pass
-    out.append(Item("gpu", "NVIDIA 显卡与驱动", "GPU 加速的前提", CRIT, ok,
-                    detail or "不可用",
-                    "本项目**强制用 GPU**（CPU 跑一首歌要几分钟）。请确认：\n"
-                    "        1) 机器上有 NVIDIA 显卡（不是 AMD/Intel 核显）\n"
-                    "        2) 装了较新的 NVIDIA 驱动：https://www.nvidia.cn/drivers/\n"
-                    "        3) 命令行跑 nvidia-smi 能看到显卡表格"))
 
-    # 显卡到不到位，再用 torch 复核一遍（声纹/分离走 torch）
+    is_rtx = "RTX" in (name or "").upper()
+    detail = name
+    if ok_gpu and driver:
+        detail = f"{name}　驱动 {driver}" + (f"　显存 {vram}" if vram else "")
+    if ok_gpu and not is_rtx:
+        detail += "（不是 RTX 系列；能跑，但没有 RTX 的加速优势）"
+
+    out.append(Item("gpu", "NVIDIA 显卡（RTX 系列）", "GPU 加速的前提", CRIT,
+                    ok_gpu, detail or "不可用",
+                    "本项目**强制用 GPU**（CPU 跑一首歌要几分钟）。请确认：\n"
+                    "        1) 机器上有 **NVIDIA 显卡**（不是 AMD / Intel 核显）\n"
+                    "        2) 装了较新的 NVIDIA 驱动：https://www.nvidia.cn/drivers/\n"
+                    "        3) 命令行跑 nvidia-smi 能看到显卡表格\n"
+                    "      注：RTX 系列体验最好；GTX 10 系及以后也能用（CUDA 12 要求算力≥5.0）"))
+
+    # 显卡到不到位，再用 torch 复核一遍（声纹/分离走 torch，和 ASR 不是同一条路）
     try:
         import torch
         ok2 = torch.cuda.is_available()
