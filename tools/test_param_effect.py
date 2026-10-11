@@ -19,7 +19,12 @@ sys.path.insert(0, HERE)
 
 from ttml_reader import doc_to_ttml, parse_ttml  # noqa: E402
 
+# ⚠️ 输入必须**随仓库分发**：原来写死 outputs/在出发之前.duet.ttml，
+# 而那是我本机的真实产物、已被 .gitignore 排除 —— 新克隆的人跑这个工具会直接失败。
+# 优先用本机真实产物（更能代表真实数据），没有就退回仓库自带的 fixture。
 SRC = "outputs/在出发之前.duet.ttml"
+if not os.path.exists(SRC):
+    SRC = "tests/fixtures/demo-duet.ttml"
 
 fails: list = []
 oks = 0

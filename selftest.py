@@ -1774,8 +1774,14 @@ def test_experiment_isolation():
               os.path.join(here, "diarize.py"), encoding="utf-8").read())
 
     # 实验权重放在独立目录，且评估工具能正常导入它
+    # ⚠️ models/ **不随仓库分发**（体积 + 授权），新克隆的人本来就没有它 ——
+    # 所以这里只检查"**如果**有 models/，实验权重必须待在自己的子目录里"，
+    # 没有 models/ 时跳过，而不是判失败（否则新克隆一跑自检就红）。
     exp_dir = os.path.join(here, "models", "singer_identity")
-    check("实验权重在独立目录 models/singer_identity/", os.path.isdir(exp_dir))
+    if os.path.isdir(os.path.join(here, "models")):
+        check("实验权重在独立目录 models/singer_identity/", os.path.isdir(exp_dir))
+    else:
+        print("  (未分发 models/，跳过实验权重目录检查)")
     try:
         sys.path.insert(0, os.path.join(here, "tools"))
         import eval_diarization  # noqa: F401
