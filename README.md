@@ -103,6 +103,30 @@ pip install -r requirements.txt
 首次运行会自动下载 Whisper 模型（`large-v3` 约 3 GB，缓存在 `.hf_cache/`）。
 **下过一次之后就能完全离线使用**——这也是本项目的目标形态。
 
+> ### ⚠️ 首次使用必须联网下载模型（最容易卡住的一步）
+>
+> **模型权重不随仓库/发布包分发**（3 GB，且 GitHub Release 单文件上限 2 GB）。
+> 所以第一次转换时会去下载，这一步需要能访问 HuggingFace。
+>
+> **下载失败时**，程序会明确告诉你是"**模型拿不到**"而不是显卡问题，并给出三条出路：
+>
+> 1. **联网下载**：确认能访问 `huggingface.co`；国内建议先设镜像
+>    ```bash
+>    set HF_ENDPOINT=https://hf-mirror.com        # Windows
+>    export HF_ENDPOINT=https://hf-mirror.com     # macOS / Linux
+>    ```
+> 2. **复用已有的模型**（换电脑 / 换目录时最快，不用重新下载）：
+>    把别处的 `.hf_cache/models--Systran--faster-whisper-large-v3` 整个目录
+>    复制到本目录的 `.hf_cache/` 下。
+>    *Windows 上还可以用目录联接，秒完成、不占额外磁盘：*
+>    ```cmd
+>    mklink /J "新目录\.hf_cache" "旧目录\.hf_cache"
+>    ```
+> 3. **先用小模型跑通**：界面上「Whisper 模型」选 `small`（~0.5 GB）或
+>    `medium`（~1.5 GB），或命令行 `--model small`。精度略低但下载快得多。
+>
+> 也可以直接指向一个本地模型目录：`--model D:\models\faster-whisper-large-v3`。
+
 > 仓库里自带的 `minipip.py` 是一个**纯内存 wheel 安装器**（不写临时文件、多镜像回退）。
 > 只有在 `pip` 被环境限制（企业沙箱、临时目录不可写等）时才需要它：
 > ```bash

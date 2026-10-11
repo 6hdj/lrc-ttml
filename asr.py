@@ -167,10 +167,22 @@ class WhisperASR:
                 cpu_threads=self.cpu_threads,
             )
         except Exception as e:
+            name = type(e).__name__
+            msg = str(e)
+
+            # ⚠️⚠️ **先分辨"模型没下载到"和"显卡用不了"** —— 这两件事的处置完全不同，
+            # 而老代码把它们混成了一句"GPU 初始化失败"，害得用户去查显卡驱动，
+            # 真正的原因（模型没下下来 / 连不上 HuggingFace）被完全盖住。
+            # 真踩过：用户在发布包里跑，本地没有 .hf_cache、hf-mirror 又连不上，
+            # 日志显示"GPU 初始化失败"，然后回退 CPU 又失败一次，最后抛一句
+            # LocalEntryNotFoundError 的天书堆栈。
+            if self._is_download_error(e):
+                raise RuntimeError(self._offline_help(path, name, msg)) from e
+
             if self.device != "cuda":
                 raise
-            # 显卡不可用（缺 DLL、显存不足…）时自动退回 CPU，别让整个任务失败
-            self.log(f"[ASR] ⚠ GPU 初始化失败（{type(e).__name__}: {str(e)[:120]}），回退 CPU")
+            # 到这里才是真的显卡不可用（缺 DLL、显存不足…）→ 退回 CPU，别让任务失败
+            self.log(f"[ASR] ⚠ GPU 初始化失败（{name}: {msg[:120]}），回退 CPU")
             self.device = "cpu"
             self.compute_type = "int8"
             self._model = WhisperModel(
@@ -180,6 +192,59 @@ class WhisperASR:
                 cpu_threads=self.cpu_threads,
             )
         return self._model
+
+    @staticmethod
+    def _is_download_error(e: BaseException) -> bool:
+        """这个异常是不是"模型拿不到"（而不是"显卡用不了"）。
+
+        按异常类名判断，不 import huggingface_hub（它可能没装）。
+        """
+        name = type(e).__name__
+        if name in ("LocalEntryNotFoundError", "OfflineModeIsEnabled",
+                    "RepositoryNotFoundError", "GatedRepoError",
+                    "EntryNotFoundError", "RevisionNotFoundError"):
+            return True
+        # requests / httpx / urllib 的连接类错误
+        if any(k in name for k in ("Connection", "Timeout", "HTTPError",
+                                   "MaxRetry", "SSLError", "ProxyError",
+                                   "NewConnection", "RemoteDisconnected")):
+            return True
+        text = str(e).lower()
+        return ("cannot find the requested files in the local cache" in text
+                or "couldn't connect" in text
+                or "connection" in text and "cache" in text)
+
+    def _offline_help(self, path: str, name: str, msg: str) -> str:
+        """给"模型拿不到"写一条能照着做的提示。
+
+        ⚠️ 一定要给出**可操作的下一步**。只说"下载失败"等于没说 ——
+        用户既不知道模型该放哪、也不知道还能换个小的先用。
+        """
+        repo = _REPO_MAP.get(self.model_name, self.model_name)
+        snap = os.path.join(self.cache_dir, "models--" + repo.replace("/", "--"))
+        return (
+            f"取不到语音识别模型「{self.model_name}」（{name}）。\n"
+            f"  本地缓存：{snap}\n"
+            f"  远端仓库：{repo}\n"
+            f"  原始报错：{msg[:200]}\n"
+            "\n"
+            "  这不是显卡问题。首次使用需要联网下载一次模型（large-v3 约 3 GB），\n"
+            "  下好后就能完全离线使用。三种办法任选其一：\n"
+            "\n"
+            "  ① 联网下载：确认能访问 huggingface.co。国内网络建议设镜像后重试\n"
+            "       set HF_ENDPOINT=https://hf-mirror.com\n"
+            "\n"
+            f"  ② 复用已有的模型（换过电脑/换过目录时最快）：\n"
+            f"       把别处 .hf_cache\\models--{repo.replace('/', '--')} 整个目录\n"
+            f"       复制到 {self.cache_dir}\\ 下即可，不用重新下载\n"
+            "\n"
+            "  ③ 先用小模型跑通（精度略低，但体积小很多、下载快）：\n"
+            "       --model small     （约 0.5 GB）\n"
+            "       --model medium    （约 1.5 GB）\n"
+            "     界面上对应「Whisper 模型」下拉框。\n"
+            f"\n"
+            f"  也可以用本地模型目录：把模型解压好后传 --model <目录路径>"
+        )
 
     # ------------------------------------------------------------------ 音频
     def load_audio(self, audio_path: str):

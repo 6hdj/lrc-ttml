@@ -2769,6 +2769,47 @@ def test_asr_prompt_length():
     check("没有歌词时也不崩", isinstance(pl._build_prompt("", [], []), str))
 
 
+def test_model_download_diagnosis():
+    """[36] "模型拿不到"不能被报成"GPU 初始化失败\""""
+    print("\n[36] 模型缺失的诊断")
+    from asr import WhisperASR
+
+    # ⚠️ 守的是一个**误导用户的报错**（2026-10-11）：
+    # asr.ensure_loaded 把所有异常都当成"GPU 初始化失败"，然后回退 CPU 又失败一次。
+    # 用户在发布包里跑（本地没有 .hf_cache、镜像又连不上）时，日志说"GPU 初始化失败"，
+    # 于是他去查显卡驱动 —— 真正的原因（模型没下载到）被完全盖住。
+    # 现在先分辨"模型拿不到"和"显卡用不了"。
+
+    class LocalEntryNotFoundError(Exception):
+        pass
+
+    class ConnError(Exception):
+        pass
+
+    # ⚠️ 判定是按**类名**做的（不 import huggingface_hub），所以测试类也要起成
+    # 会被命中的名字 —— 用 FakeConnError 这种名字会假失败。
+    ConnError.__name__ = "ConnectionError"
+    check("LocalEntryNotFoundError → 判为下载/网络问题",
+          WhisperASR._is_download_error(LocalEntryNotFoundError("x")))
+    check("ConnectionError → 判为下载/网络问题",
+          WhisperASR._is_download_error(ConnError("could not connect")))
+    check("报错文本含 'cannot find the requested files in the local cache' 也算",
+          WhisperASR._is_download_error(
+              RuntimeError("... cannot find the requested files in the local cache ...")))
+    check("缺 DLL（OSError WinError 126）**不**算，仍走 GPU→CPU 回退",
+          not WhisperASR._is_download_error(OSError("[WinError 126] 找不到指定的模块")))
+    check("显存不足（CUDA out of memory）**不**算",
+          not WhisperASR._is_download_error(RuntimeError("CUDA out of memory")))
+
+    # 提示必须是**可操作的**：告诉用户模型放哪、怎么换小模型
+    a = WhisperASR(model="large-v3")
+    txt = a._offline_help("large-v3", "LocalEntryNotFoundError", "boom")
+    check("提示里给出本地缓存路径", ".hf_cache" in txt)
+    check("提示里给出 HF_ENDPOINT 镜像写法", "HF_ENDPOINT" in txt)
+    check("提示里给出换小模型的参数", "--model small" in txt and "--model medium" in txt)
+    check("提示里明确说明'不是显卡问题'", "不是显卡问题" in txt)
+
+
 if __name__ == "__main__":
     test_scan_line()
     test_dp()
@@ -2797,6 +2838,7 @@ if __name__ == "__main__":
     test_param_wiring()
     test_lrc_marker_lines()
     test_asr_prompt_length()
+    test_model_download_diagnosis()
     test_lrc_no_decimal_time()
     test_edit_backfill_hints()
     test_robustness_fixes()
