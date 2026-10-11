@@ -76,9 +76,56 @@ def _banner(base: str) -> None:
     print("  uploads/ 与 outputs/ 都在这个目录下（转换结果就在 outputs/）")
 
 
+def _is_elevated() -> bool:
+    """当前进程是不是以管理员身份运行"""
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _open_browser(url: str) -> None:
+    """打开浏览器。
+
+    ⚠️⚠️ **不要直接用 `webbrowser.open`**。如果程序是以**管理员身份**运行的，
+    它拉起的浏览器也是管理员权限；等用户以后再以普通权限启动时，
+    Edge 会弹：
+
+        "Microsoft Edge 未响应，因为现有实例正在以提升的权限运行。
+         是否要用普通权限重启现有实例？"
+
+    用户看到的就是"浏览器报错、打不开界面"（真踩过）。
+    `explorer.exe <url>` 是**始终以普通用户权限**运行的（Explorer 自己就是），
+    所以不管本程序是不是管理员，浏览器都能正常打开。
+    """
+    import subprocess
+    import webbrowser
+
+    if os.name == "nt":
+        try:
+            # Explorer 转发 URL：非提升、且复用已有浏览器窗口
+            subprocess.Popen(["explorer.exe", url], close_fds=True)
+            return
+        except Exception:
+            pass
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
 def main() -> int:
     argv = sys.argv[1:]
     base = _rehome()
+
+    # 以管理员运行会带来一连串麻烦（浏览器权限冲突、文件属主变成管理员导致
+    # 以后普通权限改不动）。不需要管理员，所以明确提醒一句。
+    if os.name == "nt" and _is_elevated() and "--quiet" not in argv:
+        print("[提示] 你正在以**管理员身份**运行。本程序不需要管理员权限，"
+              "建议关掉后用普通方式双击 启动.bat。\n"
+              "       （管理员运行时，浏览器可能弹"
+              "「现有实例正在以提升的权限运行」）")
 
     # ⚠️ 先进 UTF-8 控制台模式再说话：冻结进程的 stdout 默认走控制台代码页
     # （简体中文 = GBK），而我们输出里有 ⚠️ 这类不在 GBK 里的字符，
@@ -135,7 +182,7 @@ def main() -> int:
             for _ in range(60):
                 try:
                     urllib.request.urlopen(url, timeout=1).read(64)
-                    webbrowser.open(url)
+                    _open_browser(url)
                     return
                 except Exception:
                     time.sleep(0.5)

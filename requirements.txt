@@ -8,6 +8,17 @@
 # 自带 ctranslate2 / tokenizers / onnxruntime / av / numpy
 faster-whisper>=1.1.0
 
+# ⚠️⚠️ **av 必须 <19，ctranslate2 必须 <4.9，numpy 也必须 <2.5**。
+# 真踩过：打包环境里 pip 装到了 av 19.0.1，而 faster_whisper 的
+# `av.open(..., metadata_errors="ignore")` 在 av 19 里**参数已被移除**，
+# 于是转换直接报
+#     TypeError: open() got an unexpected keyword argument 'metadata_errors'
+# 这在**运行到解码音频时**才炸，装的时候完全看不出来。
+# 下面的版本范围与实测可用的组合一致（av 18.1.0 / ct2 4.8.1 / numpy 2.4.6）。
+av<19
+ctranslate2<4.9
+numpy<2.5
+
 # ── 声纹分声部（可选）─────────────────────────────────────
 # 只需要 torch + numpy 推理。**网络定义与权重不随仓库分发**，
 # 见 README「第三方依赖与许可 → 关于 CAM++ 声纹权重」。

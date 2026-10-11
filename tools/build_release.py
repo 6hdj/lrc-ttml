@@ -260,9 +260,51 @@ def build_exe(full: bool) -> str:
            ]
     for m in UNUSED:
         cmd += ["--exclude-module", m]
+    # ⚠️ **torch 必须留在包里**（除非显式要求排除）。
+    # CAM++ 声纹分声部的网络是用 PyTorch 写的（speaker_campplus.py），
+    # 以前 lite 版把 torch 一起排除掉 → 用户开「强制双声部」时
+    # **要么静默降级成单人、要么 No module named 'torch'**（两个都真踩过）。
+    # 现在用 `.venvpack` 里的 **CPU 版 torch**（约 200MB，不是 CUDA 版那 2.9GB）：
+    # 分声部能跑，而 ASR 的 GPU 加速走 CTranslate2，完全不受影响。
+    keep_torch = os.environ.get("L2T_WITH_TORCH", "1") == "1"
+    skip = [m for m in HEAVY if not (keep_torch and m.startswith("torch"))]
     if not full:
-        for m in HEAVY:
+        for m in skip:
             cmd += ["--exclude-module", m]
+    # ⚠️ torch 必须用 **--collect-all**，不能只用 --collect-data：
+    # torch 的核心是 `torch\_C.pyd` 加 `torch\lib\*.dll`（c10 / c10_cuda / torch_cpu …），
+    # 只收"数据文件"会出现"目录里有 torch、import 却失败"的假象（真踩过：
+    # `_internal\torch` 有 445MB，`import torch` 照样 ModuleNotFoundError）。
+    if keep_torch:
+        cmd += ["--collect-all", "torch"]
+    # ⚠️⚠️ **CAM++ 的网络定义必须打进包里**（`models/campplus_src/`）。
+    # 声纹分声部需要两样东西：
+    #   ① 权重 `models/campplus/campplus_cn_common.bin` —— 安装程序从 ModelScope 下；
+    #   ② 网络定义 `models/campplus_src/model.py` —— **在仓库里，必须构建时打包**。
+    # 少了 ②，`speaker_campplus.available()` 返回 False，`diarize` 就**退回单人**：
+    # 用户开着「强制双声部」却一行都不分（真踩过，而且是查了很久才发现的）。
+    # ⚠️⚠️ **CUDA 运行库（cuBLAS + cuDNN）必须打进包里**。
+    # 事实（上网核对过，多个来源一致）：
+    #   * NVIDIA 驱动只提供 **驱动层**（nvcuda.dll），让 GPU 能跑推理 ——
+    #     所以**不需要** CUDA Toolkit、不需要 nvcc、不需要单独"装 CUDA"；
+    #   * 但 cuBLAS / cuDNN **不在驱动里**，是独立的运行时库，CTranslate2
+    #     要用它们（faster-whisper 的经典报错就是
+    #     `Library cublas64_12.dll is not found or cannot be loaded`）。
+    #   正确做法就是"当 Python 依赖装"（`nvidia-cublas-cu12` / `nvidia-cudnn-cu12`），
+    #   构建期直接放进 `_internal/nvidia/`，`asr._register_cuda_dlls()` 会扫到。
+    # 之前让安装程序自己 HTTP 下这 2GB，既慢又容易被网络截断（BadZipFile），
+    # 纯属自找麻烦。
+    nv = os.path.join(".venvpack", "Lib", "site-packages", "nvidia")
+    if not os.path.isdir(nv):
+        nv = os.path.join(".venv", "Lib", "site-packages", "nvidia")
+    if os.path.isdir(nv):
+        cmd += ["--add-data", f"{nv}{os.pathsep}nvidia"]
+        print(f"  带上 CUDA 运行库：{nv}")
+    else:
+        print("  ⚠ 没找到 nvidia 包，GPU 推理会失败（先 pip install "
+              "nvidia-cublas-cu12 nvidia-cudnn-cu12）")
+    if os.path.isdir(os.path.join("models", "campplus_src")):
+        cmd += ["--add-data", f"models{os.pathsep}models"]
     cmd.append("launcher.py")
 
     rc = run(cmd)
@@ -398,6 +440,12 @@ def build_installer() -> str:
     cmd = [sys.executable, "-m", "PyInstaller",
            "--noconfirm", "--clean", "--onefile",
            "--name", "安装程序",
+           # ⚠️ **安装程序必须要求管理员权限**：它要往用户选的任意目录写
+           # （包括盘根下的新建目录）、要建桌面快捷方式、要写注册表以外的东西。
+           # 不加这个，普通权限会 `WinError 5 拒绝访问`，安装到一半失败。
+           # ⚠️ 但**主程序不要**要求管理员 —— 那样浏览器会以管理员身份启动，
+           # 之后普通权限打开就报"现有实例正在以提升的权限运行"。
+           "--uac-admin",
            "--add-data", f"{payload}{os.pathsep}payload",
            "--hidden-import", "install",
            "--hidden-import", "download_model",

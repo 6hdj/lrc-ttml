@@ -76,24 +76,38 @@
 
 ## 快速开始
 
-### 最快的用法（Windows，不用装 Python）
+### Windows 一键安装（推荐，不用装 Python）
 
 1. 从 [Releases](https://github.com/6hdj/lrc-ttml/releases) 下载
-   **`Lyric2TTML-1.0.0-win64-lite.zip`**（约 94 MB），解压到任意目录
-2. 下载 **`Lyric2TTML-1.0.0-installer.exe`**，**放进刚解压的那个目录**
-3. 双击 **`安装程序.exe`** —— 它会：
-   * 逐个检查运行需要的东西（**22 项**：显卡 / CUDA 运行库 / 语音识别模型 /
-     声纹分声部模型 / 依赖库 / 磁盘空间 …）
-   * **告诉你缺什么**（每项都写明"缺了会怎样"）
-   * 点「开始补全」后**自动下载安装**
-   * 全部就绪后按钮变成 **「▶ 启动软件」**，点一下就开了
+   **`Lyric2TTML-1.0.3-安装程序.zip`**
+2. 解压到任意位置，双击里面的 **`安装程序.exe`**
+   （会弹 UAC 请求管理员权限 —— **安装程序需要**：它要往你选的目录写文件、
+   建桌面快捷方式。**主程序不需要管理员权限**）
+3. 点「**开始安装**」：**可以选安装路径** → 自动解压
+4. 它逐个检查 **21 项**运行需要的东西，缺什么列出来并写明"缺了会怎样"
+5. 点「**开始补全**」→ 自动下载安装
+6. 全部就绪后按钮变成「**▶ 启动软件**」，点一下就开了
 
-之后每次使用只要双击 **`启动.bat`**，浏览器会自动打开界面。
+装完桌面会有 `Lyric2TTML` 快捷方式；卸载入口是安装目录里的 `卸载程序.bat`（桌面也有一份）。
 
-> **模型不随包分发**（3 GB 语音识别模型 + 300 MB 声纹权重 + 2 GB CUDA 运行库），
-> 所以第一次要用安装程序补一次；**装完之后完全离线**。
+> **安装包已经内置**：Python 运行时、全部依赖库、**CPU 版 PyTorch**、
+> **CUDA 运行库（cuBLAS + cuDNN）**、CAM++ 声纹网络定义。
+>
+> **唯一还需要联网下载的是语音识别模型**（large-v3，约 3 GB）——
+> GitHub 单文件上限 2 GB，装不进安装包；下载**支持断点续传**。
+>
+> 装完之后**完全离线**。
 
-### 从源码运行（开发 / 全功能）
+> ### 关于 CUDA：不需要装 CUDA Toolkit
+>
+> NVIDIA 驱动自带驱动层（`nvcuda.dll`），足够跑 GPU 推理 ——
+> **不需要安装 CUDA Toolkit、不需要 nvcc**。
+>
+> CTranslate2 另外需要 **cuBLAS / cuDNN** 这两个库（它们**不在驱动里**），
+> 按 Python 依赖分发即可（`nvidia-cublas-cu12` / `nvidia-cudnn-cu12`）——
+> **安装包已经内置**，用户不用做任何事。
+
+### 从源码运行（开发 / 想改代码）
 
 ```bash
 git clone https://github.com/6hdj/lrc-ttml
@@ -104,16 +118,24 @@ python install.py          # 检查并补全缺的东西（推荐）
 python web_server.py       # 或直接 python main.py --audio 歌.wav --lyrics 歌.lrc
 ```
 
+**想了解代码结构**：见 [`docs/模块说明.md`](docs/模块说明.md)。那份文档由
+`tools/gen_module_docs.py` **从源码自动生成**（职责取自各模块的 docstring，
+公开 API 由 AST 解析得出），不是手写的 —— 改了代码重跑一次即可。
+
 ### 0. 环境要求
 
 * **Python 3.10+**（开发时用的是 3.14）
-* **ffmpeg** 在 `PATH` 里（解码音频用）
+* **ffmpeg**（**可选**）—— 多数格式靠内置的 PyAV 就能解，遇到解不开的再装
   * Windows：下载 [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) 解压，把 `bin` 加进 PATH
   * macOS：`brew install ffmpeg`
   * Linux：`sudo apt install ffmpeg`
-* **可选 GPU**：有 NVIDIA 卡会快很多（见下），没有也能跑，只是慢
+* **NVIDIA 显卡**：本项目**强制使用 GPU**，没有 CPU 降级（见下文「计算设备」）
 
 ### 1. 安装
+
+**Windows 用户**：直接用上面的「一键安装」，不用看这一节。
+
+**源码运行**：
 
 ```bash
 git clone <你的仓库地址>
@@ -126,7 +148,13 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
+python install.py          # 检查缺什么、自动补全（推荐先跑一次）
 ```
+
+> ⚠️ `requirements.txt` 里**钉死了 `av<19` / `ctranslate2<4.9` / `numpy<2.5`**。
+> 不要随意升级：`faster_whisper` 调用的 `av.open(..., metadata_errors=...)`
+> 在 av 19 里**参数已被移除**，装了新版会在**解码音频时**报
+> `TypeError: open() got an unexpected keyword argument 'metadata_errors'`。
 
 首次运行会自动下载 Whisper 模型（`large-v3` 约 3 GB，缓存在 `.hf_cache/`）。
 **下过一次之后就能完全离线使用**——这也是本项目的目标形态。

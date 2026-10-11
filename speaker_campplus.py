@@ -20,8 +20,39 @@ from typing import Optional
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_SRC = os.path.join(_HERE, "models", "campplus_src")
-_MODEL = os.path.join(_HERE, "models", "campplus", "campplus_cn_common.bin")
+
+
+def _model_roots() -> list:
+    """声纹权重/网络定义可能所在的根目录，**按优先级**排。
+
+    ⚠️ **冻结打包后不能只用 `__file__` 一个位置定死**。打包后 `__file__` 指向
+    `_internal/`，而安装程序把权重下到 `<安装目录>/models/campplus` —— 两边对不上，
+    `available()` 返回 False，`diarize` 就**静默降级成单人**：用户开了"强制双声部"
+    却一行都没分，日志里连个错都没有（真踩过，极难查）。
+    所以**exe 所在目录优先**，`_internal` 兜底。
+    """
+    import sys as _sys
+    roots = []
+    if getattr(_sys, "frozen", False):
+        roots.append(os.path.dirname(os.path.abspath(_sys.executable)))
+    roots.append(_HERE)
+    out = []
+    for r in roots:
+        if r not in out:
+            out.append(r)
+    return out
+
+
+def _find(rel: str) -> str:
+    for r in _model_roots():
+        p = os.path.join(r, rel)
+        if os.path.exists(p):
+            return p
+    return os.path.join(_HERE, rel)
+
+
+_SRC = _find(os.path.join("models", "campplus_src"))
+_MODEL = _find(os.path.join("models", "campplus", "campplus_cn_common.bin"))
 
 SR = 16000
 N_MELS = 80

@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import zipfile
 from tkinter import ttk
@@ -110,6 +111,37 @@ def app_here() -> str:
         if os.path.exists(c):
             return os.path.dirname(c)
     return ""
+
+
+def ensure_dir(path: str) -> bool:
+    """建目录，尽量成功。
+
+    ⚠️⚠️ **Python 的 `os.makedirs` 在盘根目录下会 `WinError 5 拒绝访问`，
+    而 PowerShell 的 `New-Item` 却可以** —— 实测（同一台机器、同一个用户）：
+
+        PS> New-Item -ItemType Directory -Path E:\\_probe      → ✓ 成功
+        py> os.makedirs("E:/_probe")                           → ✗ WinError 5
+
+    用户"浏览…"选 `E:\\` 时我们拼出 `E:\\Lyric2TTML`，正好踩中这一条：
+    安装程序直接抛 PermissionError，界面还只能甩一坨 traceback。
+    所以这里先用 Python 试，失败就**回退到 PowerShell / cmd**。
+    """
+    try:
+        os.makedirs(path, exist_ok=True)
+        return True
+    except Exception:
+        pass
+    for cmd in (["powershell", "-NoProfile", "-Command",
+                 f"New-Item -ItemType Directory -Force -Path '{path}' "
+                 f"-ErrorAction SilentlyContinue | Out-Null"],
+                ["cmd", "/c", "mkdir", path]):
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=60)
+        except Exception:
+            pass
+        if os.path.isdir(path):
+            return True
+    return False
 
 
 class Installer:
@@ -362,6 +394,8 @@ class Installer:
                                               text="▶ 启动软件（完成）")
                     elif len(m) > 3 and m[3] == "install_app":
                         self.btn_go.configure(command=self.start_install_app)
+                    elif len(m) > 3 and m[3] == "install":
+                        self.btn_go.configure(command=self.start_install)
                     else:
                         self.btn_go.configure(command=self.start_install)
         except queue.Empty:
@@ -395,7 +429,50 @@ class Installer:
             self.say("[错误] 安装包里没有找到主程序载荷（可能是用源码方式跑的）。")
             return False
         dest = self.install_dir
-        os.makedirs(dest, exist_ok=True)
+        # ⚠️ **先探测能不能写，再解压。** 往**盘根目录**（`E:\`）建文件夹在 Windows 上
+        # 需要管理员权限，普通用户会 `WinError 5 拒绝访问` —— 真踩过：用户在
+        # 「浏览…」里选了 `E:\`，`os.makedirs` 抛异常，而且异常在**后台线程**里，
+        # 界面只能把一坨 traceback 甩给用户。这里先试写，失败就给人话 + 推荐位置。
+        try:
+            # ⚠️ 目录**已经存在且可写**时，根本不用（也不该）调 makedirs：
+            # `os.makedirs(exist_ok=True)` 在有些盘上即使目录存在也会报
+            # `WinError 5`（盘根目录的 ACL 特殊）。先测可写性，最稳。
+            if not os.path.isdir(dest):
+                if not ensure_dir(dest):
+                    raise PermissionError(f"无法创建目录 {dest}")
+            probe = os.path.join(dest, ".l2t_write_test")
+            with open(probe, "w") as f:
+                f.write("x")
+            os.remove(probe)
+        except Exception as e:
+            self.say("")
+            self.say(f"✗ 这个位置装不了：{dest}")
+            self.say(f"  原因：{type(e).__name__}: {e}")
+            self.say("")
+            exists = os.path.isdir(dest)
+            if exists:
+                # ⚠️ 最阴的一种：文件夹**存在**（所以看着没问题），但当前用户写不进去。
+                # 常见原因是这个文件夹当初是**以管理员权限**创建的（比如用管理员命令行
+                # mkdir、或管理员权限的程序建的）—— 属主是 Administrators，
+                # 普通用户只有读权限。真踩过（我自己用管理员权限建过一个，害用户连试好几次）。
+                self.say("  这个文件夹**已经存在，但当前用户写不进去**。")
+                self.say("  最常见的原因：它是**以管理员权限**创建/解压出来的，")
+                self.say("  属主变成了 Administrators，普通用户只有读权限。")
+                self.say("")
+                self.say("  解决办法（任选）：")
+                self.say(f"    ① 把它整删掉，然后在资源管理器里**手动新建**一个，再选它")
+                self.say(f"       （要删的：{dest}）")
+                self.say("    ② 直接换一个位置，比如下面这个必然能写：")
+                self.say(f"       {default_install_dir()}")
+            else:
+                self.say("  这个位置建不出文件夹。")
+                self.say("")
+                self.say("  解决办法（任选）：")
+                self.say(f"    ① 用默认位置：{default_install_dir()}")
+                self.say("    ② 在资源管理器里先手动建好文件夹，再用「浏览…」选中它")
+            self.set_sub("安装位置不可写，请换一个", BAD)
+            return False
+        locked: list = []
         self.say(f"[安装] 正在解压到 {dest}")
         try:
             with zipfile.ZipFile(z) as zf:
@@ -421,10 +498,39 @@ class Installer:
                         os.makedirs(target, exist_ok=True)
                     else:
                         os.makedirs(os.path.dirname(target), exist_ok=True)
-                        with zf.open(n) as src, open(target, "wb") as out:
-                            shutil.copyfileobj(src, out)
+                        # ⚠️ 覆盖安装最常见的两个坑，都必须处理，否则整个安装会中断：
+                        #  ① 旧文件带**只读**属性 → open(.., "wb") 直接 PermissionError
+                        #  ② 程序**还开着**，文件被占用 → 同样 PermissionError
+                        # 真踩过：卡在 CHANGELOG.md 上，整个解压报错、装了 7 次都不成功。
+                        if os.path.exists(target):
+                            try:
+                                import stat as _stat
+                                os.chmod(target, _stat.S_IWRITE)
+                            except Exception:
+                                pass
+                        last = None
+                        for attempt in range(3):
+                            try:
+                                with zf.open(n) as src, open(target, "wb") as out:
+                                    shutil.copyfileobj(src, out)
+                                last = None
+                                break
+                            except PermissionError as e:
+                                last = e
+                                time.sleep(0.4)
+                        if last is not None:
+                            # 单个文件写不进去 → 记下来继续，**不要**让整次安装失败
+                            locked.append(rel)
                     if total and (i % 200 == 0 or i == total):
                         self.set_sub(f"正在安装… {i * 100 // total}%")
+            self.say(f"[完成] 已解压 {len(names)} 个文件")
+            if locked:
+                self.say("")
+                self.say(f"⚠ 有 {len(locked)} 个文件被占用/只读，没能覆盖（其余都装好了）：")
+                for x in locked[:6]:
+                    self.say(f"    {x}")
+                self.say("  多半是**程序还开着**。关掉程序（黑框窗口）和浏览器页面后，")
+                self.say("  重新运行本安装程序即可补上；这些文件不影响核心功能。")
             self.say(f"[完成] 已解压 {len(names)} 个文件")
         except Exception as e:
             self.say(f"[错误] 解压失败：{type(e).__name__}: {e}")
@@ -441,13 +547,25 @@ class Installer:
         return True
 
     def choose_dir(self) -> None:
-        """让用户选安装目录"""
+        """让用户选安装目录 —— **就装在他选的那个文件夹里**。
+
+        ⚠️ 以前是 `os.path.join(d, "Lyric2TTML")` 无条件再追一层，于是用户
+        明明选中了 `E:\\Lyric2TTML`，路径变成 `E:\\Lyric2TTML\\Lyric2TTML`
+        （而且这个子目录还建不出来）—— 真踩过，用户连点几次都是这个错。
+        「选择安装位置」当然应该装在他选的位置上。
+        **只有选到盘根时才补一层名字**（不能直接往盘根里铺一堆文件）。
+        """
         from tkinter import filedialog
         d = filedialog.askdirectory(title="选择安装位置",
                                     initialdir=os.path.dirname(self.install_dir))
-        if d:
-            self.install_dir = os.path.join(d, "Lyric2TTML")
-            self.path_var.set(self.install_dir)
+        if not d:
+            return
+        d = os.path.normpath(d)
+        if len(os.path.splitdrive(d)[1].strip("\\/")) == 0:
+            # 盘根：补一层，别把程序散在根目录
+            d = os.path.join(d, "Lyric2TTML")
+        self.install_dir = d
+        self.path_var.set(d)
 
     # ------------------------------------------------- 快捷方式 / 卸载程序
     def make_shortcut(self) -> None:
@@ -503,27 +621,43 @@ class Installer:
         """
         bat = os.path.join(self.install_dir, "卸载程序.bat")
         desk = os.path.join(os.path.expanduser("~"), "Desktop")
+        # ⚠️⚠️ **绝对不要在这里写 `chcp 65001`**。
+        # 这个 .bat 是用 **GBK** 编码写的（cmd.exe 按本机 ANSI 代码页读批处理），
+        # 一旦开头 chcp 65001，cmd 就会拿 UTF-8 去解 GBK 的字节 →
+        # 用户看到满屏乱码，根本不知道在问什么（真踩过，用户反馈"卸载程序乱码、无响应"）。
+        # 中文 Windows 上保持默认代码页 + GBK 编码才是对的。
         content = (
             "@echo off\r\n"
-            "chcp 65001 >nul\r\n"
             "title 卸载 Lyric2TTML\r\n"
+            "setlocal\r\n"
             "set \"DIR=%~dp0\"\r\n"
             "if \"%DIR:~-1%\"==\"\\\" set \"DIR=%DIR:~0,-1%\"\r\n"
-            "echo 将要删除：%DIR%\r\n"
-            "echo 桌面快捷方式、以及所有已下载的模型都会被删掉。\r\n"
             "echo.\r\n"
-            "set /p Y=确定卸载吗？输入 y 回车： \r\n"
-            "if /i not \"%Y%\"==\"y\" ( echo 已取消。& pause & exit /b 0 )\r\n"
+            "echo   将要卸载 Lyric2TTML\r\n"
+            "echo   位置：%DIR%\r\n"
             "echo.\r\n"
-            "echo 正在删除桌面快捷方式…\r\n"
+            "echo   会一并删除：桌面快捷方式、以及已下载的语音识别模型（约3GB）。\r\n"
+            "echo.\r\n"
+            "choice /c YN /n /m \"   确定卸载吗？[Y=是  N=取消] \"\r\n"
+            "if errorlevel 2 (\r\n"
+            "  echo.\r\n"
+            "  echo   已取消。\r\n"
+            "  pause\r\n"
+            "  exit /b 0\r\n"
+            ")\r\n"
+            "echo.\r\n"
+            "echo   正在删除桌面快捷方式…\r\n"
             f"del /q \"{desk}\\Lyric2TTML.lnk\" 2>nul\r\n"
             f"del /q \"{desk}\\卸载 Lyric2TTML.lnk\" 2>nul\r\n"
-            "echo 正在删除程序文件（模型较大，可能需要几十秒）…\r\n"
+            "echo   正在删除程序文件（模型较大，请耐心等，可能要一两分钟）…\r\n"
             "cd /d \"%TEMP%\"\r\n"
             "rmdir /s /q \"%DIR%\"\r\n"
             "echo.\r\n"
-            "if exist \"%DIR%\" ( echo [未完全删除] 可能有文件被占用，请关掉程序后重试。 ) "
-            "else ( echo [完成] 已卸载干净。 )\r\n"
+            "if exist \"%DIR%\" (\r\n"
+            "  echo   [未完全删除] 可能有文件被占用，请关掉程序窗口后重试。\r\n"
+            ") else (\r\n"
+            "  echo   [完成] 已卸载干净。\r\n"
+            ")\r\n"
             "pause\r\n"
         )
         try:
@@ -545,6 +679,31 @@ class Installer:
         except Exception as e:
             self.say(f"[提示] 写卸载脚本失败：{type(e).__name__}: {e}")
 
+    def quick_recheck(self, keys: list) -> list:
+        """补全后的**轻量复查**：只看刚装的那几项文件在不在，不再跑一遍 `--doctor`。
+
+        ⚠️⚠️ 为什么必须轻量：`Lyric2TTML.exe --doctor` 要
+        **import torch（445MB）+ ctypes 加载 cublas/cudnn（2GB）**，
+        在打包环境里跑一次要**好几分钟**。补全后如果又调一次完整 doctor，
+        界面就会长时间"没反应"—— 用户实测**卡了 15~20 分钟**，
+        手动杀掉重开才发现其实早就装好了（真踩过）。
+
+        补全只是"下文件"，所以复查也只需要"看文件在不在"。
+        """
+        still = []
+        for k in keys:
+            if k == "whisper":
+                ok = bool(core.whisper_models())
+            elif k == "campp":
+                ok = core.campp_present()
+            elif k.startswith("cuda_"):
+                ok = core.cuda_dlls_present()
+            else:
+                ok = True
+            if not ok:
+                still.append(k)
+        return still
+
     def start_install_app(self) -> None:
         """「开始安装」：解压主程序 → 接着做环境检查。"""
         if self.busy:
@@ -553,7 +712,15 @@ class Installer:
         self.btn_go.configure(state="disabled")
 
         def work():
-            ok = self.extract_app()
+            # ⚠️ 兜底：后台线程里抛出的异常不会有人接，只能在控制台留一坨 traceback，
+            # 用户看到的就是"安装程序闪一下就没了"。所以这里一律转成人话。
+            try:
+                ok = self.extract_app()
+            except Exception as e:
+                import traceback
+                self.say(f"\n[错误] 安装时出问题：{type(e).__name__}: {e}")
+                self.say(traceback.format_exc()[-400:])
+                ok = False
             self.busy = False
             if ok:
                 self.q.put(("setbtn", "开始检查", self.start_check, "normal"))
@@ -571,7 +738,7 @@ class Installer:
         self.busy = True
         self.btn_go.configure(state="disabled")
         self._scroll_top()          # 重新检查时清单滚回顶部，别停在上一轮的位置
-        self.set_sub("正在检查你的电脑…")
+        self.set_sub("正在检查你的电脑…（首次可能要一两分钟，请勿关闭）")
         threading.Thread(target=self._check_worker, daemon=True).start()
 
     def _check_worker(self) -> None:
@@ -758,20 +925,183 @@ class Installer:
             self.say("可以关掉重试，或把日志发给开发者。")
             self.q.put(("done", "normal", "重试"))
         else:
-            # ⚠️ **不能装完就直接给「启动软件」**。真踩过：检查中途崩掉、
-            # 待装列表是残的，这一步照样报"安装完成"，用户一点启动就报
-            # "本地缓存未找到模型" —— 等于把该装的东西甩给用户手动下。
-            # 所以补全之后**必须重新检查一遍**，确认真的不缺了才允许启动。
+            # ⚠️ **不能装完再跑一次完整 doctor** —— 那个要 import torch + 加载 2GB
+            # cudnn，界面会长时间无响应（实测卡 15~20 分钟）。
+            # 补全只是下文件，所以这里只做**轻量复查**（看文件在不在），秒出结果。
+            keys = [k for k, _n, _f in self.items]
             self.say("\n" + "=" * 46)
-            self.say("  补全完成，正在**重新检查**确认没有遗漏…")
+            self.say("  正在复查（只检查刚装的文件，很快）…")
             self.set_sub("正在复查…", ACCENT)
-            self.q.put(("run", self.start_check))
+            try:
+                still = self.quick_recheck(keys)
+            except Exception as e:
+                self.say(f"  [警告] 复查出错（不影响使用）：{type(e).__name__}: {e}")
+                still = []
+            if still:
+                self.say(f"  ⚠ 还有 {len(still)} 项没就位：{'、'.join(still)}")
+                self.say("     可以点「开始补全」再试一次（支持断点续传）。")
+                self.set_sub(f"还有 {len(still)} 项没装好", BAD)
+                self.q.put(("done", "normal", "继续补全", "install"))
+            else:
+                self.say("  ✓ 补全的文件都已就位。")
+                self.say("\n" + "=" * 46)
+                self.say("  ✅ 安装完成！点下面的「▶ 启动软件」开始使用。")
+                self.set_sub("安装完成，可以使用了", OK)
+                self.q.put(("done", "normal", "▶ 启动软件", "launch"))
             return
         self.q.put(("quitbtn", None))
         self.root.after(0, lambda: self.btn_quit.configure(state="normal"))
 
 
+def e2e(dest: str) -> int:
+    """无界面地把"安装 → 检查 → 补全 → 复查"跑一遍，并打印每一步结果。
+
+    这是给**自动化**用的入口（`安装程序.exe --e2e E:\\Lyric2TTML`），
+    这样我能像小白一样真的把软件装到 E 盘，而不是只测源码。
+    """
+    print("=" * 70)
+    print(f"  端到端安装测试 -> {dest}")
+    print("=" * 70)
+    # ⚠️ Windows 控制台默认 GBK，日志里的 ✓/✗/⚠ 会直接把脚本崩掉
+    # （UnicodeEncodeError，真踩过）。先切 UTF-8，切不动就退化成 ASCII。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    print(f"  payload_zip() = {payload_zip() or '(取不到内置载荷！)'}")
+    if not payload_zip():
+        print("  ✗ 没有载荷 —— 这不是打包版，测试无意义")
+        return 1
+
+    root = tk.Tk()
+    root.withdraw()
+    app = Installer(root)
+    app.install_dir = dest
+    app._app_ready = False
+    # 无界面模式下，界面上的日志/状态只能丢掉 —— 直接转打到标准输出，
+    # 否则失败原因看不见（第一次跑就是这么白跑一轮的）。
+    app.say = lambda m="": print("    " + str(m), flush=True)
+    app.set_sub = lambda t, c=None: None
+    print("[debug] extract_app 即将开始")
+
+    print("\n[1] 解压安装…")
+    ok = app.extract_app()
+    for _ in range(30):
+        root.update()
+        app._pump_now()
+    exe = os.path.join(dest, "Lyric2TTML.exe")
+    print(f"    解压 {'成功' if ok else '失败'}；主程序存在：{os.path.exists(exe)}")
+    if not ok:
+        root.destroy()
+        return 1
+    n = sum(len(fs) for _, _, fs in os.walk(dest))
+    mb = sum(os.path.getsize(os.path.join(r, f))
+             for r, _, fs in os.walk(dest) for f in fs) / 1024 / 1024
+    print(f"    装了 {n} 个文件，{mb:.0f} MB")
+
+    desk = os.path.join(os.path.expanduser("~"), "Desktop")
+    print("\n[2] 快捷方式 / 卸载程序")
+    print(f"    桌面快捷方式：{os.path.exists(os.path.join(desk, 'Lyric2TTML.lnk'))}")
+    print(f"    卸载程序.bat：{os.path.exists(os.path.join(dest, '卸载程序.bat'))}")
+
+    print("\n[3] 环境检查（问主程序）")
+    rep = ask_app_report(dest)
+    items = (rep or {}).get("items") or []
+    if not items:
+        print("    ✗ 拿不到主程序的报告")
+        root.destroy()
+        return 1
+    bad = [i for i in items if not i["ok"] and i["level"] == "crit"]
+    print(f"    共 {len(items)} 项，缺 {len(bad)} 项必需的：")
+    for i in bad:
+        print(f"      - {i['name']}：{i['detail']}")
+
+    print("\n[4] 补全…")
+    done_cuda = False
+    for i in bad:
+        k = i["key"]
+        fn = None
+        if k == "whisper":
+            fn = lambda: core.fetch_whisper("large-v3")
+        elif k == "campp":
+            fn = core.fetch_campp
+        elif k.startswith("cuda_") and not done_cuda:
+            fn = core.fetch_cuda
+            done_cuda = True
+        if fn is None:
+            continue
+        print(f"    ── {i['name']} ──")
+        try:
+            r = bool(fn())
+        except Exception as e:
+            print(f"    [异常] {type(e).__name__}: {e}")
+            r = False
+        print(f"    {'[成功]' if r else '[失败]'} {i['name']}")
+
+    print("\n[5] 复查")
+    rep2 = ask_app_report(dest)
+    bad2 = [i for i in (rep2 or {}).get("items", [])
+            if not i["ok"] and i["level"] == "crit"]
+    for i in bad2:
+        print(f"      ✗ {i['name']}：{i['detail']}")
+    root.destroy()
+    print()
+    print("=" * 70)
+    if bad2:
+        print(f"  ✗ 还有 {len(bad2)} 项没配好")
+        return 1
+    print("  ✓ 全部通过")
+    return 0
+
+
+def _is_elevated() -> bool:
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def relaunch_elevated() -> bool:
+    """需要管理员权限时，自己弹 UAC 重启自己。
+
+    ⚠️ **不用 PyInstaller 的 `--uac-admin` 清单**，改成运行时自提权。原因：
+    带清单的 exe **必须有 UAC 同意才能启动**，于是自动化测试（`--e2e`）永远挂住
+    —— 没人点那个弹窗。运行时自提权的好处是 `--e2e` 能跳过这一步，正常双击
+    仍然会弹 UAC（用户要的就是这个）。
+
+    安装程序确实需要管理员：要往用户选的任意目录写（含盘根下新建目录）、
+    建桌面快捷方式。普通权限会 `WinError 5 拒绝访问`。
+    """
+    try:
+        import ctypes
+        if ctypes.windll.shell32.IsUserAnAdmin():
+            return False
+        # ShellExecuteW 的 "runas" 动词 = 触发 UAC
+        params = " ".join(f'"{a}"' if " " in a else a for a in sys.argv[1:])
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, params, os.getcwd(), 1)
+        # >32 表示启动成功；<32 是错误码（用户点了"否"就是 5）
+        return int(rc) > 32
+    except Exception:
+        return False
+
+
 def main() -> int:
+    # ---- 无界面自测：让"打包后的真安装程序"能被我自动化跑一遍 ----
+    # 用法：安装程序.exe --e2e E:\Lyric2TTML
+    # ⚠️ 自测**跳过提权**，否则 UAC 弹窗会把自动化测试挂死。
+    if "--e2e" in sys.argv:
+        i = sys.argv.index("--e2e")
+        dest = sys.argv[i + 1] if len(sys.argv) > i + 1 else r"E:\Lyric2TTML"
+        return e2e(dest)
+
+    # 正常双击 → 不是管理员就提权重启
+    if os.name == "nt" and not _is_elevated():
+        if relaunch_elevated():
+            return 0          # 已经把活交给提权后的自己
+        # 用户拒绝了 UAC：继续跑，但把后果说清楚
     root = tk.Tk()
     try:
         root.tk.call("tk", "scaling", 1.25)

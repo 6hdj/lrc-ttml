@@ -1767,10 +1767,16 @@ def test_experiment_isolation():
                 bad.append(f"{name}:{ln}")
     check("生产模块没有引用实验适配器", not bad, "、".join(bad))
 
-    # 生产声纹仍然走 CAM++（显式路径，不是 glob，避免误加载）
+    # 生产声纹仍然走 CAM++：路径必须是**确定**的（固定候选目录），
+    # 不能用 glob 去"找到啥用啥"（那会在别人的机器上误加载到别的模型）。
+    # 2026-10-11 改：候选根目录从"只有 _HERE"变成"exe 目录优先、_HERE 兜底"
+    # （打包后 __file__ 在 _internal，而权重在 <安装目录>/models → 对不上就静默降级）。
     src = open(os.path.join(here, "speaker_campplus.py"), encoding="utf-8").read()
-    check("CAM++ 权重路径是写死的（不是 glob）",
-          'os.path.join(_HERE, "models", "campplus"' in src, src[:0])
+    check("CAM++ 权重走确定性路径（不是 glob）",
+          '_find(os.path.join("models", "campplus"' in src
+          and "import glob" not in src and "glob.glob" not in src, src[:0])
+    check("CAM++ 权重候选包含 exe 目录优先（打包后能对上安装位置）",
+          "_sys.executable" in src and "frozen" in src, src[:0])
     check("diarize 走 speaker_campplus",
           "import speaker_campplus as _spk" in open(
               os.path.join(here, "diarize.py"), encoding="utf-8").read())

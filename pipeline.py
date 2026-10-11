@@ -995,8 +995,14 @@ class LyricToTTML:
 
         self.log(f"[分段] CAM++ 声纹聚类（强制 {n} 个声部）")
         if not available():
-            notes.append("⚠ 未找到 CAM++ 声纹模型（models/campplus/），"
-                         "强制分声部不可用；已退回歌词标记")
+            # ⚠️⚠️ **这里必须打日志。**以前只往 notes 里塞一句就 return ——
+            # notes 只进报告 JSON，用户在日志里看不到任何东西，于是"开了强制双声部
+            # 却一行都没分"变成了完全静默的失败（真踩过，排查了很久）。
+            # 凡是"没做成分声部"的路径，都要在日志里明确说出来。
+            msg = ("⚠ 未找到 CAM++ 声纹模型（models/campplus/），"
+                   "强制分声部不可用；已退回歌词标记")
+            self.log("      " + msg)
+            notes.append(msg)
             return
 
         audio = self.asr.load_audio(audio_path)
