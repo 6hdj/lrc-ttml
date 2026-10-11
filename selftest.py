@@ -2739,6 +2739,36 @@ def test_lrc_marker_lines():
               f"agents={agents}")
 
 
+def test_asr_prompt_length():
+    """[35] initial_prompt 必须**很短**，否则 Whisper 会跳过歌词前几行"""
+    print("\n[35] ASR 提示词长度")
+    from pipeline import ConvertOptions, LyricToTTML
+    from preprocess import parse_lyrics
+
+    # ⚠️ 这条守的是一个**实测过的严重 bug**（2026-10-11）：
+    # Whisper 的 initial_prompt 语义是"已经转写过的上文"，模型会接着它往下写。
+    # 旧实现把**前 6 行歌词**灌进 prompt → 模型认为这 6 行已经转写完，
+    # 直接跳过。实测 26.6s / 8 行的纯文本歌词：
+    #     不带 prompt        → 59 个单元（全对）
+    #     前 6 行当 prompt   → 16 个单元（前 6 行整段丢失！）
+    #     只给第一句         → 59 个单元
+    # 后果：字级匹配率 27.4%、输出只剩 2 行；而**纯文本歌词走的就是这条路径**。
+    lines = parse_lyrics("第一句歌词内容\n第二句歌词内容\n第三句歌词内容\n"
+                         "第四句歌词内容\n第五句歌词内容\n第六句歌词内容\n"
+                         "第七句歌词内容")
+    pl = LyricToTTML.__new__(LyricToTTML)
+    pl.opt = ConvertOptions()
+    prompt = pl._build_prompt("歌名", ["歌手甲", "歌手乙"], lines)
+    check("prompt 不超过 80 字（Whisper 会跳过提示词里出现过的歌词）",
+          len(prompt) <= 80, f"{len(prompt)} 字")
+    check("prompt 里只有第一句歌词，不含后面几句",
+          "第一句" in prompt and "第三句" not in prompt and "第六句" not in prompt,
+          prompt)
+    check("prompt 仍然带歌名与歌手（用于专有名词与简体偏置）",
+          "歌名" in prompt and "歌手甲" in prompt, prompt)
+    check("没有歌词时也不崩", isinstance(pl._build_prompt("", [], []), str))
+
+
 if __name__ == "__main__":
     test_scan_line()
     test_dp()
@@ -2766,6 +2796,7 @@ if __name__ == "__main__":
     test_singer_mode()
     test_param_wiring()
     test_lrc_marker_lines()
+    test_asr_prompt_length()
     test_lrc_no_decimal_time()
     test_edit_backfill_hints()
     test_robustness_fixes()

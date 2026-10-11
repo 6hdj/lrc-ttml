@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<!--
+  宣传片画面：PPT 风格的文字动画。
+
+  ⚠️ 关键设计：**不用 CSS animation/transition**，而是导出一个 `seek(t)`
+     由外部按帧号调用。原因：外部是"截一帧、存一帧"，如果动画靠 CSS 自己跑，
+     截图速度一变动画就跑偏。`seek(t)` 让任何一帧都只取决于 t，
+     于是**逐帧渲染完全确定**、可以重跑、可以换帧率。
+
+  用法（外部）：seek(秒) → 截图 → 下一帧
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Lyric2TTML 宣传片</title>
+<style>
+  @font-face { font-family: 'YH'; src: local('Microsoft YaHei'); }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden;
+               background: #0a0a12; font-family: 'Microsoft YaHei', 'YH', sans-serif;
+               color: #e8e8f0; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+
+  /* 背景：柔和光晕，随场景缓慢移动（用 seek 驱动） */
+  #glow1, #glow2 { position: absolute; border-radius: 50%; filter: blur(120px); }
+  #glow1 { width: 1100px; height: 1100px; background: rgba(34,211,238,.16); }
+  #glow2 { width: 900px;  height: 900px;  background: rgba(124,92,255,.15); }
+  #grid { position: absolute; inset: 0; opacity: .05;
+          background-image: linear-gradient(#fff 1px, transparent 1px),
+                            linear-gradient(90deg, #fff 1px, transparent 1px);
+          background-size: 80px 80px; }
+
+  .scene { position: absolute; inset: 0; display: flex; flex-direction: column;
+           justify-content: center; align-items: center; text-align: center;
+           padding: 0 140px; }
+
+  h1 { font-size: 116px; font-weight: 800; letter-spacing: 2px; line-height: 1.18; }
+  h2 { font-size: 74px;  font-weight: 700; line-height: 1.25; }
+  .sub { font-size: 40px; color: #9aa4bf; margin-top: 34px; line-height: 1.6; }
+  .tag { font-size: 34px; color: #22d3ee; letter-spacing: 8px; margin-bottom: 26px;
+         font-weight: 600; }
+  .accent { color: #22d3ee; }
+  .accent2 { color: #6cd97e; }
+  .dim { color: #6b7590; }
+
+  /* 逐字出现：每个字一个 span，按进度依次亮起 */
+  .ch { display: inline-block; opacity: 0; transform: translateY(26px); }
+  .ch.lit { opacity: 1; transform: translateY(0); }
+
+  /* 列表项 */
+  .rows { margin-top: 40px; width: 100%; }
+  .row { display: flex; align-items: center; gap: 34px; padding: 26px 40px;
+         margin: 18px 0; border-radius: 20px;
+         background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.07);
+         font-size: 46px; text-align: left; }
+  .row .ico { font-size: 52px; width: 66px; text-align: center; }
+  .row .t  { font-weight: 700; }
+  .row .d  { font-size: 34px; color: #8b95ad; margin-left: auto; }
+
+  /* 大数字 */
+  .stats { display: flex; gap: 90px; margin-top: 60px; }
+  .stat { text-align: center; }
+  .stat .n { font-size: 130px; font-weight: 800; color: #22d3ee; line-height: 1; }
+  .stat .l { font-size: 34px; color: #9aa4bf; margin-top: 18px; }
+
+  /* 一句对比 */
+  .compare { display: flex; flex-direction: column; gap: 46px; margin-top: 50px; width: 100%; }
+  .cline { padding: 34px 50px; border-radius: 22px; font-size: 50px; text-align: left; }
+  .bad  { background: rgba(255,90,90,.06); border: 1px solid rgba(255,90,90,.28); }
+  .good { background: rgba(34,211,238,.07); border: 1px solid rgba(34,211,238,.34); }
+  .cline .cap { font-size: 30px; color: #7d879f; display: block; margin-bottom: 14px; }
+  .hl { color: #22d3ee; font-weight: 700; }
+  .box { display: inline-block; padding: 2px 8px; border-radius: 12px;
+         background: rgba(34,211,238,.20); color: #eafcff; font-weight: 700; }
+
+  #url { font-size: 40px; color: #9fd3c7; font-family: Consolas, monospace;
+         margin-top: 30px; letter-spacing: 1px; }
+  #bar { position: absolute; left: 0; bottom: 0; height: 6px;
+         background: linear-gradient(90deg,#22d3ee,#6cd97e); width: 0; }
+  .fade { opacity: 0; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="glow1"></div>
+  <div id="glow2"></div>
+  <div id="grid"></div>
+
+  <!-- 0. 开场 -->
+  <div class="scene" id="s0">
+    <div class="tag" id="s0tag">全程离线 · 无需 API Key</div>
+    <h1 id="s0h1"></h1>
+    <div class="sub" id="s0sub">普通歌词 + 歌曲音频 <span class="accent">→</span> Apple Music / AMLL 逐字时间轴</div>
+  </div>
+
+  <!-- 1. 痛点 -->
+  <div class="scene" id="s1">
+    <h2 id="s1h2"></h2>
+    <div class="compare">
+      <div class="cline bad" id="s1a">
+        <span class="cap">普通歌词文件 / 大多数播放器</span>
+        整行高亮 —— 唱到哪一句，亮哪一句
+      </div>
+      <div class="cline good" id="s1b">
+        <span class="cap">逐字歌词（TTML）</span>
+        <span class="box">唱</span>到<span class="box">哪</span>个<span class="box">字</span>，亮<span class="box">哪</span>个<span class="box">字</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 做什么 -->
+  <div class="scene" id="s2">
+    <h2 id="s2h2"></h2>
+    <div class="sub" style="margin-top:44px" id="s2sub">
+      给它一段音频 + 一份歌词<br>
+      <span class="dim">识别 → 强制对齐 → 输出规范 TTML</span>
+    </div>
+    <div class="sub" style="margin-top:36px;font-size:36px" id="s2note">
+      时间戳<span class="accent">全部来自真实音频</span>，不是按字数估算
+    </div>
+  </div>
+
+  <!-- 3. 能力列表 -->
+  <div class="scene" id="s3">
+    <h2 id="s3h2"></h2>
+    <div class="rows" id="s3rows"></div>
+  </div>
+
+  <!-- 4. 数字 -->
+  <div class="scene" id="s4">
+    <h2 id="s4h2"></h2>
+    <div class="stats" id="s4stats"></div>
+    <div class="sub" id="s4note"></div>
+  </div>
+
+  <!-- 5. 结尾 -->
+  <div class="scene" id="s5">
+    <h1 id="s5h1" style="font-size:92px"></h1>
+    <div class="sub" id="s5sub"></div>
+    <div id="url">github.com/6hdj/lrc-ttml</div>
+    <div class="sub" style="font-size:30px;margin-top:22px" class="dim">MIT 开源 · 可自由使用与商用</div>
+  </div>
+
+  <div id="bar"></div>
+</div>
+
+<script>
+/* ============================ 时间轴 ============================
+   总时长 TOTAL 秒。每个场景 [start, end]。
+   下面所有动画都只由 t 决定 —— 见文件头说明。 */
+const TOTAL = 62.0;
+
+const SCENES = [
+  { id: 's0', a: 0.0,  b: 7.0  },
+  { id: 's1', a: 7.0,  b: 17.0 },
+  { id: 's2', a: 17.0, b: 25.0 },
+  { id: 's3', a: 25.0, b: 41.0 },
+  { id: 's4', a: 41.0, b: 52.0 },
+  { id: 's5', a: 52.0, b: 62.0 },
+];
+
+/* 场景内的"进入"进度：0→1 用 0.7 秒淡入 + 上移 */
+function enter(t, a, dur = 0.7) { return clamp((t - a) / dur, 0, 1); }
+function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+function easeOut(x) { return 1 - Math.pow(1 - x, 3); }
+
+/* 把文字拆成逐字 span（配合 reveal 使用） */
+function spell(el, text) {
+  el.innerHTML = '';
+  [...text].forEach(c => {
+    const s = document.createElement('span');
+    s.className = 'ch';
+    s.textContent = c === ' ' ? '\u00a0' : c;
+    el.appendChild(s);
+  });
+  return [...el.querySelectorAll('.ch')];
+}
+/* 按进度依次点亮 */
+function reveal(chars, p, per = 0.045) {
+  chars.forEach((c, i) => {
+    const on = p >= i * per / Math.max(1, chars.length) * chars.length * 0.55 + 0.02;
+    c.classList.toggle('lit', p > 0 && on);
+  });
+}
+
+/* 一次性建好各场景的逐字元素与列表 */
+const C = {};
+C.s0h1  = spell(document.getElementById('s0h1'), '把歌词做成逐字时间轴');
+C.s1h2  = spell(document.getElementById('s1h2'), '你的歌词，现在还只能整行亮');
+C.s2h2  = spell(document.getElementById('s2h2'), '只要两样东西');
+
+const ROWS = [
+  ['🎯', '逐字时间轴', '真实音频对齐'],
+  ['🎤', '对唱分声部', 'CAM++ 声纹'],
+  ['🎼', '背景和声', 'x-bg 层'],
+  ['✏️', '人工精修编辑台', '改字 / 改时间 / 改声部'],
+  ['🌐', '翻译 · 六平台 ID', 'Apple / AMLL 双格式'],
+];
+const rowsEl = document.getElementById('s3rows');
+ROWS.forEach(([ico, t, d]) => {
+  const r = document.createElement('div');
+  r.className = 'row';
+  r.innerHTML = `<span class="ico">${ico}</span><span class="t">${t}</span><span class="d">${d}</span>`;
+  r.style.opacity = 0;
+  rowsEl.appendChild(r);
+});
+C.s3rows = [...rowsEl.children];
+
+const STATS = [['100%', '字级匹配率\n（字全唱对时）'], ['85%', '对唱分声部\n（人工真值）'],
+               ['0', '联网需求\n完全离线']];
+const stEl = document.getElementById('s4stats');
+STATS.forEach(([n, l]) => {
+  const d = document.createElement('div');
+  d.className = 'stat';
+  d.innerHTML = `<div class="n">${n}</div><div class="l">${l.replace('\n', '<br>')}</div>`;
+  d.style.opacity = 0;
+  stEl.appendChild(d);
+});
+C.s4stats = [...stEl.children];
+C.s5h1 = spell(document.getElementById('s5h1'), 'Lyric2TTML');
+C.s5sub = document.getElementById('s5sub');
+document.getElementById('s5sub').innerHTML =
+  '把普通歌词变成逐字时间轴<br><span class="dim" style="font-size:32px">Windows 一键运行 · 也可 pip 安装</span>';
+document.querySelector('#s5 .sub:last-of-type')?.classList.add('dim');
+C.s1a = document.getElementById('s1a');
+C.s1b = document.getElementById('s1b');
+C.s3h2 = spell(document.getElementById('s3h2'), '它还能做这些');
+C.s4h2 = spell(document.getElementById('s4h2'), '一些实测数字');
+C.s2sub = document.getElementById('s2sub');
+C.s2note = document.getElementById('s2note');
+C.s0tag = document.getElementById('s0tag');
+C.s0sub = document.getElementById('s0sub');
+C.s4note = document.getElementById('s4note');
+
+/* 用 seek(t) 覆盖所有可见状态（每帧都从零算，保证确定性） */
+function seek(t) {
+  t = clamp(t, 0, TOTAL);
+
+  // 背景光晕缓慢漂移
+  const g1 = document.getElementById('glow1'), g2 = document.getElementById('glow2');
+  g1.style.left = (-160 + 120 * Math.sin(t / 11)) + 'px';
+  g1.style.top  = (-260 + 90  * Math.cos(t / 13)) + 'px';
+  g2.style.right = (-200 + 110 * Math.sin(t / 9 + 1.2)) + 'px';
+  g2.style.bottom = (-220 + 100 * Math.cos(t / 15)) + 'px';
+
+  // 场景显隐 + 淡入上移
+  SCENES.forEach(s => {
+    const el = document.getElementById(s.id);
+    const on = t >= s.a && t < s.b;
+    el.style.display = on ? 'flex' : 'none';
+    const p = enter(t, s.a);
+    el.style.opacity = on ? p : 0;
+    el.style.transform = `translateY(${(1 - easeOut(p)) * 26}px)`;
+  });
+
+  // --- 场景 0 ---
+  reveal(C.s0h1, clamp((t - 1.0) / 2.6, 0, 1));
+  C.s0tag.style.opacity = clamp((t - 0.25) / 0.7, 0, 1);
+  C.s0sub.style.opacity = clamp((t - 3.6) / 0.9, 0, 1);
+
+  // --- 场景 1 ---
+  reveal(C.s1h2, clamp((t - 7.2) / 1.6, 0, 1));
+  C.s1a.style.opacity = clamp((t - 9.4) / 0.8, 0, 1);
+  C.s1b.style.opacity = clamp((t - 11.6) / 0.8, 0, 1);
+  C.s1b.style.transform = `translateX(${(1 - easeOut(clamp((t - 11.6) / 0.8, 0, 1))) * 40}px)`;
+
+  // --- 场景 2 ---
+  reveal(C.s2h2, clamp((t - 17.2) / 1.4, 0, 1));
+  C.s2sub.style.opacity = clamp((t - 19.4) / 0.8, 0, 1);
+  C.s2note.style.opacity = clamp((t - 21.2) / 0.8, 0, 1);
+
+  // --- 场景 3：逐行滑入 ---
+  reveal(C.s3h2, clamp((t - 25.2) / 1.3, 0, 1));
+  C.s3rows.forEach((r, i) => {
+    const st = 26.6 + i * 2.3;
+    const p = clamp((t - st) / 0.75, 0, 1);
+    r.style.opacity = p;
+    r.style.transform = `translateX(${(1 - easeOut(p)) * 60}px)`;
+  });
+
+  // --- 场景 4：数字逐个弹出 ---
+  reveal(C.s4h2, clamp((t - 41.2) / 1.3, 0, 1));
+  C.s4stats.forEach((d, i) => {
+    const p = clamp((t - (43.0 + i * 1.5)) / 0.7, 0, 1);
+    d.style.opacity = p;
+    d.style.transform = `scale(${0.72 + 0.28 * easeOut(p)})`;
+  });
+  C.s4note.style.opacity = clamp((t - 48.6) / 0.9, 0, 1);
+  C.s4note.innerHTML = '<span class="dim">数字来自仓库里的评估脚本，可复现</span>';
+
+  // --- 场景 5 ---
+  reveal(C.s5h1, clamp((t - 52.4) / 2.0, 0, 1));
+  C.s5sub.style.opacity = clamp((t - 55.0) / 0.9, 0, 1);
+  document.getElementById('url').style.opacity = clamp((t - 57.0) / 0.9, 0, 1);
+  const last = document.querySelectorAll('#s5 .sub');
+  if (last[1]) last[1].style.opacity = clamp((t - 58.6) / 0.9, 0, 1);
+
+  // 底部进度条
+  document.getElementById('bar').style.width = (t / TOTAL * 1920) + 'px';
+}
+
+/* 先跑一次，避免首帧闪一下 */
+seek(0);
+</script>
+</body>
+</html>

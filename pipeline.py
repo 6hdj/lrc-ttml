@@ -621,16 +621,34 @@ class LyricToTTML:
 
 
     def _build_prompt(self, title: str, artists: Sequence[str], lines: Sequence[LyricLine]) -> str:
-        """用歌词本身作为 initial_prompt：显著减少错别字，并把输出拉向简体中文"""
-        head = "".join(l.text + "\n" for l in lines[:6])
+        """用**很短**的上下文当 initial_prompt：把输出拉向简体中文、并给出专有名词。
+
+        ⚠️⚠️ **绝不能把整份歌词（甚至前 6 行）灌进 prompt** —— 这是实测过的严重 bug：
+
+        Whisper 的 ``initial_prompt`` 语义是"**已经转写过的上文**"，
+        模型会**接着它往下写**。所以提示词里出现过的歌词，模型就认为已经转写完了、
+        直接跳过。实测（26.6s 纯文本歌词，8 行）：
+
+        | prompt | 识别结果 |
+        | --- | --- |
+        | 不带 prompt | **59 个单元**（全对） |
+        | 前 6 行当 prompt（**旧实现**） | **16 个单元** —— 前 6 行整段丢失，只识别出最后 2 行 |
+        | 只给第一句 | 59 个单元 ✓ |
+
+        后果：字级匹配率掉到 27.4%，前几行还会被当成"没唱出来的信息行"丢掉。
+        **纯文本歌词（没有 LRC）走的就是这条路径**，也就是最常见的用法。
+
+        所以这里只保留 **标题 + 歌手 + 第一句**，并再兜一道长度上限。
+        """
         parts = []
         if title:
             parts.append(title)
         if artists:
             parts.append("/".join(artists))
-        parts.append(head.strip())
-        prompt = "\n".join(p for p in parts if p)
-        return prompt[:600]
+        first = next((l.text.strip() for l in lines if l.text.strip()), "")
+        if first:
+            parts.append(first)
+        return " ".join(parts)[:80]
 
     def _refine_lines(self, matcher: LyricMatcher, lines: Sequence[LyricLine],
                       report: AlignReport, audio_path: str,
