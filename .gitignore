@@ -1,0 +1,78 @@
+# ============================================================================
+#  Lyric2TTML .gitignore
+#
+#  ⚠️ 这个文件是**开源发布的安全阀**。原来的版本漏了 models/ 和 .tmp/，
+#  `git add .` 会把 8 GB 全提交上去。本工作区实测体积：
+#      .venv 5.0 GB / .hf_cache 3.0 GB / uploads 2.4 GB /
+#      models 300 MB / outputs 220 MB / .tmp 56 MB
+# ============================================================================
+
+# ---- 依赖与环境（体积巨大，且与具体机器绑定）----
+.venv/
+venv/
+env/
+.hf_cache/
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ---- 模型权重（第三方资产，不进仓库；README 说明怎么获取）----
+models/
+
+# ---- 用户数据：绝对不要公开 ----
+# uploads/ 是用户自己的音频与歌词（多为有版权的商业音乐）；
+# outputs/ 是转换结果（含 50 MB 级别的 wav，以及从歌词生成的内容）。
+uploads/
+outputs/
+*.vocals.wav
+*.htdemucs*.wav
+*.edit.json
+*.src.json
+*.report.json
+
+# ---- 第三方参考资料 ----
+# refs/ 放的是社区人工标注的 TTML（有版权），只作本地对照，不随仓库分发。
+refs/
+
+# ---- 历史遗留：旧的「LLM 直出 TTML」实现，已废弃 ----
+# 里面有 api.deepseek.com 客户端、提示词和运行日志。要留就留本地。
+legacy/
+
+# ---- 运行期缓存 ----
+.tmp/
+_scratch/
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 本地配置与密钥（当前用不到，留着防手滑）----
+.env
+.env.*
+ai_config.json
+*.key
+*.pem
+secrets.json
+
+# ---- 编译产物 ----
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib

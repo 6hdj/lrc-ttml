@@ -1,0 +1,1839 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lyric2TTML · 歌词 → Apple Music 逐字 TTML</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #0f0f1a; color: #e0e0e0; min-height: 100vh;
+  }
+  .header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 18px 30px; border-bottom: 1px solid #2a2a4a;
+    display: flex; align-items: center; gap: 15px; flex-wrap: wrap;
+  }
+  .header h1 {
+    font-size: 21px;
+    background: linear-gradient(90deg, #64b5f6, #ce93d8);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .header .subtitle { color: #888; font-size: 13px; }
+  .badge { background:#1e3a2a; color:#81c784; border:1px solid #2e5a2e;
+           padding:3px 9px; border-radius:20px; font-size:11px; }
+  .container { max-width: 1180px; margin: 0 auto; padding: 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 18px; }
+  .card + .card { margin-top: 16px; }
+  .card h2 { font-size: 15px; color: #64b5f6; margin-bottom: 14px;
+             display: flex; align-items: center; gap: 8px; }
+  .form-group { margin-bottom: 12px; }
+  .form-group label { display: block; font-size: 12px; color: #aaa; margin-bottom: 5px; }
+  .form-row { display: flex; gap: 8px; align-items: center; }
+  input[type="text"], input[type="password"], select {
+    flex: 1; background: #0f0f1a; border: 1px solid #333; border-radius: 6px;
+    padding: 8px 12px; color: #e0e0e0; font-size: 13px; outline: none;
+  }
+  input:focus, select:focus { border-color: #64b5f6; }
+  .btn { background: #1e88e5; color: #fff; border: none; border-radius: 6px;
+         padding: 8px 16px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { background: #1565c0; }
+  .btn-secondary { background: #333; } .btn-secondary:hover { background: #444; }
+  .btn-success { background: #43a047; } .btn-success:hover { background: #2e7d32; }
+  .btn:disabled { background: #555; cursor: not-allowed; }
+  .file-info { font-size: 12px; color: #888; margin-top: 4px; word-break: break-all; }
+  .params-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .switch-row { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+  .switch { position: relative; width: 44px; height: 24px; background: #333;
+            border-radius: 12px; cursor: pointer; transition: background .2s; flex: none; }
+  .switch.active { background: #1e88e5; }
+  .switch::after { content:''; position:absolute; width:18px; height:18px; background:#fff;
+                   border-radius:50%; top:3px; left:3px; transition:left .2s; }
+  .switch.active::after { left: 23px; }
+  .switch-label { font-size: 13px; }
+  .hint { font-size: 11px; color: #777; margin-top: 3px; }
+  .start-section { text-align: center; margin: 22px 0 12px; }
+  .btn-start { background: linear-gradient(135deg, #1e88e5, #7b1fa2); font-size: 16px;
+               padding: 14px 54px; border-radius: 8px; font-weight: bold; }
+  .btn-start:hover { background: linear-gradient(135deg, #1565c0, #6a1b9a); }
+  .progress-container { display: none; margin: 16px 0; }
+  .progress-bar { height: 8px; background: #2a2a4a; border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%;
+                   background: linear-gradient(90deg, #64b5f6, #ce93d8); transition: width .3s; }
+  .progress-text { font-size: 12px; color: #999; margin-top: 6px; display:flex;
+                   justify-content:space-between; }
+  .log-container { background: #0a0a14; border: 1px solid #2a2a4a; border-radius: 8px;
+                   padding: 12px; height: 240px; overflow-y: auto;
+                   font-family: Consolas, Monaco, monospace; font-size: 12px; line-height: 1.6; }
+  .log-line { color: #bbb; white-space: pre-wrap; word-break: break-all; }
+  .log-line.success { color: #81c784; }
+  .log-line.error { color: #e57373; }
+  .result-section { display: none; background: #14231a; border: 1px solid #2e5a2e;
+                    border-radius: 12px; padding: 20px; margin-top: 16px; }
+  .result-section h3 { color: #81c784; margin-bottom: 10px; font-size: 16px; }
+  .result-stats { display: flex; flex-wrap: wrap; gap: 26px; margin: 14px 0; }
+  .stat-value { font-size: 22px; font-weight: bold; color: #64b5f6; }
+  .stat-label { font-size: 12px; color: #888; margin-top: 4px; }
+  .notes { font-size: 12px; color: #bbb; margin: 10px 0; }
+  .notes li { margin-left: 18px; margin-bottom: 3px; }
+  pre.ttml { background:#0a0a14; border:1px solid #2a2a4a; border-radius:8px;
+             padding:12px; max-height:340px; overflow:auto; font-size:11.5px;
+             line-height:1.5; color:#9fd3c7; display:none; }
+  .toast { position: fixed; top: 20px; right: 20px; background: #e53935; color: #fff;
+           padding: 12px 20px; border-radius: 8px; font-size: 14px; z-index: 1000;
+           display: none; }
+  .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+  /* ---- 编辑台（P1）---- */
+  .editor { display:none; margin-top:16px; border:1px solid #2a2a4a; border-radius:10px;
+            background:#12121e; }
+  .editor-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+                padding:10px 12px; border-bottom:1px solid #2a2a4a; }
+  .editor-hint { font-size:12px; color:#888; flex:1; min-width:200px; }
+  .editor-pill { font-size:12px; color:#9fd3c7; border:1px solid #2a4a44;
+                 border-radius:10px; padding:1px 8px; }
+  .btn-sm { padding:5px 12px; font-size:13px; }
+  .editor-status { padding:8px 12px; font-size:13px; color:#bbb;
+                   border-bottom:1px solid #1e1e30; }
+  /* ---- 声部编辑 ---- */
+  .editor-tabs { display:flex; gap:6px; align-items:center; flex-wrap:wrap;
+                 padding:8px 12px 0; }
+  .ed-tab { background:#1b1b2c; border:1px solid #2a2a4a; color:#bbb;
+            border-radius:6px 6px 0 0; padding:5px 14px; font-size:13px; cursor:pointer; }
+  .ed-tab.active { background:#26264a; color:#fff; border-bottom-color:transparent; }
+  .ed-tab-hint { font-size:11.5px; color:#777; margin-left:auto; }
+  .editor-range { display:none; gap:8px; align-items:center; flex-wrap:wrap;
+                  padding:8px 12px; background:#181828; border-bottom:1px solid #2a2a4a;
+                  font-size:12.5px; color:#ccc; }
+  .ed-chip { background:#1b1b2c; border:1px solid #3a3a5a; color:#ddd;
+             border-radius:12px; padding:2px 12px; font-size:12.5px; cursor:pointer; }
+  .ed-chip:hover { border-color:#6cd97e; }
+  .ed-chip.on { background:#2d4a35; border-color:#6cd97e; color:#c9f7d2; }
+  .ed-lineno { width:52px; flex:none; font-size:11.5px; color:#8a8ab0; cursor:pointer;
+               padding:4px 0; user-select:none; }
+  .ed-lineno:hover { color:#fff; }
+  .ed-lineno.sel { background:#2a2a4a; border-radius:4px; color:#fff; }
+  .ed-agent { display:inline-flex; gap:4px; margin-right:8px; }
+  .ed-agent .ed-chip { padding:1px 9px; font-size:11.5px; }
+  .ed-text { font-size:13.5px; color:#ddd; }
+  .ed-line .ed-text.bg { color:#8fbfa8; }
+  /* 声部界面里的逐字（可点）
+     ⚠️ 状态标识必须和「时间轴」页**同等可见**（需求：两页同步展示状态）。
+     时间轴页用的是"底色 + 边框色"；这里逐字不能加边框（会撑开行高、密集歌词里重排），
+     所以用 **底色 + text-decoration 的颜色**来表达同样的语义：
+       底色 = 时间轴页的底色，下划线色 = 时间轴页的边框色。
+     text-decoration 不改变盒子尺寸，因此不会引起重排。 */
+  .ed-aword { cursor:pointer; padding:0 1px; border-radius:3px; }
+  .ed-aword:hover { background:#2a2a4a; }
+  .ed-aword.is-bg { color:#a8d8bf; background:#16241d;
+                    text-decoration:underline solid #3a5a4a; }
+  .ed-aword.is-weak { color:#e8d98a; background:#241f10;
+                      text-decoration:underline dotted #8a7a2a; }
+  .ed-aword.is-interp { color:#ff9a8a; background:#241414;
+                        text-decoration:underline wavy #8a3a3a; }
+  .ed-aword.now { background:#0e3a46; color:#eafcff;
+                  box-shadow:0 0 0 2px #22d3ee; }
+  .agent-overview { display:flex; flex-wrap:wrap; gap:2px; padding:8px 12px;
+                    border-top:1px solid #2a2a4a; }
+  /* ---- 编辑台播放器 ----
+     ⚠️ 这里**不要**写 display:none：播放器是编辑台的一部分，
+     父容器 .editor 本身已经控制显隐；再给子元素加 display:none 就再也没人打开它，
+     结果"编辑台里看不到播放器"（真踩过）。 */
+  .editor-player { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+                   padding:8px 12px; background:#141424; border-bottom:1px solid #2a2a4a; }
+  .editor-player audio { display:none; }
+  #seekBar { flex:1; min-width:180px; height:4px; accent-color:#6cd97e; cursor:pointer; }
+  .ed-time { font-size:12px; color:#9fd3c7; font-family:ui-monospace,Consolas,monospace;
+             min-width:150px; }
+  .ed-loop { font-size:12px; color:#bbb; display:flex; align-items:center; gap:4px; }
+  /* ⚠️ "当前演唱文字"**必须单独占一行**，不能放在播放控制条里：
+     它在 .editor-player（flex-wrap:wrap）里时，flex 项默认 min-width:auto 不收缩，
+     文字一长就①把进度条挤窄 ②把控制条挤成两行 —— 条高变了，
+     下面时间轴/声部/文本三个页面就跟着**上下闪动**，人工校对时特别烦。
+     现在固定行高 22px（不随内容变），超长用省略号，完整内容挂在 title 上。 */
+  .editor-now { display:block; height:22px; line-height:22px; padding:0 12px;
+                background:#101020; border-bottom:1px solid #2a2a4a;
+                overflow:hidden; }
+  #nowInfo { display:block; font-size:12px; color:#22d3ee; font-weight:600;
+             font-family:ui-monospace,Consolas,monospace;
+             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* ---- 播放定位高亮：统一用青色 #22d3ee ----
+     必须和四种状态色都分开：正常(深灰蓝) / 低可信(黄 #8a7a2a) /
+     插值(红 #8a3a3a) / 背景和声(绿 #3a5a4a)。
+     曾经用绿色 #6cd97e 标记当前字，跟"背景和声"的绿几乎一样 → 看不出在唱哪里。
+
+     ⚠️ 这里刻意把选择器写长（0,3,0 以上）而不是靠源码顺序：
+     状态色 `.ed-w.is-bg/.is-weak/.is-interp` 在**本文件更靠后**的位置，
+     同权重时后者胜出 → `.now` 会被覆盖，高亮恰好在最该看的字（低可信/插值/和声）上不显示。 */
+  /* 正在播放的字：必须和状态色明显分开（正常深灰蓝 / 低可信黄 / 插值红 / 和声绿）
+     ⚠️ 三条硬约束：
+     1. **不能加 font-weight**（粗体更宽 → 每换一个字整行重排，密集歌词里画面会抖）；
+     2. **不能只靠发光**（光晕糊住笔画 = 遮挡文字）。靠底色 + outline 定位，outline 不占布局；
+     3. 亮字提亮对比度而不是加粗。 */
+  .ed-words > .ed-w.now { background:#0e3a46; border-color:#22d3ee;
+                          outline:2px solid #22d3ee; outline-offset:-1px;
+                          box-shadow:0 0 6px rgba(34,211,238,.35); }
+  .ed-words > .ed-w.now b { color:#eafcff; }
+  .ed-words > .ed-w.now .ed-t { border-color:#22d3ee; color:#c9f4ff; }
+  /* 拖音阶段：咬字已经结束、还在拖长音。底色更淡、不描边，
+     一眼能分出"在咬字"和"在拖音"，又不会跟主进度抢注意力。
+     ⚠️ 同样不许改盒子尺寸（见上面的约束），所以只动颜色。 */
+  .ed-words > .ed-w.now.now-tail { background:#12303a; outline-color:#1b7f92;
+                                   box-shadow:none; }
+  .ed-words > .ed-w.now.now-tail b { color:#bfe9f2; }
+  .ed-aword.now.now-tail { background:#12303a; box-shadow:0 0 0 1px #1b7f92; }
+  .editor-body > .ed-line.now { background:rgba(34,211,238,.10);
+                                box-shadow:inset 3px 0 0 #22d3ee; }
+  .ed-w { cursor:pointer; }
+  /* 声部界面：当前行同样青色，左侧粗边 + 底色，和 agent 配色（蓝/橙/紫）区分 */
+  .editor-body > .ed-line.agent-line.now { background:rgba(34,211,238,.10);
+                                           box-shadow:inset 4px 0 0 #22d3ee;
+                                           outline:1px solid rgba(34,211,238,.45);
+                                           outline-offset:-1px; }
+  .agent-overview > .ao-cell.now { outline:2px solid #22d3ee; outline-offset:1px; }
+  .ao-cell { width:16px; height:14px; border-radius:3px; background:#2a2a4a;
+             font-size:9px; line-height:14px; text-align:center; color:#0000;
+             cursor:pointer; }
+  .ao-cell.v1 { background:#5a8cff; }
+  .ao-cell.v2 { background:#ff9f5a; }
+  .ao-cell.v3 { background:#b58cff; }
+  .ao-cell:hover { outline:1px solid #fff; }
+  .editor-status.good { color:#6cd97e; }
+  .editor-status.bad { color:#ff8a80; }
+  .editor-body { max-height:420px; overflow:auto; padding:8px 12px; }
+  .ed-line { display:flex; gap:10px; padding:3px 0; border-bottom:1px dashed #1e1e30;
+             align-items:flex-start; }
+  .ed-line.ed-duet { background:rgba(90,120,255,.07); }
+  .ed-head { width:76px; flex:none; font-size:11px; color:#777; padding-top:4px; }
+  .ed-words { display:flex; flex-wrap:wrap; gap:3px; }
+  .ed-w { display:inline-flex; align-items:center; gap:3px; background:#1b1b2c;
+          border:1px solid #2a2a4a; border-radius:6px; padding:2px 4px; }
+  .ed-w b { font-size:14px; font-weight:500; }
+  .ed-w.is-bg { border-color:#3a5a4a; background:#16241d; }
+  .ed-w.is-weak { border-color:#8a7a2a; background:#241f10; }
+  .ed-w.is-interp { border-color:#8a3a3a; background:#241414; }
+  .ed-t { width:84px; background:#0a0a14; border:1px solid #33335a; border-radius:4px;
+          color:#9fd3c7; font-size:11px; font-family:ui-monospace,Consolas,monospace;
+          padding:1px 3px; }
+  .editor-legend { display:flex; gap:14px; flex-wrap:wrap; padding:8px 12px;
+                   font-size:11.5px; color:#888; border-top:1px solid #2a2a4a; }
+  .lg::before { content:"■ "; }
+  .lg-ok::before { color:#2a2a4a; } .lg-weak::before { color:#8a7a2a; }
+  .lg-interp::before { color:#8a3a3a; } .lg-bg::before { color:#3a5a4a; }
+  .lg-now::before { color:#22d3ee; }
+  .lg-tail::before { color:#1b7f92; }
+
+  /* ---- ✏️ 文本编辑（插行 / 改字 / 和声） ---- */
+  .txt-line { display:flex; gap:8px; align-items:flex-start; padding:5px 0;
+              border-bottom:1px dashed #1e1e30; flex-wrap:wrap; }
+  .txt-no { width:44px; flex:none; font-size:11px; color:#777; padding-top:6px;
+            cursor:pointer; user-select:none; }
+  .txt-no:hover { color:#22d3ee; }
+  .txt-ag { flex:none; font-size:11px; padding:2px 6px; border-radius:4px;
+            border:1px solid #2a2a4a; color:#9ab; cursor:pointer; margin-top:3px; }
+  .txt-ag.v1 { border-color:#4a5aa8; color:#9db0ff; }
+  .txt-ag.v2 { border-color:#a85a7a; color:#ff9dc4; }
+  .txt-ag:hover { background:#1b1b2c; }
+  .txt-in { background:#0a0a14; border:1px solid #33335a; border-radius:4px;
+            color:#dfe3ee; font-size:13px; padding:3px 6px; font-family:inherit; }
+  .txt-in.main { flex:1 1 240px; min-width:160px; }
+  .txt-in.bg { flex:1 1 150px; min-width:110px; border-color:#3a5a4a;
+               background:#0c1712; color:#9fe0bf; }
+  .txt-in:focus { outline:none; border-color:#22d3ee; }
+  .txt-chips { display:flex; flex-wrap:wrap; gap:2px; align-items:center;
+               width:100%; padding-left:52px; }
+  .txt-ch { display:inline-flex; align-items:center; gap:1px; background:#1b1b2c;
+            border:1px solid #2a2a4a; border-radius:5px; padding:1px 5px;
+            font-size:14px; cursor:pointer; position:relative; }
+  .txt-ch:hover { border-color:#22d3ee; }
+  .txt-ch.bg { border-color:#3a5a4a; background:#16241d; color:#9fe0bf; }
+  /* 播放高亮：**和时间轴/声部页完全同一套配色**（青底 + 青描边），
+     复用 box-shadow 而不是加边框 —— box-shadow 不占布局，长歌词里换字不会重排。
+     拖音阶段同样用更淡的底色区分（now-tail），三页语义一致。 */
+  .txt-ch.now { background:#0e3a46; border-color:#22d3ee; color:#eafcff;
+                box-shadow:0 0 0 2px #22d3ee; }
+  .txt-ch.now.now-tail { background:#12303a; box-shadow:0 0 0 1px #1b7f92;
+                         color:#bfe9f2; }
+  .txt-line.now { background:rgba(34,211,238,.10);
+                  box-shadow:inset 2px 0 0 #22d3ee; }
+  .txt-ch .x { font-size:10px; color:#666; margin-left:2px; }
+  .txt-ch .x:hover { color:#ff6b6b; }
+  .txt-plus { color:#454565; font-size:13px; cursor:pointer; padding:0 2px;
+              border-radius:3px; line-height:1.1; }
+  .txt-plus:hover { color:#22d3ee; background:#1b1b2c; }
+  .txt-edit { width:2.2em; background:#0a0a14; border:1px solid #22d3ee;
+              border-radius:4px; color:#fff; font-size:14px; text-align:center;
+              font-family:inherit; padding:1px 2px; }
+  .txt-tools { display:flex; gap:6px; flex:none; padding-top:3px; }
+  .txt-btn { font-size:11px; background:#14142a; border:1px solid #2a2a4a;
+             color:#9ab; border-radius:4px; padding:2px 7px; cursor:pointer; }
+  .txt-btn:hover { border-color:#22d3ee; color:#22d3ee; }
+  .txt-btn.del:hover { border-color:#ff6b6b; color:#ff6b6b; }
+  .txt-sep { font-size:10.5px; color:#5a5a7a; width:100%; padding-left:52px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🎵 Lyric2TTML</h1>
+  <span class="subtitle">普通歌词 → Apple Music / AMLL 逐字 TTML</span>
+  <span class="badge">离线运行 · 无需 API Key</span>
+</div>
+
+<div class="container">
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>📁 文件</h2>
+        <div class="form-group">
+          <label>音频文件（mp3 / wav / flac / m4a）</label>
+          <div class="form-row">
+            <input type="text" id="audioPath" placeholder="点击右侧上传音频" readonly>
+            <input type="file" id="audioFile" accept=".mp3,.wav,.flac,.m4a,.ogg,.aac,.wma" style="display:none">
+            <button class="btn" onclick="document.getElementById('audioFile').click()">上传</button>
+          </div>
+          <div class="file-info" id="audioInfo"></div>
+        </div>
+        <div class="form-group">
+          <label>歌词文件（.lrc 带时间戳最准 / .txt 也可以）</label>
+          <div class="form-row">
+            <input type="text" id="lyricsPath" placeholder="点击右侧上传歌词" readonly>
+            <input type="file" id="lyricsFile" accept=".txt,.lrc" style="display:none">
+            <button class="btn" onclick="document.getElementById('lyricsFile').click()">上传</button>
+          </div>
+          <div class="file-info" id="lyricsInfo"></div>
+        </div>
+        <div class="form-group">
+          <label>翻译 / 音译文件（可选，每行对应一句歌词）</label>
+          <div class="form-row">
+            <input type="text" id="transPath" placeholder="不上传则不输出翻译层" readonly>
+            <input type="file" id="transFile" accept=".txt,.lrc" style="display:none">
+            <button class="btn btn-secondary" onclick="document.getElementById('transFile').click()">上传</button>
+            <button class="btn btn-secondary" onclick="clearTranslation()">清除</button>
+          </div>
+          <div class="file-info" id="transInfo"></div>
+        </div>
+        <div class="form-group">
+          <label>翻译语言代码（BCP-47）</label>
+          <input type="text" id="transLang" placeholder="zh-Hans / en / ja-Latn">
+        </div>
+        <div class="hint">提示：歌词文本要与音频版本一致；中文请用 UTF-8 编码。
+          支持 <code>[v1] [v2]</code>、<code>[duet-a] [duet-b]</code>、<code>[narration]</code>/<code>[旁白]</code>
+          演唱者标记，以及 <code>（括号）</code>背景和声。</div>
+      </div>
+
+      <div class="card">
+        <h2>⚙️ 转换参数</h2>
+        <div class="params-grid">
+          <div class="form-group">
+            <label>语言</label>
+            <select id="language">
+              <option value="auto" selected>自动检测（中英混唱推荐）</option>
+              <option value="zh">中文</option>
+              <option value="en">英文</option>
+              <option value="ja">日文</option>
+              <option value="ko">韩文</option>
+            </select>
+            <div class="hint">交给 whisper 自己判语言（<code>language=None</code>）。
+              <b>中英混唱不用手动切</b> —— 写死「中文」会让英文段按中文解码、明显掉字；<br>
+              只有<u>确定整首都是同一语言</u>、或自动检测判错时，才手动指定。
+              <code>xml:lang</code> 会自动写成实际检测到的语言。</div>
+          </div>
+          <div class="form-group">
+            <label>输出格式</label>
+            <select id="mode">
+              <option value="amll">AMLL 社区格式（推荐）</option>
+              <option value="apple">Apple 官方提交格式</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Whisper 模型</label>
+            <select id="model">
+              <option value="tiny">tiny（最快，精度低）</option>
+              <option value="base">base</option>
+              <option value="small">small</option>
+              <option value="medium">medium</option>
+              <option value="large-v3" selected>large-v3（最准，默认）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>计算设备</label>
+            <select id="device">
+              <option value="auto" selected>自动</option>
+              <option value="cpu">CPU</option>
+              <option value="cuda">GPU (CUDA)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>演唱者 / 角色标记</label>
+            <select id="markers">
+              <option value="auto" selected>按模式自动（AMLL→agent，Apple→含对唱角色）</option>
+              <option value="agent">只用 ttm:agent（AMLL 规范，推荐）</option>
+              <option value="both">ttm:agent + ttm:role（含 Apple 对唱角色）</option>
+              <option value="role">只用 ttm:role（Apple 扩展）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>翻译写法</label>
+            <select id="translationStyle">
+              <option value="head" selected>头部 iTunesMetadata（AMLL 规范）</option>
+              <option value="inline">行内 span x-translation</option>
+              <option value="both">两者都写</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>时间戳格式</label>
+            <select id="timeFormat">
+              <option value="clock" selected>HH:MM:SS.mmm（W3C 标准）</option>
+              <option value="mmss">MM:SS.mmm（AMLL 宽松）</option>
+              <option value="seconds">SS.mmm（AMLL 宽松）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>行标识</label>
+            <select id="lineId">
+              <option value="both" selected>itunes:key + xml:id</option>
+              <option value="itunes:key">只用 itunes:key</option>
+              <option value="xml:id">只用 xml:id</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>歌词风格规范化</label>
+            <select id="style">
+              <option value="keep" selected>一字不改（默认）</option>
+              <option value="apple">Apple 准则（去行尾句号/逗号 + 英文首字母大写）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>脏话处理</label>
+            <select id="explicitPolicy">
+              <option value="keep" selected>照实抄录（儿童不宜版本）</option>
+              <option value="mask">星号屏蔽（儿童适宜版本）</option>
+            </select>
+            <div class="hint">选「星号屏蔽」时，命中词表的脏话会整个换成
+              <code>****</code>。<br>
+              （以前这里还有一个「检测被消音的词也用 **** 替换」开关 —— 它和这一项
+              <b>最终效果完全一样</b>，两个控件放在一起只会让人不知道该开哪个，
+              已移除。需要那条启发式的脚本可以继续用命令行 <code>--detect-muted</code>。）</div>
+          </div>
+        </div>
+        <div class="switch-row">
+          <div class="switch" id="sepSwitch" onclick="toggleSwitch(this)"></div>
+          <span class="switch-label">先用 Demucs 分离人声再识别（混音复杂/和声多的歌更准，首次要下 80MB 模型）</span>
+        </div>
+        <div class="switch-row">
+          <div class="switch active" id="chunkedSwitch" onclick="toggleSwitch(this)"></div>
+          <span class="switch-label">按乐句切片识别（更准，稍慢）</span>
+        </div>
+        <div class="switch-row">
+          <div class="switch active" id="refineSwitch" onclick="toggleSwitch(this)"></div>
+          <span class="switch-label">低匹配率行二次精修</span>
+        </div>
+        <div class="switch-row">
+          <div class="switch active" id="creditSwitch" onclick="toggleSwitch(this)"></div>
+          <span class="switch-label">自动跳过「作词/作曲」等制作人员行</span>
+        </div>
+          <div class="form-group">
+            <label>演唱者分段（CAM++ 声纹）</label>
+            <select id="singers">
+              <option value="off" selected>关闭（用歌词里的 [v1]/[v2] 标记）</option>
+              <option value="1">强制单声部</option>
+              <option value="2">强制双声部</option>
+              <option value="3">强制三声部</option>
+            </select>
+            <div class="hint">
+              ⚠️ <b>音频判不出到底几个人</b>（三种判据实测全部失败），所以人数<b>由你来定</b>，
+              这里不再假装「自动判断」。<br>
+              <b>关闭</b>：不跑声纹，直接用歌词里的 <code>[v1] [v2]</code> 标记，没标记就全 v1；<br>
+              <b>强制 N 声部</b>：用<b>原始混音</b>提声纹 + k-means 聚成 N 簇，
+              与 AMLL 官方人工标注实测 <b>90.6%</b> 一致；<b>会覆盖歌词标记</b>（想按标记分就选「关闭」）。<br>
+              分完会在日志里列出<b>把握不足的行</b>，去编辑台改几行即可。
+              两人同时张嘴的齐唱/和声无法拆分。
+            </div>
+          </div>
+        <div class="form-group">
+          <label>停顿空格阈值（秒，0 = 关闭）</label>
+          <input type="text" id="pauseSpace" value="0">
+          <div class="hint">设为 0.5 时，字与字之间停顿超过 0.5 秒会在前一个字后加一个空格（AMLL 用空格表示停顿）。</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>🎵 歌曲信息（可选，写进 TTML 元数据）</h2>
+        <div class="form-group">
+          <label>歌曲名</label>
+          <input type="text" id="songTitle" placeholder="在出发之前">
+        </div>
+        <div class="form-group">
+          <label>歌手（多个用逗号分隔）</label>
+          <input type="text" id="artists" placeholder="陶典, hanser">
+        </div>
+        <div class="form-group">
+          <label>专辑</label>
+          <input type="text" id="album" placeholder="专辑名">
+        </div>
+        <div class="form-group">
+          <label>TTML 制作者（GitHub 用户名）</label>
+          <input type="text" id="author" placeholder="your_github_id">
+        </div>
+        <div class="form-group">
+          <label>制作者 GitHub 数字 ID（可选，amll:meta ttmlAuthorGithub）</label>
+          <input type="text" id="authorId" placeholder="123456789">
+        </div>
+        <div class="form-group">
+          <label>词曲作者（多个用逗号分隔，写入 &lt;songwriters&gt;）</label>
+          <input type="text" id="songwriters" placeholder="Hanser, 刘佳诺">
+        </div>
+        <div class="params-grid">
+          <div class="form-group"><label>网易云 ID</label><input type="text" id="ncmId"></div>
+          <div class="form-group"><label>Apple Music ID</label><input type="text" id="appleId"></div>
+          <div class="form-group"><label>QQ 音乐 ID</label><input type="text" id="qqId"></div>
+          <div class="form-group"><label>Spotify ID</label><input type="text" id="spotifyId"></div>
+          <div class="form-group"><label>酷我音乐 ID</label><input type="text" id="kuwoId"></div>
+          <div class="form-group"><label>酷狗音乐 ID</label><input type="text" id="kugouId"></div>
+        </div>
+        <div class="hint" style="margin-top:6px">
+          ⚠️ <b>AMLL 官方只定义了 4 个平台键</b>（网易云 / QQ / Apple / Spotify）；
+          <b>酷我、酷狗是我们扩展的自定义键</b>（<code>kuwoMusicId</code> /
+          <code>kugouMusicId</code>）。我们的写器会原样保留，AMLL 解析器会忽略不认识的键
+          —— 也就是<b>能存下来、不会让歌词显示不出来</b>，但别的软件不认。
+        </div>
+        <div class="form-group" style="margin-top:10px">
+          <label>按歌曲信息到各平台搜索（人工确认后把 ID 填进来）</label>
+          <div class="row-btns" id="idSearchRow"></div>
+          <div class="hint">
+            为什么不做"自动检索并回填"：① 本项目的卖点是<b>离线、无需 API Key</b>，
+            接第三方检索就把这条打破了；② 更麻烦的是<b>检索会搜错歌</b>——
+            同名/翻唱/现场版遍地都是，<b>填错的 ID 比空着更糟</b>（指向另一首歌）。
+            所以这里只做"一键到平台搜索页"，把<b>选哪一首</b>这一步留给你。<br>
+            真要自动回填：<a href="https://github.com/ELDment/Meting-Agent" target="_blank"
+            rel="noreferrer">Meting-Agent</a>（自建服务，统一 <code>search</code> 接口，
+            覆盖网易云/腾讯/酷狗/酷我）可以接 —— 设环境变量
+            <code>L2T_METING_API</code> 指向你的实例即可启用（见 README）。
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>💡 它是怎么工作的</h2>
+        <div class="hint" style="line-height:1.9;font-size:12px;color:#999">
+          1. 用 <b>faster-whisper large-v3</b> 听音频，拿到真实的词级时间戳；<br>
+          2. 把歌词按字切分，用<b>动态规划强制对齐</b>钉到识别结果上（同音字、漏字、复读都能容错）；<br>
+          3. LRC 行级时间戳作为锚点约束每一行；<br>
+          4. 匹配率低的行会单独重听那一小段再对齐；<br>
+          5. 输出 AMLL / Apple 格式 TTML 并做确定性自检。<br>
+          <span style="color:#64b5f6">全程本地运行，不上传任何数据到云端。</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="start-section">
+    <button class="btn btn-start" id="startBtn" onclick="startConversion()">🚀 开始转换</button>
+  </div>
+
+  <div class="progress-container" id="progressContainer">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-text"><span id="progressStage">准备中…</span><span id="progressPct">0%</span></div>
+  </div>
+
+  <div class="card" id="logCard" style="display:none">
+    <h2>📋 运行日志</h2>
+    <div class="log-container" id="logContainer"></div>
+  </div>
+
+  <div class="result-section" id="resultSection">
+    <h3 id="resultTitle">✅ 转换完成</h3>
+    <div class="result-stats">
+      <div class="stat"><div class="stat-value" id="statMatch">-</div><div class="stat-label">字级匹配率</div></div>
+      <div class="stat"><div class="stat-value" id="statFormat">-</div><div class="stat-label">格式自检</div></div>
+      <div class="stat"><div class="stat-value" id="statLines">-</div><div class="stat-label">行 / 字数</div></div>
+      <div class="stat"><div class="stat-value" id="statTime">-</div><div class="stat-label">耗时</div></div>
+    </div>
+    <ul class="notes" id="notes"></ul>
+    <div class="actions">
+      <button class="btn btn-success" onclick="downloadResult()">📥 下载 TTML</button>
+      <button class="btn btn-secondary" onclick="togglePreview()">👁 预览 TTML</button>
+      <button class="btn btn-secondary" onclick="openEditor()">✏️ 编辑时间轴</button>
+    </div>
+    <pre class="ttml" id="ttmlPreview"></pre>
+
+    <!-- 编辑台（P1）：只改时间，不重跑 ASR -->
+    <div class="editor" id="editorPanel">
+      <div class="editor-bar">
+        <strong>逐字时间轴</strong>
+        <span class="editor-hint" id="editorHint">点任意一个字的时间即可改；改完自动跑时间轴修复</span>
+        <span class="editor-pill" id="editorVersion">v-</span>
+        <button class="btn btn-success btn-sm" id="editorSave" onclick="saveEditor()">💾 保存</button>
+        <button class="btn btn-secondary btn-sm" onclick="closeEditor()">收起</button>
+      </div>
+      <div class="editor-tabs">
+        <button class="ed-tab active" id="tabTime" onclick="switchEditMode('time')">⏱ 时间轴</button>
+        <button class="ed-tab" id="tabAgent" onclick="switchEditMode('agent')">👥 声部（谁唱的）</button>
+        <button class="ed-tab" id="tabText" onclick="switchEditMode('text')">✏️ 文本（插行/改字/和声）</button>
+        <span class="ed-tab-hint" id="tabHint"></span>
+      </div>
+      <div class="editor-player" id="playerBar">
+        <button class="btn btn-secondary btn-sm" id="playBtn" onclick="togglePlay()">▶ 播放</button>
+        <audio id="edAudio" preload="metadata"></audio>
+        <input type="range" id="seekBar" min="0" max="1000" value="0" step="1"
+               oninput="onSeekInput()" title="拖动定位">
+        <span class="ed-time" id="timeLabel">00:00.000 / 00:00.000</span>
+        <label class="ed-loop" title="反复听当前这一行，改时间时最好用">
+          <input type="checkbox" id="loopWord"> 循环当前行
+        </label>
+        <label class="ed-loop" title="歌词自动滚到正在唱的那一行 —— 不勾的话高亮会滚出 420px 的可视区，等于看不见">
+          <input type="checkbox" id="followScroll" checked> 跟随滚动
+        </label>
+        <button class="btn btn-secondary btn-sm" onclick="seekBy(-3)">⟲3s</button>
+        <button class="btn btn-secondary btn-sm" onclick="seekBy(3)">3s⟳</button>
+      </div>
+      <!-- 当前演唱文字单独一行：固定 22px 高，不参与播放控制条的 flex 挤压 -->
+      <div class="editor-now"><span id="nowInfo" title="当前正在唱的字">当前：—</span></div>
+      <div class="editor-range" id="rangeBar">
+        <span id="rangeText">未选区间</span>
+        <span>设为</span>
+        <button class="ed-chip" onclick="applyRange('v1')">v1</button>
+        <button class="ed-chip" onclick="applyRange('v2')">v2</button>
+        <button class="ed-chip" onclick="applyRange('v3')">v3</button>
+        <button class="btn btn-secondary btn-sm" onclick="clearRange()">取消选择</button>
+        <span class="ed-tab-hint">点行号选起点，再点另一个行号选终点（或按住 Shift 点）</span>
+      </div>
+      <div class="editor-status" id="editorStatus"></div>
+      <div class="editor-body" id="editorBody"></div>
+      <div class="agent-overview" id="agentOverview"></div>
+      <div class="editor-legend">
+        <span class="lg lg-ok">正常</span>
+        <span class="lg lg-weak">低可信（ASR 概率低）</span>
+        <span class="lg lg-interp">插值补的（没匹配上）</span>
+        <span class="lg lg-bg">背景和声</span>
+        <span class="lg lg-now">正在播放（两个标签页都是它）</span>
+        <span class="lg lg-tail">拖音阶段（咬字已结束，还在拖长音）</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let currentTaskId = null;
+let pollTimer = null;
+let audioServerPath = null;
+let lyricsServerPath = null;
+let translationServerPath = null;
+
+function toggleSwitch(el) { el.classList.toggle('active'); }
+function isOn(id) { return document.getElementById(id).classList.contains('active'); }
+function val(id) { return document.getElementById(id).value; }
+
+/* 从上传文件名里自动填标题/艺人。
+   上传的文件名通常形如「在出发之前 - 陶典&hanser&爆裂菊是也&HOYO-MiX.wav」，
+   艺人字段空着的话 TTML 元数据就缺 artists，分声部也就失去了"到底几个人"的先验
+   （音频内部判不出来，见 README）。所以这里顺手填上，用户仍可改。 */
+/* 从文件名猜「歌名 / 艺人」。
+   ⚠️ 两个真踩过的坑（用户报的「元数据自动识别异常」就是这个）：
+   1. 以前只在字段**为空**时才填 → 处理第二首歌时字段里还是上一首的值，**永远不更新**；
+   2. 以前写死"歌名 - 艺人"顺序 → 遇到"艺人 - 歌名"（如 `黄霄雲 _ 刘端端 - 空心 (Live)`）
+      就把歌手当歌名、歌名当歌手。
+   现在：
+   * 记住**上次自动填进去的值**，只有字段为空或仍等于旧自动值时才覆盖
+     —— 不会擦掉用户手输的内容，但换歌一定会更新；
+   * 按"含 (Live)/feat./现场 的一侧是歌名""含多个名字分隔符的一侧是歌手"判断顺序。 */
+const _autoFilled = {songTitle: '', artists: ''};
+
+function splitTitleArtists(base) {
+  const parts = String(base || '').split(/\s+-\s+/);
+  if (parts.length < 2) return null;
+  const left = parts[0].trim();
+  const right = parts.slice(1).join(' - ').trim();
+  if (!left || !right) return null;
+  const TITLE_MARK = /[(（[][^)）\]]*(live|remix|ver|version|feat|acoustic|demo|cover|inst|现场|翻自)/i;
+  const artistScore = (s) => {
+    const names = s.split(/[&、,，/;；_]+/).map(x => x.trim()).filter(Boolean);
+    let n = 0;
+    if (/[&、,，/]/.test(s)) n += 2;
+    if (/_/.test(s)) n += 1;
+    if (names.length >= 2) n += 2;
+    return n;
+  };
+  const lt = TITLE_MARK.test(left), rt = TITLE_MARK.test(right);
+  if (rt && !lt) return {title: right, artists: left};    // 「艺人 - 歌名 (Live)」
+  if (lt && !rt) return {title: left, artists: right};
+  const la = artistScore(left), ra = artistScore(right);
+  if (ra > la) return {title: left, artists: right};      // 「歌名 - 艺人1&艺人2」
+  if (la > ra) return {title: right, artists: left};      // 「艺人1 _ 艺人2 - 歌名」
+  // 两边都没有线索时是**本质歧义**（`于文文 - 体面` 与 `体面 - 于文文` 长得一样）。
+  // 按音乐文件下载的通行约定取「艺人 - 歌名」（如「周杰伦 - 晴天.mp3」）。
+  return {title: right, artists: left};
+}
+
+function fillIfAuto(id, value) {
+  const el = document.getElementById(id);
+  if (!el || !value) return false;
+  const cur = String(el.value || '').trim();
+  if (cur && cur !== _autoFilled[id]) return false;   // 用户手改过，别覆盖
+  el.value = value;
+  _autoFilled[id] = value;
+  return true;
+}
+
+function autofillMeta(filename) {
+  const base = String(filename || '').replace(/\.[^.]+$/, '');
+  const r = splitTitleArtists(base);
+  if (!r) return;
+  fillIfAuto('songTitle', r.title);
+  const artists = r.artists.split(/[&、,，/;；_]+/).map(s => s.trim()).filter(Boolean);
+  if (artists.length) fillIfAuto('artists', artists.join(', '));
+}
+
+document.getElementById('audioFile').addEventListener('change', e => uploadFile(e.target.files[0], 'audio'));
+document.getElementById('lyricsFile').addEventListener('change', e => uploadFile(e.target.files[0], 'lyrics'));
+document.getElementById('transFile').addEventListener('change', e => uploadFile(e.target.files[0], 'translation'));
+
+function clearTranslation() {
+  translationServerPath = null;
+  document.getElementById('transPath').value = '';
+  document.getElementById('transInfo').textContent = '';
+  document.getElementById('transFile').value = '';
+}
+
+function uploadFile(file, type) {
+  if (!file) return;
+  const infoId = {audio: 'audioInfo', lyrics: 'lyricsInfo', translation: 'transInfo'}[type];
+  const info = document.getElementById(infoId);
+  info.textContent = '上传中… ' + file.name;
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    const b64 = e.target.result.split(',')[1];
+    fetch('/api/upload', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: file.name, data: b64})
+    }).then(r => r.json()).then(d => {
+      if (d.error) { showToast(d.error); info.textContent = '✗ ' + d.error; return; }
+      if (type === 'audio') {
+        autofillMeta(file.name);          // 顺手从文件名补标题/艺人
+        audioServerPath = d.path;
+        document.getElementById('audioPath').value = d.filename;
+        info.textContent = '✓ ' + d.filename + '（' + (d.size / 1048576).toFixed(1) + ' MB）';
+      } else if (type === 'lyrics') {
+        lyricsServerPath = d.path;
+        document.getElementById('lyricsPath').value = d.filename;
+        info.textContent = '✓ ' + d.filename;
+      } else {
+        translationServerPath = d.path;
+        document.getElementById('transPath').value = d.filename;
+        info.textContent = '✓ ' + d.filename;
+      }
+    }).catch(err => { info.textContent = '✗ 上传失败: ' + err; });
+  };
+  reader.readAsDataURL(file);
+}
+
+function startConversion() {
+  if (!audioServerPath) { showToast('请先上传音频文件'); return; }
+  if (!lyricsServerPath) { showToast('请先上传歌词文件'); return; }
+
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true; btn.textContent = '转换中…';
+  document.getElementById('progressContainer').style.display = 'block';
+  document.getElementById('logCard').style.display = 'block';
+  document.getElementById('resultSection').style.display = 'none';
+  document.getElementById('logContainer').innerHTML = '';
+  document.getElementById('progressFill').style.width = '0%';
+
+  const params = {
+    audio: audioServerPath, lyrics: lyricsServerPath,
+    translation: translationServerPath || '',
+    language: val('language'), mode: val('mode'), model: val('model'), device: val('device'),
+    markers: val('markers'), line_id: val('lineId'),
+    translation_style: val('translationStyle'), time_format: val('timeFormat'),
+    translation_lang: val('transLang'),
+    // off=用歌词标记 / 1|2|3=强制 N 声部（后端 ConvertOptions.forced_singers 解析）
+    singer_mode: val('singers') || 'off',
+    style: val('style'),
+    explicit_policy: val('explicitPolicy'),
+    // detect_muted 不再是界面选项（与 explicitPolicy=mask 效果重复，见上方说明）。
+    // 需要那条启发式就走命令行 --detect-muted。
+    detect_muted: false,
+    separate_vocals: isOn('sepSwitch'),
+    chunked: isOn('chunkedSwitch'), refine: isOn('refineSwitch'), skip_credits: isOn('creditSwitch'),
+    pause_space: parseFloat(val('pauseSpace')) || 0,
+    title: val('songTitle'), artists: val('artists'), album: val('album'), author: val('author'),
+    author_id: val('authorId'), songwriters: val('songwriters'),
+    ncmMusicId: val('ncmId'), appleMusicId: val('appleId'), qqMusicId: val('qqId'),
+    spotifyId: val('spotifyId'),
+    kuwoMusicId: val('kuwoId'), kugouMusicId: val('kugouId')
+  };
+
+  fetch('/api/convert', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(params)
+  }).then(r => r.json()).then(d => {
+    if (d.task_id) { currentTaskId = d.task_id; pollTask(); }
+    else { showToast(d.error || '启动失败'); resetButton(); }
+  });
+}
+
+function pollTask() {
+  if (!currentTaskId) return;
+  fetch('/api/task?id=' + currentTaskId).then(r => r.json()).then(t => {
+    document.getElementById('progressFill').style.width = t.progress + '%';
+    document.getElementById('progressPct').textContent = t.progress + '%';
+    document.getElementById('progressStage').textContent = t.stage || '处理中…';
+
+    const box = document.getElementById('logContainer');
+    for (let i = box.children.length; i < t.logs.length; i++) {
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      const m = t.logs[i].m;
+      if (m.includes('✓') || m.includes('完成')) div.classList.add('success');
+      if (m.includes('✗') || m.includes('失败') || m.includes('错误')) div.classList.add('error');
+      div.textContent = '[' + t.logs[i].t + '] ' + m;
+      box.appendChild(div);
+    }
+    box.scrollTop = box.scrollHeight;
+
+    if (t.status === 'done') {
+      clearTimeout(pollTimer); showResult(t); resetButton();
+      // ⚠️ 编辑台如果开着，必须按**新任务**重新拉一遍。
+      // 以前不刷新 → 连续处理两首歌时，日志已经是新歌、编辑台还显示上一首的内容
+      // （用户报的「界面数据未同步更新」）。这里先把旧模型清掉，免得刷新期间还挂着旧数据。
+      refreshEditorIfOpen();
+    } else if (t.status === 'error') {
+      clearTimeout(pollTimer); showToast('转换失败：' + (t.error || '')); resetButton();
+    } else { pollTimer = setTimeout(pollTask, 1200); }
+  }).catch(() => { pollTimer = setTimeout(pollTask, 2000); });
+}
+
+function showResult(t) {
+  const s = t.summary || {};
+  document.getElementById('resultSection').style.display = 'block';
+  document.getElementById('statMatch').textContent = ((s.match_rate || 0) * 100).toFixed(1) + '%';
+  document.getElementById('statFormat').textContent = s.format_ok ? '通过' : (s.errors + ' 错');
+  document.getElementById('statLines').textContent = (s.lines || 0) + ' / ' + (s.words || 0);
+  document.getElementById('statTime').textContent = (s.elapsed || 0) + 's';
+  const notes = document.getElementById('notes');
+  notes.innerHTML = '';
+  (s.notes || []).forEach(n => { const li = document.createElement('li'); li.textContent = n; notes.appendChild(li); });
+  if (s.errors) {
+    const li = document.createElement('li');
+    li.textContent = `格式问题 ${s.errors} 个`;
+    notes.appendChild(li);
+  }
+}
+
+function togglePreview() {
+  const pre = document.getElementById('ttmlPreview');
+  if (pre.style.display === 'block') { pre.style.display = 'none'; return; }
+  fetch('/api/ttml?id=' + currentTaskId).then(r => r.json()).then(d => {
+    pre.textContent = d.ttml || '(无内容)';
+    pre.style.display = 'block';
+  });
+}
+
+function downloadResult() {
+  if (currentTaskId) window.open('/api/download?id=' + currentTaskId, '_blank');
+}
+
+function resetButton() {
+  const btn = document.getElementById('startBtn');
+  btn.disabled = false; btn.textContent = '🚀 开始转换';
+}
+
+/* 转换完成后：编辑台若开着，按新任务重新载入。
+   ⚠️ 光靠 currentTaskId 更新是不够的 —— 编辑面板的内容是「打开时拉一次」的，
+   不主动重拉就会一直显示上一首歌（用户报的「界面数据未同步更新」）。
+   这里把上一首的模型与索引全部清掉再 openEditor()，避免旧的 63 行/471 字之类的
+   残留数字和 DOM 挂在界面上。 */
+function refreshEditorIfOpen() {
+  const panel = document.getElementById('editorPanel');
+  if (!panel || panel.style.display === 'none') return;
+  editDoc = null;
+  wordIndex = [];
+  wordMaxEnd = [];
+  wordEls = {}; lineEls = {}; ovEls = {};
+  nowWordState = {}; nowLineKey = '';
+  const a = initAudio();
+  a.pause();
+  a.removeAttribute('src');
+  a.dataset.src = '';
+  openEditor();
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3200);
+}
+
+/* ---------- 播放器：点字跳转 + 实时高亮 ----------
+   高亮靠 requestAnimationFrame 按 audio.currentTime 找当前字，
+   不做 DOM 测量（我们有精确的 begin/end）。只在命中变化时改 class，避免每帧重排。 */
+let audioEl = null;
+let rafId = null;
+let nowWordState = {};      // {"行:字": "bite"|"tail"} —— 叠唱时会有多个
+let nowLineKey = "";        // 当前行号集合，逗号拼接（叠唱时多行）
+let wordIndex = [];         // 渲染时构建：[{b,e,li,wi,text,…,med}]
+let wordMaxEnd = [];        // 后缀最大 end，供 findWordsAt 安全早退
+
+function initAudio() {
+  if (audioEl) return audioEl;
+  audioEl = document.getElementById('edAudio');
+  audioEl.addEventListener('loadedmetadata', () => updateTimeLabel());
+  audioEl.addEventListener('timeupdate', () => updateTimeLabel());
+  audioEl.addEventListener('play', () => { setPlayBtn(true); startRaf(); });
+  audioEl.addEventListener('pause', () => { setPlayBtn(false); stopRaf(); });
+  audioEl.addEventListener('ended', () => { setPlayBtn(false); stopRaf(); });
+  audioEl.addEventListener('error', () => {
+    setEditorStatus('⚠ 音频加载失败（可能这个任务没有音频，或服务未提供 /api/audio）', 'bad');
+  });
+  return audioEl;
+}
+
+function loadAudio() {
+  const a = initAudio();
+  const src = '/api/audio?id=' + encodeURIComponent(currentTaskId);
+  if (a.dataset.src !== src) {
+    a.dataset.src = src;
+    a.src = src;
+    a.load();
+  }
+}
+
+function setPlayBtn(playing) {
+  const b = document.getElementById('playBtn');
+  if (b) b.textContent = playing ? '⏸ 暂停' : '▶ 播放';
+}
+
+function togglePlay() {
+  const a = initAudio();
+  if (a.paused) a.play().catch(e => setEditorStatus('⚠ 播放失败：' + e.message, 'bad'));
+  else a.pause();
+}
+
+function seekTo(t) {
+  const a = initAudio();
+  if (!isFinite(a.duration)) { a.addEventListener('loadedmetadata', () => seekTo(t), { once: true }); return; }
+  a.currentTime = Math.max(0, Math.min(t, a.duration));
+  updateTimeLabel();
+  tickHighlight();
+}
+
+function seekBy(d) { seekTo(initAudio().currentTime + d); }
+
+function onSeekInput() {
+  const a = initAudio();
+  const frac = Number(document.getElementById('seekBar').value) / 1000;
+  if (isFinite(a.duration)) seekTo(frac * a.duration);
+}
+
+function updateTimeLabel() {
+  const a = initAudio();
+  const d = isFinite(a.duration) ? a.duration : 0;
+  document.getElementById('timeLabel').textContent =
+    fmt(a.currentTime) + ' / ' + fmt(d);
+  const bar = document.getElementById('seekBar');
+  if (bar && d > 0 && document.activeElement !== bar) {
+    bar.value = Math.round(a.currentTime / d * 1000);
+  }
+}
+
+function startRaf() {
+  if (rafId) return;
+  const loop = () => { tickHighlight(); rafId = requestAnimationFrame(loop); };
+  rafId = requestAnimationFrame(loop);
+}
+function stopRaf() {
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  tickHighlight();
+}
+
+/* 二分找当前时间落在哪个字（单字版，供需要"只要一个"的地方用；
+   播放高亮走 findWordsAt —— 叠唱时可能同时有多个字在唱）。 */
+function findWord(t) {
+  let lo = 0, hi = wordIndex.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const w = wordIndex[mid];
+    if (t < w.b) hi = mid - 1;
+    else if (t >= w.e) lo = mid + 1;
+    else return w;
+  }
+  return null;
+}
+
+/* 找出 t 时刻**所有**正在唱的字。
+   wordIndex 按 begin 排序，但 **end 不是有序的**（长拖音的字可能排在后起短字的前面），
+   所以不能"按前一个字的 end 提前停" —— 那样会漏掉更早开始、仍在拖音的字
+   （真 bug：`尽` 1.8~3.0 排在 `等` 2.4~2.8 前面，扫到 `等` 就 break，`尽` 永远不亮）。
+
+   正确做法：预先算好**后缀最大 end** `wordMaxEnd[i] = max(e[i..])`。
+   从最后一个 begin<=t 的字往回扫，一旦 `wordMaxEnd[i] <= t` 就说明
+   它前面**没有任何字**还在唱，可以安全停止。 */
+function findWordsAt(t) {
+  let lo = 0, hi = wordIndex.length - 1, last = -1;
+  while (lo <= hi) {                       // 最后一个 begin <= t 的位置
+    const mid = (lo + hi) >> 1;
+    if (wordIndex[mid].b <= t) { last = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  const out = [];
+  for (let i = last; i >= 0; i--) {
+    if (wordMaxEnd[i] <= t) break;         // 前面不可能还有在唱的字
+    if (wordIndex[i].e > t) out.push(wordIndex[i]);
+  }
+  return out;
+}
+
+/* 每个"行 + 层"只保留一个当前字。
+   ⚠️ 键**必须带上层**（main / bg），不能只按行：
+   同一行里主唱和背景和声**可以同时在唱**（和声叠在主唱上），
+   只按行去重会把和声那个丢掉 —— 表现就是"和声在唱但文本页/时间轴页不亮它"。
+   双人叠唱 → 两行各自的字同时亮；主唱叠和声 → 同一行两层各自亮。 */
+function currentWordsAt(t) {
+  const bySlot = new Map();
+  for (const w of findWordsAt(t)) {
+    const slot = w.li + ':' + (w.is_bg ? 'bg' : 'main');
+    const cur = bySlot.get(slot);
+    if (!cur || w.b < cur.b) bySlot.set(slot, w);
+  }
+  return [...bySlot.values()];
+}
+
+/* 判断这个字当前处在「咬字阶段」还是「拖音阶段」。
+   依据：该行自己的中位字长。超过中位字长的部分就是拖出来的音。
+   短字永远不会进入拖音阶段（bite 最多等于它自己的长度）。 */
+function wordPhase(w, t) {
+  const dur = w.e - w.b;
+  const bite = Math.min(dur, Math.max(0.22, w.med || 0.35));
+  return (dur > bite + 0.08 && (t - w.b) >= bite) ? 'tail' : 'bite';
+}
+
+function tickHighlight() {
+  const a = initAudio();
+  const t = a.currentTime;
+
+  // ---- 逐字：可能同时有多个（每个声部一个）----
+  const cur = currentWordsAt(t);
+  const next = {};
+  const lines = new Set();
+  for (const w of cur) {
+    const k = w.li + ':' + w.wi;
+    w.phase = wordPhase(w, t);
+    next[k] = w.phase;
+    lines.add(String(w.li));
+  }
+  // 只在"集合或阶段"变化时才动 DOM
+  const nextKeys = Object.keys(next).sort();
+  const prevKeys = Object.keys(nowWordState).sort();
+  if (nextKeys.join() !== prevKeys.join()
+      || nextKeys.some(k => nowWordState[k] !== next[k])) {
+    for (const k of prevKeys) {
+      if (!(k in next) && wordEls[k]) {
+        wordEls[k].classList.remove('now');
+        wordEls[k].classList.remove('now-tail');
+      }
+    }
+    for (const k of nextKeys) {
+      const el = wordEls[k];
+      if (!el) continue;
+      const wasTail = nowWordState[k] === 'tail';
+      if (!wasTail && next[k] === 'tail') el.classList.add('now-tail');
+      el.classList.add('now');
+    }
+    nowWordState = next;
+    updateNowInfo(cur);
+  }
+
+  // ---- 逐行：叠唱时两行同时是"当前行" ----
+  const lk = [...lines].sort().join();
+  if (lk !== nowLineKey) {
+    (nowLineKey ? nowLineKey.split(',') : []).forEach(k => {
+      if (k && lineEls[k]) lineEls[k].classList.remove('now');
+    });
+    lines.forEach(k => { if (lineEls[k]) lineEls[k].classList.add('now'); });
+    nowLineKey = lk;
+    Object.keys(ovEls).forEach(k => ovEls[k].classList.toggle('now', lines.has(k)));
+    // 视图跟随：编辑区只有 420px 高，不滚的话高亮会跑出可视区
+    scrollLinesIntoView([...lines].map(Number).sort((x, y) => x - y));
+  }
+
+  // 循环当前行（叠唱时按最先开始的那一行）
+  const loop = document.getElementById('loopWord');
+  if (loop && loop.checked && cur.length) {
+    const w = cur.reduce((m, x) => (x.lineEnd < m.lineEnd ? x : m));
+    if (t >= w.lineEnd - 0.02) a.currentTime = w.lineBegin;
+  }
+}
+
+/* 让当前行保持在编辑区内可见。
+   只滚 inner 容器（自己算，不用 scrollIntoView），避免把整个页面也带着跳。
+   叠唱时会有**多行**同时是"当前行"，这里保证它们整体都在视野内 ——
+   只看第一行的话，下面的声部会滚出可视区，等于看不到叠唱。 */
+function scrollLinesIntoView(liList) {
+  const cb = document.getElementById('followScroll');
+  if (cb && !cb.checked) return;
+  const box = document.getElementById('editorBody');
+  if (!box) return;
+  const els = liList.map(i => lineEls[i]).filter(Boolean);
+  if (!els.length) return;
+  const br = box.getBoundingClientRect();
+  const rects = els.map(e => e.getBoundingClientRect());
+  const top = Math.min(...rects.map(r => r.top));
+  const bottom = Math.max(...rects.map(r => r.bottom));
+  if (top < br.top + 8) box.scrollTop += top - br.top - 8;
+  else if (bottom > br.bottom - 8) box.scrollTop += bottom - br.bottom + 8;
+}
+
+/* 播放器上那行读数。叠唱时会同时列出两个声部：
+   `当前：v1 道 · v2 吃（拖音）` */
+function updateNowInfo(words) {
+  const el = document.getElementById('nowInfo');
+  if (!el) return;
+  if (!words || !words.length) {
+    el.textContent = '当前：—';
+    el.title = '当前正在唱的字';
+    return;
+  }
+  const parts = words.map(w => {
+    const line = (editDoc.lines || [])[w.li] || {};
+    const tail = w.phase === 'tail' ? '（拖音）' : '';
+    return `${line.agent || '?'} ${w.text}${tail}`;
+  });
+  const lead = words[0];
+  const line = (editDoc.lines || [])[lead.li] || {};
+  const dur = lead.e - lead.b;
+  const text = `当前：${parts.join(' · ')} · ${fmt(lead.b)}`
+    + ` · 时长 ${dur.toFixed(3)}s · L${lead.li + 1}`
+    + (words.length > 1 ? ` ＋ ${words.length - 1} 个声部` : '')
+    + (lead.matched === false ? ' · ⚠插值' : '');
+  el.textContent = text;
+  // 这一行是**定高单行 + 省略号**，长句子会被截断 —— 全文挂到 title 上，
+  // 鼠标停一下就能看全，不用为了看全而把版面挤变形。
+  el.title = text;
+}
+
+/* 重建"时间 → 第几行第几字"的二分索引。
+   ⚠️ **绝对不能在这里清空 wordEls / lineEls**：
+   两个渲染器都是「先建 DOM、登记到 wordEls/lineEls、最后调 indexWords()」，
+   在这里 clear 会把刚登记的元素全丢掉 → `wordEls[wk]` 是 undefined，
+   `classList.add('now')` 静默失败 → **播放高亮完全不生效**（真 bug）。
+   元素地图由各渲染器自己负责清空（它们本来就从零重建 DOM）。 */
+function indexWords() {
+  wordIndex = [];
+  (editDoc.lines || []).forEach((line, li) => {
+    const ws = (line.words || []).filter(w => w.end > w.begin);
+    // 该行的**中位字长**：用来判断某个字是不是"拖"了 ——
+    // 超过中位字长的部分就是拖音段（见 wordPhase）。
+    const durs = ws.map(w => w.end - w.begin).sort((a, b) => a - b);
+    const med = durs.length ? durs[durs.length >> 1] : 0.35;
+    ws.forEach(w => {
+      const wi = (line.words || []).indexOf(w);
+      // ⚠️ 必须把 text / matched / prob / is_bg 一起带进来：播放器读数要用它们，
+      // 之前只存了时间，读数显示成「当前：undefined」（也是运行时测试抓到的）。
+      wordIndex.push({ b: w.begin, e: w.end, li, wi,
+                       text: w.text, matched: w.matched, prob: w.prob,
+                       is_bg: w.is_bg, med,
+                       lineBegin: line.begin, lineEnd: line.end });
+    });
+  });
+  wordIndex.sort((x, y) => x.b - y.b);
+  // 后缀最大 end —— findWordsAt 靠它安全早退（end 本身不是有序的）
+  wordMaxEnd = new Array(wordIndex.length).fill(-Infinity);
+  for (let i = wordIndex.length - 1; i >= 0; i--) {
+    wordMaxEnd[i] = Math.max(wordIndex[i].e,
+                             i + 1 < wordIndex.length ? wordMaxEnd[i + 1] : -Infinity);
+  }
+}
+/* 重建索引后同步一次高亮。
+   ⚠️ **必须先把 nowWordState/nowLineKey 清掉**：它们是「上次高亮到哪」的缓存，
+   而 tickHighlight 只在"命中变化"时才动 DOM。重建 DOM 后旧元素已经不存在了，
+   若不清缓存，tickHighlight 会认为"没变化"而**跳过**，
+   于是新 DOM 上一直没有高亮 —— 直到播放跨到下一个字。
+   表现就是：切标签页 / 保存后重渲染，高亮消失一阵子（真 bug，运行时测试抓到的）。 */
+function syncHighlightAfterRender() {
+  nowWordState = {};
+  nowLineKey = "";
+  indexWords();
+  tickHighlight();
+}
+
+let wordEls = {};
+let lineEls = {};
+let ovEls = {};
+
+/* ===================== 编辑台（P1）=====================
+   微调阶段绝不重跑 ASR：拖动一个字只触发 POST /api/validate（只算不写），
+   毫秒级返回"自动修复了几处" + 修好的 doc；点保存才落盘。
+   注意 doc 的 JSON 字段是 begin/end（start 只是 Python 侧的别名）。 */
+let editDoc = null;
+let editVersion = null;
+let editTimer = null;
+let editMode = 'time';          // 'time' | 'agent'
+let rangeFrom = null;           // 区间起点（行下标）
+let rangeTo = null;             // 区间终点
+
+// 改声部时同步角色：ttp:role 是 Apple 内部扩展，v1/v2 对应左右分栏
+function roleForAgent(a) {
+  if (a === 'v1') return 'x-duet-a';
+  if (a === 'v2') return 'x-duet-b';
+  return '';
+}
+
+function switchEditMode(m) {
+  editMode = m;
+  document.getElementById('tabTime').classList.toggle('active', m === 'time');
+  document.getElementById('tabAgent').classList.toggle('active', m === 'agent');
+  document.getElementById('tabText').classList.toggle('active', m === 'text');
+  const hints = {
+    time: '点任意一个字的时间即可改；改完自动跑时间轴修复',
+    agent: '点行上的 v1/v2/v3 即可改这一行谁唱；点行号可选区间批量改',
+    text: '直接改文字：整行输入框改一句；点某个字改单字、字间 ＋ 插字、字上 × 删字；右侧 ＋ 在下方插一行',
+  };
+  document.getElementById('editorHint').textContent = hints[m] || '';
+  document.getElementById('tabHint').textContent = m === 'agent'
+    ? '声纹自动分段实测约 90% 准确，错的常是连续几行 —— 选一段批量改最快'
+    : (m === 'text'
+       ? '原歌词缺行/错字就在这里补；改完立刻落盘，时间轴会自动跑一遍修复'
+       : '');
+  document.getElementById('rangeBar').style.display = m === 'agent' ? 'flex' : 'none';
+  renderEditor();
+  loadAudio();          // 进编辑台就把音频挂上（含 Range 流，拖动才能秒跳）
+  updateTimeLabel();
+}
+
+function clearRange() {
+  rangeFrom = rangeTo = null;
+  renderEditor();
+}
+
+function pickLineNo(li, ev) {
+  if (editMode !== 'agent') return;
+  if (ev && ev.shiftKey && rangeFrom !== null) {
+    rangeTo = li;
+  } else if (rangeFrom === null || (rangeFrom !== null && rangeTo !== null)) {
+    rangeFrom = li; rangeTo = null;      // 重新开始选
+  } else {
+    rangeTo = li;
+  }
+  renderEditor();
+}
+
+function rangeBounds() {
+  if (rangeFrom === null) return null;
+  const to = rangeTo === null ? rangeFrom : rangeTo;
+  return [Math.min(rangeFrom, to), Math.max(rangeFrom, to)];
+}
+
+function applyRange(agent) {
+  const b = rangeBounds();
+  if (!b) { setEditorStatus('先在行号上点一下选区间（点起点，再 Shift 点终点）', 'bad'); return; }
+  for (let i = b[0]; i <= b[1]; i++) setLineAgent(i, agent);
+  rangeFrom = rangeTo = null;
+  scheduleValidate();
+}
+
+function setLineAgent(li, agent) {
+  const line = editDoc.lines[li];
+  if (!line) return;
+  line.agent = agent;
+  // 角色跟着走，否则会写出 ttm:agent="v1" + ttm:role="x-duet-b" 这种自相矛盾的行
+  if ('role' in line || Object.prototype.hasOwnProperty.call(line, 'role')) {
+    line.role = roleForAgent(agent);
+  }
+  renderEditor();
+  setEditorStatus(`L${li + 1} 已设为 ${agent}（还没保存）`);
+}
+
+function renderAgentOverview() {
+  const box = document.getElementById('agentOverview');
+  box.innerHTML = '';
+  const counts = {};
+  (editDoc.lines || []).forEach((l, i) => {
+    counts[l.agent] = (counts[l.agent] || 0) + 1;
+    const c = document.createElement('div');
+    c.className = 'ao-cell ' + (l.agent || '');
+    c.title = `L${i + 1} · ${l.agent} · ${(l.text || '').slice(0, 16)}　点一下跳到这一行`;
+    c.onclick = (e) => {
+      if (editMode === 'agent') pickLineNo(i, e);
+      seekTo(l.begin);
+    };
+    box.appendChild(c);
+    ovEls[i] = c;
+  });
+  const summary = Object.keys(counts).sort()
+    .map(a => `${a} ${counts[a]} 行`).join('，');
+  const tip = document.createElement('div');
+  tip.className = 'ed-tab-hint';
+  tip.style.marginLeft = '10px';
+  tip.textContent = '分声部概览：' + summary + '（点小方块也能选行）';
+  box.appendChild(tip);
+}
+
+function renderAgentLines() {
+  if (!editDoc) return;          // 同上：模型可能正被清空等待重拉
+  const body = document.getElementById('editorBody');
+  body.innerHTML = '';
+  wordEls = {}; lineEls = {}; ovEls = {};   // 从零重建，元素地图在这里清（不在 indexWords）
+  const b = rangeBounds();
+  (editDoc.lines || []).forEach((line, li) => {
+    const row = document.createElement('div');
+    // agent-line：让播放中的行能用独立样式（青色）高亮，不跟 agent 配色混
+    row.className = 'ed-line agent-line'
+      + (line.agent && line.agent !== 'v1' ? ' ed-duet' : '');
+    const no = document.createElement('div');
+    no.className = 'ed-lineno' + (b && li >= b[0] && li <= b[1] ? ' sel' : '');
+    no.textContent = `L${li + 1}`;
+    no.title = '点这里选区间起点，再 Shift 点另一行选终点（不会跳转播放）';
+    no.onclick = (e) => pickLineNo(li, e);
+    row.appendChild(no);
+
+    const chips = document.createElement('span');
+    chips.className = 'ed-agent';
+    ['v1', 'v2', 'v3'].forEach(a => {
+      const c = document.createElement('button');
+      c.className = 'ed-chip' + (line.agent === a ? ' on' : '');
+      c.textContent = a;
+      c.title = `把这一行设为 ${a}`;
+      c.onclick = () => setLineAgent(li, a);
+      chips.appendChild(c);
+    });
+    row.appendChild(chips);
+
+    // 逐字渲染（不是整行一坨）：这样在声部界面里点任意一个字都能跳到那一刻，
+    // 而且和「时间轴」共用同一套 wordEls 索引 → 播放高亮在两个界面里都生效。
+    const txt = document.createElement('span');
+    txt.className = 'ed-text';
+    (line.words || []).forEach((w, wi) => {
+      const s = document.createElement('span');
+      s.className = 'ed-aword' + wordStatusClass(w);
+      s.textContent = w.text;
+      s.title = `L${li + 1} · ${w.text} · ${fmt(w.begin)}~${fmt(w.end)}`
+        + `　点一下跳到这个字并播放`;
+      s.onclick = () => {
+        seekTo(w.begin);
+        if (initAudio().paused) togglePlay();
+      };
+      txt.appendChild(s);
+      wordEls[li + ':' + wi] = s;
+    });
+    if (!line.words || !line.words.length) txt.textContent = line.text || '';
+    row.appendChild(txt);
+    body.appendChild(row);
+    lineEls[li] = row;
+  });
+  renderAgentOverview();
+  syncHighlightAfterRender();   // 两个界面共用索引；重建后强制重新打高亮
+}
+
+/* 逐字状态标识：**两个页面共用这一个函数**，保证「状态完全一致」。
+   优先级：插值(匹配失败) > 低可信 > 背景和声。
+   ⚠️ 为什么警告要压过和声：一个"和声 + 插值"的字如果显示成绿色，
+   就把最该人工看的错误藏起来了。和声是信息，插值是待办。 */
+function wordStatusClass(w) {
+  if (w.matched === false) return ' is-interp';
+  if (w.prob !== undefined && w.prob > 0 && w.prob < 0.5) return ' is-weak';
+  if (w.is_bg) return ' is-bg';
+  return '';
+}
+
+function fmt(t) {
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return String(m).padStart(2, '0') + ':' + s.toFixed(3).padStart(6, '0');
+}
+function parseT(v) {
+  if (typeof v === 'number') return v;
+  const p = String(v).trim().split(':').map(Number);
+  if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
+  if (p.length === 2) return p[0] * 60 + p[1];
+  return p[0] || 0;
+}
+
+async function openEditor() {
+  if (!currentTaskId) return;
+  const panel = document.getElementById('editorPanel');
+  panel.style.display = 'block';
+  setEditorStatus('加载中…');
+  try {
+    const r = await fetch('/api/edit?id=' + encodeURIComponent(currentTaskId));
+    const d = await r.json();
+    if (!r.ok) { setEditorStatus('⚠ ' + (d.error || '加载失败') + (d.hint ? ' —— ' + d.hint : '')); return; }
+    editDoc = d.doc; editVersion = d.version;
+    document.getElementById('editorVersion').textContent = 'v' + editVersion;
+    renderEditor();
+    setEditorStatus(`已载入 ${d.stats.lines} 行 / ${d.stats.words} 字（来源：${d.source}）`);
+    switchEditMode(editMode);
+  } catch (e) { setEditorStatus('⚠ 网络错误：' + e.message); }
+}
+
+function closeEditor() {
+  document.getElementById('editorPanel').style.display = 'none';
+  const a = initAudio();
+  a.pause();               // 收起来就别继续播
+  stopRaf();
+}
+
+function setEditorStatus(msg, kind) {
+  const el = document.getElementById('editorStatus');
+  el.textContent = msg;
+  el.className = 'editor-status' + (kind ? ' ' + kind : '');
+}
+
+/* ==================================================================
+   歌曲信息：一键到各平台搜索 + （可选）自动检索 ID
+   ------------------------------------------------------------------
+   ⚠️ 为什么默认**不做**"上传后自动检索并回填"：
+   1. 本项目的卖点是**离线运行、无需 API Key**，接第三方检索就把这条打破了；
+   2. 更要命的是**检索会搜错歌** —— 同名、翻唱、Live、remix 遍地都是，
+      **填错的 ID 比空着更糟**（它指向另一首歌，听众点过去是错的）。
+   自动回填必须是"用户明确开启 + 自己承担核对责任"的行为，不能是默认行为。
+   ================================================================== */
+const PLATFORM_SEARCH = [
+  ['网易云', id => `https://music.163.com/#/search/m/?s=${encodeURIComponent(id)}`],
+  ['QQ音乐', id => `https://y.qq.com/n/ryqq/search?w=${encodeURIComponent(id)}`],
+  ['Apple Music', id => `https://music.apple.com/cn/search?term=${encodeURIComponent(id)}`],
+  ['Spotify', id => `https://open.spotify.com/search/${encodeURIComponent(id)}`],
+  ['酷我音乐', id => `https://www.kuwo.cn/search/list?key=${encodeURIComponent(id)}`],
+  ['酷狗音乐', id => `https://www.kugou.com/yy/html/search.html#searchType=song&searchKeyWord=${encodeURIComponent(id)}`],
+];
+
+function renderIdSearchLinks() {
+  const row = document.getElementById('idSearchRow');
+  if (!row) return;
+  const title = (document.getElementById('songTitle').value || '').trim();
+  const artists = (document.getElementById('artists').value || '').trim();
+  // 搜索词：歌名 + 第一位歌手。只放第一位 —— 多歌手拼进去反而搜不到。
+  const first = artists.split(/[,，、/&]/)[0].trim();
+  const q = [title, first].filter(Boolean).join(' ');
+  row.innerHTML = '';
+  if (!q) {
+    const tip = document.createElement('span');
+    tip.className = 'hint';
+    tip.textContent = '先填歌名/歌手，这里会生成各平台的搜索入口';
+    row.appendChild(tip);
+    return;
+  }
+  PLATFORM_SEARCH.forEach(([name, mk]) => {
+    const b = document.createElement('button');
+    b.className = 'btn btn-secondary btn-sm';
+    b.textContent = '🔍 ' + name;
+    b.title = `在${name}搜索「${q}」（新窗口打开，选对了再把 ID 填到上面）`;
+    b.onclick = () => window.open(mk(q), '_blank');
+    row.appendChild(b);
+  });
+  const auto = document.createElement('button');
+  auto.className = 'btn btn-secondary btn-sm';
+  auto.textContent = '⚡ 自动检索（需自建服务）';
+  auto.title = '需要先设环境变量 L2T_METING_API 指向你自己的 Meting 实例；'
+    + '没有配置时点它会明确告诉你，不会假装查过';
+  auto.onclick = autoLookupIds;
+  row.appendChild(auto);
+}
+
+/** 自动检索：只在服务端配了 L2T_METING_API 时可用；**绝不覆盖已填的值** */
+async function autoLookupIds() {
+  const title = (document.getElementById('songTitle').value || '').trim();
+  const artists = (document.getElementById('artists').value || '').trim();
+  if (!title) { setEditorStatus('先填歌名再检索', 'bad'); return; }
+  try {
+    const r = await fetch('/api/lookup?title=' + encodeURIComponent(title)
+      + '&artists=' + encodeURIComponent(artists));
+    const d = await r.json();
+    if (d.error) { showToast(d.error + (d.hint ? '：' + d.hint : '')); return; }
+    const map = { netease: 'ncmId', tencent: 'qqId', kuwo: 'kuwoId', kugou: 'kugouId' };
+    let filled = 0, skipped = 0;
+    for (const [plat, id] of Object.entries(d.ids || {})) {
+      const elId = map[plat];
+      if (!elId) continue;
+      const el = document.getElementById(elId);
+      if (!el) continue;
+      if ((el.value || '').trim()) { skipped++; continue; }   // 不覆盖手填的
+      el.value = id;
+      el.classList.add('auto-filled');
+      filled++;
+    }
+    if (filled) autofillMeta(document.getElementById('songTitle').value);
+    showToast(`自动填了 ${filled} 个平台 ID`
+      + (skipped ? `，${skipped} 个已有值未覆盖` : '')
+      + '　⚠️ 请逐个核对是不是同一首歌');
+  } catch (e) { showToast('检索失败：' + e.message); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  ['songTitle', 'artists'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', renderIdSearchLinks);
+  });
+  renderIdSearchLinks();
+});
+
+
+/* ==================================================================
+   ✏️ 文本编辑（插行 / 改字 / 和声）
+   ------------------------------------------------------------------
+   后端是同一条 `/api/text`：一次操作 = 改模型 + 规范化 + 校验 + 落盘，
+   返回新的 doc/version，前端拿它刷新（所以改完立刻生效、刷新页面也不丢）。
+
+   ⚠️ 不要在前端自己算新字的时间 —— 后端 edit_text 才守得住那三条不变量
+   （层内不重叠 / span ⊆ p / key 连续）。前端只管"用户点了什么"。
+   ================================================================== */
+function mainWordsOf(line) {
+  return (line.words || []).filter(w => !w.is_bg && w.layer !== 'bg'
+    && w.layer !== 'translation');
+}
+function bgWordsOf(line) {
+  return (line.words || []).filter(w => w.is_bg || w.layer === 'bg');
+}
+
+function postTextOp(op, payload) {
+  if (!editDoc) return Promise.resolve(null);
+  return fetch('/api/text', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: currentTaskId, version: editVersion,
+                          doc: editDoc, op: op, payload: payload || {}})
+  }).then(async r => {
+    const d = await r.json();
+    if (!r.ok) {
+      setEditorStatus('⚠ ' + (d.error || '操作失败')
+        + (d.hint ? ' —— ' + d.hint : ''), 'bad');
+      if (r.status === 409) showToast('版本冲突，请刷新编辑台');
+      renderEditor();
+      return null;
+    }
+    editDoc = d.doc; editVersion = d.version;
+    document.getElementById('editorVersion').textContent = 'v' + editVersion;
+    const errs = d.check.errors.length;
+    setEditorStatus((errs ? `⚠ 已落盘：格式 ${errs} 个错误` : '✅ 已落盘')
+      + `　${d.stats.lines} 行 / ${d.stats.words} 字（和声 ${d.stats.bg_words}）`,
+      errs ? 'bad' : 'good');
+    renderEditor();
+    return d;
+  }).catch(e => { setEditorStatus('⚠ 网络错误：' + e.message, 'bad'); return null; });
+}
+
+function txtBtn(label, fn, extra) {
+  const b = document.createElement('button');
+  b.className = 'txt-btn' + (extra ? ' ' + extra : '');
+  b.textContent = label;
+  b.onclick = fn;
+  return b;
+}
+
+/* 就地输入：Enter/失焦提交，Esc 取消。用于"改单字"和"字间插字"两处。 */
+function inlineInput(el, initial, onCommit) {
+  const inp = document.createElement('input');
+  inp.className = 'txt-edit';
+  inp.value = initial || '';
+  inp.maxLength = 6;
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    const v = inp.value.trim();
+    if (commit && v && v !== initial) onCommit(v); else renderEditor();
+  };
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  };
+  inp.onblur = () => finish(true);
+  if (el.replaceWith) el.replaceWith(inp); else { el.innerHTML = ''; el.appendChild(inp); }
+  inp.focus();
+  if (inp.select) inp.select();
+}
+
+function txtChip(line, layer, w, flatIdx, li) {
+  const chip = document.createElement('span');
+  chip.className = 'txt-ch' + (layer === 'bg' ? ' bg' : '');
+  const t = document.createElement('span');
+  t.textContent = w.text;
+  chip.appendChild(t);
+  chip.title = `${w.text}　${fmt(w.begin)}~${fmt(w.end)}　点一下改这个字`;
+  chip.onclick = () => inlineInput(t, w.text,
+    (v) => postTextOp('set_word', {key: line.key, layer: layer, index: idxOfLayer(line, layer, flatIdx), text: v}));
+  const del = document.createElement('span');
+  del.className = 'x';
+  del.textContent = '×';
+  del.title = '删掉这个字';
+  del.onclick = (e) => {
+    e.stopPropagation();
+    postTextOp('delete_word',
+      {key: line.key, layer: layer, index: idxOfLayer(line, layer, flatIdx)});
+  };
+  chip.appendChild(del);
+  // 登记到高亮用的元素地图。⚠️ 键必须是**扁平 line.words 里的下标**
+  // （indexWords 里就是这么建键的）—— 传"层内下标"时，含和声的行会整体错位。
+  wordEls[li + ':' + flatIdx] = chip;
+  return chip;
+}
+
+/* 扁平下标 → 该层内的下标（编辑操作按层内下标走） */
+function idxOfLayer(line, layer, flatIdx) {
+  const w = (line.words || [])[flatIdx];
+  if (!w) return 0;
+  const ws = layer === 'bg' ? bgWordsOf(line) : mainWordsOf(line);
+  return Math.max(0, ws.indexOf(w));
+}
+
+function txtChipRow(line, layer, li) {
+  const wrap = document.createElement('div');
+  wrap.className = 'txt-chips';
+  const lab = document.createElement('span');
+  lab.className = 'txt-sep';
+  lab.style.paddingLeft = '0';
+  lab.style.width = 'auto';
+  lab.textContent = layer === 'bg' ? '和声字：' : '逐字：';
+  wrap.appendChild(lab);
+  const flat = (w) => (line.words || []).indexOf(w);
+  const plus = (idx) => {
+    const p = document.createElement('span');
+    p.className = 'txt-plus';
+    p.textContent = '＋';
+    p.title = '在这里插入一个字（可一次输多个字）';
+    p.onclick = () => inlineInput(p, '', (v) => postTextOp('insert_word',
+      {key: line.key, layer: layer, index: idx, text: v}));
+    return p;
+  };
+  const ws = layer === 'bg' ? bgWordsOf(line) : mainWordsOf(line);
+  wrap.appendChild(plus(0));
+  ws.forEach((w, i) => {
+    wrap.appendChild(txtChip(line, layer, w, flat(w), li));
+    wrap.appendChild(plus(i + 1));
+  });
+  if (!ws.length) {
+    const tip = document.createElement('span');
+    tip.className = 'txt-sep';
+    tip.style.paddingLeft = '0';
+    tip.textContent = layer === 'bg' ? '（这一行没有和声，点上方"和声"框输入即可添加）'
+                                     : '（这一行没有文字，点 ＋ 或上方输入框补）';
+    wrap.appendChild(tip);
+  }
+  return wrap;
+}
+
+function nextAgentOf(cur) {
+  const c = String(cur || 'v1');
+  return c === 'v1' ? 'v2' : (c === 'v2' ? 'v3' : 'v1');
+}
+
+function insertLineAfter(li) {
+  const line = editDoc.lines[li];
+  const at = line ? line.key : '';
+  postTextOp('insert_line', {key: at, text: '新的一行', layer: 'main'})
+    .then(d => { if (d) focusLineInput(li + 1); });
+}
+
+function deleteLineAt(li) {
+  const line = editDoc.lines[li];
+  if (!line) return;
+  if (!confirm(`删掉 L${li + 1}「${(mainWordsOf(line).map(w => w.text).join('') || '').slice(0, 12)}」？`)) return;
+  postTextOp('delete_line', {key: line.key});
+}
+
+/** 插完新行把光标放进它的文本框，省得用户再找 */
+function focusLineInput(li) {
+  const all = document.getElementById('editorBody').find('.txt-in.main');
+  const el = all[li];
+  if (el && el.focus) { el.focus(); if (el.select) el.select(); }
+}
+
+function renderTextLines() {
+  if (!editDoc) return;
+  const body = document.getElementById('editorBody');
+  body.innerHTML = '';
+  wordEls = {}; lineEls = {}; ovEls = {};   // 从零重建，元素地图在这里清（不在 indexWords）
+  const head = document.createElement('div');
+  head.className = 'txt-chips';
+  head.style.color = '#777';
+  head.textContent = '行号 · 声部 · 整行文字 · 和声（x-bg）· 逐字编辑';
+  body.appendChild(head);
+
+  // 最前面插一行
+  const top = document.createElement('div');
+  top.className = 'txt-chips';
+  top.appendChild(txtBtn('＋ 在最前面插一行', () => {
+    const first = editDoc.lines[0];
+    postTextOp('insert_line', {key: '', text: '新的一行', layer: 'main'})
+      .then(d => { if (d) focusLineInput(0); });
+    void first;
+  }));
+  body.appendChild(top);
+
+  (editDoc.lines || []).forEach((line, li) => {
+    const row = document.createElement('div');
+    row.className = 'txt-line';
+
+    const no = document.createElement('div');
+    no.className = 'txt-no';
+    no.textContent = 'L' + (li + 1);
+    no.title = '跳到这一行播放';
+    no.onclick = () => seekTo(line.begin);
+    row.appendChild(no);
+
+    const ag = document.createElement('div');
+    ag.className = 'txt-ag ' + (line.agent || '');
+    ag.textContent = line.agent || 'v1';
+    ag.title = '点一下切换这一行的演唱者';
+    ag.onclick = () => setLineAgent(li, nextAgentOf(line.agent));
+    row.appendChild(ag);
+
+    const main = document.createElement('input');
+    main.className = 'txt-in main';
+    main.value = mainWordsOf(line).map(w => w.text).join('');
+    main.placeholder = '这一行没有文字 —— 在这里补上';
+    main.title = '改完按回车或点别处即落盘（整行重打）';
+    main.onchange = () => {
+      const v = main.value.trim();
+      if (!v) { setEditorStatus('整行文字不能为空；整行不要了就点右边"✕ 删行"', 'bad');
+                renderEditor(); return; }
+      if (v !== mainWordsOf(line).map(w => w.text).join('')) {
+        postTextOp('set_line_text', {key: line.key, layer: 'main', text: v});
+      }
+    };
+    row.appendChild(main);
+
+    const bg = document.createElement('input');
+    bg.className = 'txt-in bg';
+    bg.value = bgWordsOf(line).map(w => w.text).join('');
+    bg.placeholder = '和声（可空）';
+    bg.title = '这一行的背景人声 x-bg；清空 = 删掉和声';
+    bg.onchange = () => {
+      const v = bg.value.trim();
+      const cur = bgWordsOf(line).map(w => w.text).join('');
+      if (v === cur) return;
+      postTextOp(v ? 'set_bg' : 'remove_bg', {key: line.key, text: v});
+    };
+    row.appendChild(bg);
+
+    const tools = document.createElement('div');
+    tools.className = 'txt-tools';
+    tools.appendChild(txtBtn('＋ 下方插行', () => insertLineAfter(li)));
+    tools.appendChild(txtBtn('✕ 删行', () => deleteLineAt(li), 'del'));
+    row.appendChild(tools);
+
+    body.appendChild(row);
+    body.appendChild(txtChipRow(line, 'main', li));
+    if (bgWordsOf(line).length) body.appendChild(txtChipRow(line, 'bg', li));
+    // 行级高亮用（scrollLinesIntoView 也靠它）
+    lineEls[li] = row;
+  });
+
+  // 三个页面共用同一份索引与高亮逻辑 —— 文本页也要在播放时亮起来
+  syncHighlightAfterRender();
+}
+
+function renderEditor() {
+  if (editMode === 'agent') { renderAgentLines(); return; }
+  if (editMode === 'text') { renderTextLines(); return; }
+  // ⚠️ editDoc 可能是 null：refreshEditorIfOpen() 会先把它清掉再异步重拉，
+  // 这中间任何一次渲染（切标签页等）都会崩。宁可渲染成空，也不能抛异常。
+  if (!editDoc) return;
+  const body = document.getElementById('editorBody');
+  body.innerHTML = '';
+  document.getElementById('agentOverview').innerHTML = '';
+  wordEls = {}; lineEls = {}; ovEls = {};   // 从零重建，元素地图在这里清（不在 indexWords）
+  (editDoc.lines || []).forEach((line, li) => {
+    const row = document.createElement('div');
+    row.className = 'ed-line' + (line.agent && line.agent !== 'v1' ? ' ed-duet' : '');
+    const head = document.createElement('div');
+    head.className = 'ed-head';
+    head.textContent = `${line.key || 'L' + (li + 1)}` + (line.agent ? ` · ${line.agent}` : '');
+    row.appendChild(head);
+    const words = document.createElement('div');
+    words.className = 'ed-words';
+    (line.words || []).forEach((w, wi) => {
+      const cell = document.createElement('span');
+      let cls = 'ed-w' + wordStatusClass(w);
+      cell.className = cls;
+      cell.title = `第${li + 1}行 第${wi + 1}字　${fmt(w.begin)}~${fmt(w.end)}`
+        + `　时长 ${(w.end - w.begin).toFixed(3)}s`
+        + `\n匹配 ${w.matched === false ? '否（插值）' : '是'}　概率 ${(w.prob || 0).toFixed(2)}`
+        + `\n点一下：跳到这个字播放`;
+      cell.onclick = (ev) => {
+        if (ev.target.tagName === 'INPUT') return;   // 点输入框是改时间，不跳转
+        seekTo(w.begin);
+        if (initAudio().paused) togglePlay();        // 点字就播，方便对拍
+      };
+      const txt = document.createElement('b');
+      txt.textContent = w.text;
+      const tm = document.createElement('input');
+      tm.className = 'ed-t';
+      tm.value = fmt(w.begin);
+      tm.size = 10;
+      tm.title = '开始时间（mm:ss.mmm）。改完按 Enter 或点别处生效';
+      tm.onchange = () => {
+        const nv = parseT(tm.value);
+        if (isNaN(nv)) { tm.value = fmt(w.begin); return; }
+        w.begin = nv;
+        scheduleValidate();
+      };
+      cell.appendChild(txt);
+      cell.appendChild(tm);
+      words.appendChild(cell);
+      wordEls[li + ':' + wi] = cell;
+    });
+    row.appendChild(words);
+    body.appendChild(row);
+    lineEls[li] = row;
+  });
+  syncHighlightAfterRender();   // 建索引 + 立刻按当前播放位置打一次高亮
+}
+
+function scheduleValidate() {
+  clearTimeout(editTimer);
+  setEditorStatus('检查中…');
+  editTimer = setTimeout(runValidate, 300);   // 节流 ≥300ms
+}
+
+async function runValidate() {
+  try {
+    const r = await fetch('/api/validate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc: editDoc })
+    });
+    const d = await r.json();
+    if (!r.ok) { setEditorStatus('⚠ ' + (d.error || '校验失败'), 'bad'); return; }
+    const n = d.normalize.fixes.length;
+    const un = d.normalize.unresolved.length;
+    const errs = d.check.errors.length;
+    if (n > 0) editDoc = d.doc;    // 用修好的版本刷新界面（时间会跳回合法位置）
+    renderEditor();
+    let msg = n > 0 ? `✅ 已自动修复 ${n} 处` : '时间轴没有需要修复的地方';
+    if (un > 0) msg += `；${un} 处需要人工确认`;
+    if (errs > 0) msg += `；格式 ${errs} 个错误`;
+    setEditorStatus(msg, errs ? 'bad' : (n ? 'good' : ''));
+  } catch (e) { setEditorStatus('⚠ 网络错误：' + e.message, 'bad'); }
+}
+
+async function saveEditor() {
+  if (!editDoc) return;
+  const btn = document.getElementById('editorSave');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/edit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: currentTaskId, version: editVersion, doc: editDoc })
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      setEditorStatus('⚠ ' + (d.error || '保存失败') + (d.hint ? ' —— ' + d.hint : ''), 'bad');
+      if (r.status === 409) showToast('版本冲突，请重新打开编辑台');
+      return;
+    }
+    editDoc = d.doc; editVersion = d.version;
+    document.getElementById('editorVersion').textContent = 'v' + editVersion;
+    renderEditor();
+    setEditorStatus('💾 已保存：' + d.normalize.summary
+      + `　格式 ${d.check.ok ? '通过' : d.check.errors.length + ' 个错误'}`, d.check.ok ? 'good' : 'bad');
+    showToast('已保存（v' + editVersion + '）');
+  } catch (e) { setEditorStatus('⚠ 网络错误：' + e.message, 'bad'); }
+  finally { btn.disabled = false; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+---
+name: 配置
+about: 这个仓库使用 GitHub Issues 跟踪问题
+blank_issues_enabled: true
+contact_links:
+  - name: 先看已知问题
+    url: https://github.com/
+    about: README 与 AGENTS.md 的「已知问题」里记录了大量踩过的坑和实测数据，先查一下可能直接有答案

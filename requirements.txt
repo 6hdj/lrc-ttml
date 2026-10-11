@@ -1,0 +1,30 @@
+# Lyric2TTML 运行依赖
+#
+#   pip install -r requirements.txt
+#
+# 还需要系统里有 **ffmpeg**（解码音频），见 README「环境要求」。
+
+# ── 核心：语音识别（词级时间戳）────────────────────────────
+# 自带 ctranslate2 / tokenizers / onnxruntime / av / numpy
+faster-whisper>=1.1.0
+
+# ── 声纹分声部（可选）─────────────────────────────────────
+# 只需要 torch + numpy 推理。**网络定义与权重不随仓库分发**，
+# 见 README「第三方依赖与许可 → 关于 CAM++ 声纹权重」。
+# GPU 用户装 CUDA 版（按自己的 CUDA 版本选 index-url）：
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+torch>=2.0
+
+# ── 中文同音字匹配增强（可选，但强烈建议）────────────────
+# 歌词与识别结果的同音/近音字容错，匹配率明显更高
+pypinyin>=0.51
+
+# ── 人声分离（可选，对应 --separate-vocals）──────────────
+# 混音复杂 / 和声多的歌更准。权重首次使用时自动下载（约 80MB）。
+# 注意：它的推理路径不需要 torchaudio。
+demucs>=4.1
+
+# ── 说明 ────────────────────────────────────────────────
+# * 本项目**不需要** Flask / FastAPI：Web 服务用 Python 标准库 http.server。
+# * 本项目**不需要** npm：前端是单文件原生 HTML/JS，没有构建步骤。
+# * 完全离线可用：首次运行下载 Whisper 模型后，断网也能跑。
