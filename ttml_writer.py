@@ -285,6 +285,11 @@ class TTMLWriter:
     ) -> str:
         artists = [a for a in (artists or []) if a]
         platform_ids = {k: v for k, v in (platform_ids or {}).items() if v}
+        # ⚠️ songwriters 必须是**列表**。传字符串时上面的列表推导会**逐字符拆开**，
+        # 产出 `<songwriter>示</songwriter><songwriter>例</songwriter>…` 这种垃圾 ——
+        # 而且不报错（真踩过：手写调用时传了 str）。这里兜一道。
+        if isinstance(songwriters, str):
+            songwriters = [s.strip() for s in songwriters.replace("，", ",").split(",")]
         songwriters = [s for s in (songwriters or []) if s]
 
         lines = [l for l in lines if l.units and l.end > l.begin]
@@ -447,9 +452,14 @@ class TTMLWriter:
         用户在 ``--song-part`` 里指定时以用户为准。
         """
         items = list(indexed_lines)
-        if self.song_part:
-            return [(self.song_part, items)]
 
+        # ⚠️ 这里**不能**在 song_part 有值时直接 `return [(song_part, items)]`：
+        # `song_part` 在两种情况下非空 —— ① 用户显式 `--song-part X`；
+        # ② **编辑台读入了一份本来就带 itunes:songPart 的 Apple 格式文件**
+        #    （`parse_ttml` 会把源文件的写法记进 write_options）。
+        # 老写法的后果：编辑台打开 Apple 文件、随便改一个字再保存，
+        # **整首歌的唱段分段会被合并成一个 <div>** —— 用户没碰过的东西被改了。
+        # 正确做法：仍然按段落切，只是把**段名**统一用 song_part。
         groups: List[List[Tuple[int, AlignedLine]]] = []
         use_para = len(set(self._paragraphs)) > 1
         current: List[Tuple[int, AlignedLine]] = []
@@ -471,11 +481,18 @@ class TTMLWriter:
 
         if len(groups) <= 1:
             return [(self.song_part, items)]
-        # label_sections=False：源文件本来没有 itunes:songPart 时，
-        # 回写不要再自己猜 Verse/Chorus 加上去（编辑台保存必须"只改用户改的"）
-        labels = self._label_sections(groups) if self.label_sections else [""] * len(groups)
-        if not use_para:
-            labels = ["" for _ in groups]      # 按停顿切的段落不猜名字
+        # 段名的优先级：
+        #   ① 用户显式指定了 song_part → 每段都用它（这是用户明确要的名字）
+        #   ② 否则按停顿猜出来的段落**不写名字**（猜的名字不可靠，见 --song-part 说明）
+        #   ③ 否则按 label_sections 决定是"照源文件保持"还是"自己判 Verse/Chorus"
+        if self.song_part:
+            labels = [self.song_part] * len(groups)
+        elif not use_para:
+            labels = ["" for _ in groups]
+        elif self.label_sections:
+            labels = self._label_sections(groups)
+        else:
+            labels = [""] * len(groups)
         return list(zip(labels, groups))
 
     @staticmethod

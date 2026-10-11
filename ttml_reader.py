@@ -138,6 +138,21 @@ def parse_ttml(text: str) -> EditDoc:
             if _local(el.tag) == "text" and el.get("for"):
                 head_trans[el.get("for")] = el.text or ""
 
+    # 词曲作者（<iTunesMetadata><songwriters><songwriter>…）
+    # ⚠️ 以前**完全没读**这根线 —— 编辑台打开一份写了 songwriters 的文件、
+    # 随便改一个字再保存，**词曲作者就永久丢了**（用户没碰过的东西被删掉，
+    # 和当初 markers/role 被删是同一类 bug）。
+    # 存成列表放进 meta；doc_to_ttml 再原样传回去。
+    if head is not None:
+        sw: List[str] = []
+        for el in head.iter():
+            if _local(el.tag) == "songwriter":
+                s = (el.text or "").strip()
+                if s and s not in sw:
+                    sw.append(s)
+        if sw:
+            doc.meta["songwriters"] = sw
+
     # ------------------------------------------------------------------ body
     body_el = next((c for c in root if _local(c.tag) == "body"), None)
     if body_el is None:
@@ -395,6 +410,7 @@ def doc_to_ttml(doc: EditDoc, **overrides) -> str:
         artists = [artists]
     platform_ids = {k: meta[k] for k in META_KEYS if k in meta}
     special = set(META_KEYS) | {"musicName", "artists", "album",
+                                "songwriters",
                                 "ttmlAuthorGithub", "ttmlAuthorGithubLogin"}
     extra = {k: v for k, v in meta.items() if k not in special}
     return writer.write(
@@ -408,5 +424,6 @@ def doc_to_ttml(doc: EditDoc, **overrides) -> str:
         author_id=str(meta.get("ttmlAuthorGithub", "")),
         duration=doc.duration,
         translation_lang=doc.lang,
+        songwriters=list(meta.get("songwriters") or []),
         extra_meta={k: str(v) for k, v in extra.items()},
     )

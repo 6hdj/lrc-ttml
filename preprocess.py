@@ -290,15 +290,34 @@ def parse_lyrics(raw_text: str) -> List[LyricLine]:
     else:
         # 纯文本：按行拆分，空行分段
         para = 0
+        # ⚠️ 独立成行的演唱者标记（`[v1]` / `[v2]` / `[和声]`…）必须**挂到下一行**。
+        # 老实现的后果很隐蔽：`[v1]` 单独一行会被 `_strip_marker` 剥成一个
+        # **空文本但带 agent 的行**，而**后面真正的歌词行根本没继承这个 agent**
+        # （全部退回默认 v1）。也就是说 README 推荐的"[v1]/[v2] 标记"写法，
+        # 在 .txt 里**完全不生效**，还顺手产出若干空行垃圾。
+        # 所以：标记行只记下来，不自己成行；遇到内容行时拼到行首，
+        # 交给 `_strip_marker`（它本来就会重新分词）。
+        pending_marker = ""
         for line in raw_lines:
             line = line.strip()
             if not line:
                 if lines:
                     para += 1
                 continue
+            m = re.fullmatch(r'\[([^\]]{1,12})\]', line)
+            if m:
+                key = m.group(1).strip().lower()
+                if key in _AGENT_MARKERS or key in _BACKGROUND_MARKERS:
+                    pending_marker = line
+                    continue
+            if pending_marker:
+                line = pending_marker + line
+                pending_marker = ""
             tokens = tokenize_chinese(line)
             new_line = LyricLine(text=line, tokens=tokens, paragraph=para)
             _strip_marker(new_line)
+            if not new_line.text.strip():
+                continue          # 剥完标记什么都不剩 → 不是歌词行，别塞进去
             lines.append(new_line)
 
     # 整行括号 = 背景人声 → 并进相邻主唱行（AMLL：背景人声是行的子内容，不是独立行）

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xmlns:amll="http://www.example.com/ns/amll" xml:lang="zh-Hans" itunes:timing="Word">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"><ttm:name type="full">示例歌手 A</ttm:name></ttm:agent>
+      <ttm:agent type="person" xml:id="v2"><ttm:name type="full">示例歌手 B</ttm:name></ttm:agent>
+      <amll:meta key="musicName" value="示例歌曲 Sample Song"/>
+      <amll:meta key="artists" value="示例歌手 A"/>
+      <amll:meta key="artists" value="示例歌手 B"/>
+      <amll:meta key="album" value="示例专辑 Sample Album"/>
+      <amll:meta key="ncmMusicId" value="1000000"/>
+      <amll:meta key="appleMusicId" value="3000000"/>
+      <amll:meta key="kuwoMusicId" value="4000000"/>
+      <amll:meta key="kugouMusicId" value="5000000"/>
+      <amll:meta key="ttmlAuthorGithub" value="example"/>
+      <amll:meta key="ttmlAuthorGithubLogin" value="HXJ"/>
+      <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+        <translations>
+          <translation type="subtitle" xml:lang="zh-Hans">
+            <text for="L1">[译文 1]</text>
+            <text for="L2">[译文 2]</text>
+            <text for="L3">[译文 3]</text>
+            <text for="L4">[译文 4]</text>
+            <text for="L5">[译文 5]</text>
+            <text for="L6">[译文 6]</text>
+            <text for="L7">[译文 7]</text>
+            <text for="L8">[译文 8]</text>
+            <text for="L9">[译文 9]</text>
+            <text for="L10">[译文 10]</text>
+            <text for="L11">[译文 11]</text>
+            <text for="L12">[译文 12]</text>
+            <text for="L13">[译文 13]</text>
+          </translation>
+        </translations>
+        <songwriters>
+          <songwriter>示例作者</songwriter>
+        </songwriters>
+      </iTunesMetadata>
+    </metadata>
+  </head>
+<body dur="00:01:13.480">
+  <div begin="00:00:12.000" end="00:00:19.700" itunes:songPart="Verse">
+    <p begin="00:00:12.000" end="00:00:14.840" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L1" itunes:key="L1"><span begin="00:00:12.000" end="00:00:12.320">夜</span><span begin="00:00:12.420" end="00:00:12.740">色</span><span begin="00:00:12.840" end="00:00:13.160">落</span><span begin="00:00:13.260" end="00:00:13.580">在</span><span begin="00:00:13.680" end="00:00:14.000">窗</span><span begin="00:00:14.100" end="00:00:14.420">台</span><span begin="00:00:14.520" end="00:00:14.840">上</span></p>
+    <p begin="00:00:16.440" end="00:00:19.700" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L2" itunes:key="L2"><span begin="00:00:16.440" end="00:00:16.760">风</span><span begin="00:00:16.860" end="00:00:17.180">把</span><span begin="00:00:17.280" end="00:00:17.600">旧</span><span begin="00:00:17.700" end="00:00:18.020">信</span><span begin="00:00:18.120" end="00:00:18.440">翻</span><span begin="00:00:18.540" end="00:00:18.860">了</span><span begin="00:00:18.960" end="00:00:19.280">几</span><span begin="00:00:19.380" end="00:00:19.700">行</span></p>
+  </div>
+  <div begin="00:00:21.300" end="00:00:28.580" itunes:songPart="Verse">
+    <p begin="00:00:21.300" end="00:00:23.720" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L3" itunes:key="L3"><span begin="00:00:21.300" end="00:00:21.620">我</span><span begin="00:00:21.720" end="00:00:22.040">把</span><span begin="00:00:22.140" end="00:00:22.460">灯</span><span begin="00:00:22.560" end="00:00:22.880">留</span><span begin="00:00:22.980" end="00:00:23.300">给</span><span begin="00:00:23.400" end="00:00:23.720">你</span></p>
+    <p begin="00:00:25.320" end="00:00:28.580" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L4" itunes:key="L4"><span begin="00:00:25.320" end="00:00:25.640">等</span><span begin="00:00:25.740" end="00:00:26.060">一</span><span begin="00:00:26.160" end="00:00:26.480">句</span><span begin="00:00:26.580" end="00:00:26.900">久</span><span begin="00:00:27.000" end="00:00:27.320">违</span><span begin="00:00:27.420" end="00:00:27.740">的</span><span begin="00:00:27.840" end="00:00:28.160">回</span><span begin="00:00:28.260" end="00:00:28.580">响</span><span ttm:role="x-bg" begin="00:00:27.000" end="00:00:28.580"><span begin="00:00:27.000" end="00:00:27.320">(轻</span><span begin="00:00:27.420" end="00:00:27.740">轻</span><span begin="00:00:27.840" end="00:00:28.160">哼</span><span begin="00:00:28.260" end="00:00:28.580">着)</span></span></p>
+  </div>
+  <div begin="00:00:30.180" end="00:00:38.300" itunes:songPart="Verse">
+    <p begin="00:00:30.180" end="00:00:33.440" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L5" itunes:key="L5"><span begin="00:00:30.180" end="00:00:30.500">走</span><span begin="00:00:30.600" end="00:00:30.920">过</span><span begin="00:00:31.020" end="00:00:31.340">了</span><span begin="00:00:31.440" end="00:00:31.760">很</span><span begin="00:00:31.860" end="00:00:32.180">远</span><span begin="00:00:32.280" end="00:00:32.600">的</span><span begin="00:00:32.700" end="00:00:33.020">地</span><span begin="00:00:33.120" end="00:00:33.440">方</span></p>
+    <p begin="00:00:35.040" end="00:00:38.300" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L6" itunes:key="L6"><span begin="00:00:35.040" end="00:00:35.360">才</span><span begin="00:00:35.460" end="00:00:35.780">懂</span><span begin="00:00:35.880" end="00:00:36.200">归</span><span begin="00:00:36.300" end="00:00:36.620">途</span><span begin="00:00:36.720" end="00:00:37.040">也</span><span begin="00:00:37.140" end="00:00:37.460">是</span><span begin="00:00:37.560" end="00:00:37.880">远</span><span begin="00:00:37.980" end="00:00:38.300">方</span></p>
+  </div>
+  <div begin="00:00:39.900" end="00:00:48.440" itunes:songPart="Verse">
+    <p begin="00:00:39.900" end="00:00:43.160" ttm:agent="v2" ttm:role="x-duet-b" xml:id="L7" itunes:key="L7"><span begin="00:00:39.900" end="00:00:40.220">若</span><span begin="00:00:40.320" end="00:00:40.640">某</span><span begin="00:00:40.740" end="00:00:41.060">天</span><span begin="00:00:41.160" end="00:00:41.480">我</span><span begin="00:00:41.580" end="00:00:41.900">们</span><span begin="00:00:42.000" end="00:00:42.320">再</span><span begin="00:00:42.420" end="00:00:42.740">遇</span><span begin="00:00:42.840" end="00:00:43.160">见</span></p>
+    <p begin="00:00:44.760" end="00:00:48.440" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L8" itunes:key="L8"><span begin="00:00:44.760" end="00:00:45.080">请</span><span begin="00:00:45.180" end="00:00:45.500">先</span><span begin="00:00:45.600" end="00:00:45.920">说</span><span begin="00:00:46.020" end="00:00:46.340">一</span><span begin="00:00:46.440" end="00:00:46.760">句</span><span begin="00:00:46.860" end="00:00:47.180">别</span><span begin="00:00:47.280" end="00:00:47.600">来</span><span begin="00:00:47.700" end="00:00:48.020">无</span><span begin="00:00:48.120" end="00:00:48.440">恙</span><span ttm:role="x-bg" begin="00:00:46.440" end="00:00:48.020"><span begin="00:00:46.440" end="00:00:46.760">(别</span><span begin="00:00:46.860" end="00:00:47.180">来</span><span begin="00:00:47.280" end="00:00:47.600">无</span><span begin="00:00:47.700" end="00:00:48.020">恙)</span></span></p>
+  </div>
+  <div begin="00:00:50.040" end="00:00:53.720" itunes:songPart="Verse">
+    <p begin="00:00:50.040" end="00:00:53.720" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L9" itunes:key="L9"><span begin="00:00:50.040" end="00:00:50.360">我</span><span begin="00:00:50.460" end="00:00:50.780">不</span><span begin="00:00:50.880" end="00:00:51.200">再</span><span begin="00:00:51.300" end="00:00:51.620">追</span><span begin="00:00:51.720" end="00:00:52.040">问</span><span begin="00:00:52.140" end="00:00:52.460">那</span><span begin="00:00:52.560" end="00:00:52.880">年</span><span begin="00:00:52.980" end="00:00:53.300">那</span><span begin="00:00:53.400" end="00:00:53.720">场</span></p>
+  </div>
+  <div begin="00:00:55.320" end="00:01:02.600" itunes:songPart="Verse">
+    <p begin="00:00:55.320" end="00:00:58.160" ttm:agent="v2" ttm:role="x-duet-b" xml:id="L10" itunes:key="L10"><span begin="00:00:55.320" end="00:00:55.640">Take</span><span begin="00:00:55.740" end="00:00:56.060">me</span><span begin="00:00:56.160" end="00:00:56.480">back</span><span begin="00:00:56.580" end="00:00:56.900">to</span><span begin="00:00:57.000" end="00:00:57.320">where</span><span begin="00:00:57.420" end="00:00:57.740">we</span><span begin="00:00:57.840" end="00:00:58.160">started</span></p>
+    <p begin="00:00:59.760" end="00:01:02.600" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L11" itunes:key="L11"><span begin="00:00:59.760" end="00:01:00.080">让</span><span begin="00:01:00.180" end="00:01:00.500">时</span><span begin="00:01:00.600" end="00:01:00.920">间</span><span begin="00:01:01.020" end="00:01:01.340">慢</span><span begin="00:01:01.440" end="00:01:01.760">慢</span><span begin="00:01:01.860" end="00:01:02.180">合</span><span begin="00:01:02.280" end="00:01:02.600">上</span></p>
+  </div>
+  <div begin="00:01:04.200" end="00:01:11.480" itunes:songPart="Verse">
+    <p begin="00:01:04.200" end="00:01:07.040" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L12" itunes:key="L12"><span begin="00:01:04.200" end="00:01:04.520">夜</span><span begin="00:01:04.620" end="00:01:04.940">色</span><span begin="00:01:05.040" end="00:01:05.360">还</span><span begin="00:01:05.460" end="00:01:05.780">在</span><span begin="00:01:05.880" end="00:01:06.200">窗</span><span begin="00:01:06.300" end="00:01:06.620">台</span><span begin="00:01:06.720" end="00:01:07.040">上</span></p>
+    <p begin="00:01:08.640" end="00:01:11.480" ttm:agent="v1" ttm:role="x-duet-a" xml:id="L13" itunes:key="L13"><span begin="00:01:08.640" end="00:01:08.960">只</span><span begin="00:01:09.060" end="00:01:09.380">是</span><span begin="00:01:09.480" end="00:01:09.800">旧</span><span begin="00:01:09.900" end="00:01:10.220">信</span><span begin="00:01:10.320" end="00:01:10.640">不</span><span begin="00:01:10.740" end="00:01:11.060">再</span><span begin="00:01:11.160" end="00:01:11.480">响</span></p>
+  </div>
+</body>
+</tt>

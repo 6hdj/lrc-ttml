@@ -695,7 +695,11 @@ def test_ttml_roundtrip_and_normalize():
         check("坏 XML 抛 TTMLParseError", False, type(e).__name__)
 
     # 真实产物：往返 + 不该被规范化修改（H3 假设）
-    for path in ("outputs/在出发之前.ttml", "outputs/它像一颗.ttml"):
+    # ⚠️ tests/fixtures/ 是**随仓库分发**的自造 fixture（tools/make_fixture.py 生成，
+    # 零版权风险）—— 有它新克隆的人才能跑到这几组断言；
+    # outputs/ 里的真实产物只在作者本机存在，有就一起测。
+    for path in ("tests/fixtures/demo.ttml", "tests/fixtures/demo-duet.ttml",
+                 "outputs/在出发之前.ttml", "outputs/它像一颗.ttml"):
         if not os.path.exists(path):
             continue
         base = os.path.basename(path)
@@ -2376,9 +2380,12 @@ def test_edit_text():
     from ttml_model import LAYER_BG, LAYER_MAIN
     from ttml_reader import doc_to_ttml, parse_ttml
 
+    # 用**随仓库分发**的 fixture（新克隆也跑得到）；本机有真实产物就优先用它
     src = "outputs/在出发之前.duet.ttml"
     if not os.path.exists(src):
-        check("有真实产物可测", False, src)
+        src = "tests/fixtures/demo-duet.ttml"
+    if not os.path.exists(src):
+        check("有可测的 TTML 输入（fixture 缺失，先跑 tools/make_fixture.py）", False, src)
         return
     with io.open(src, encoding="utf-8") as f:
         base = parse_ttml(f.read())
@@ -2597,7 +2604,9 @@ def test_param_wiring():
     # ---- ① 新增平台 ID（酷我 / 酷狗）----
     src = "outputs/在出发之前.duet.ttml"
     if not os.path.exists(src):
-        check("有真实产物可测", False, src)
+        src = "tests/fixtures/demo-duet.ttml"
+    if not os.path.exists(src):
+        check("有可测的 TTML 输入（fixture 缺失，先跑 tools/make_fixture.py）", False, src)
         return
     doc = parse_ttml(io.open(src, encoding="utf-8").read())
     doc.meta = dict(doc.meta or {})
