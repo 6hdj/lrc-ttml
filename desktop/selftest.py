@@ -874,7 +874,18 @@ def _wait(mgr, tid, timeout: float = 30.0):
 
 # ===================================================================== 主流程
 
-def main() -> int:
+def main(argv=None) -> int:
+    """跑全部离线自检。返回退出码。
+
+    ⚠️ 和 ``uicheck.main`` 一样：**必须是可调用的函数**。冻结之后
+    ``runpy.run_path`` 找不到包内部脚本的 ``__main__``，
+    打包版要走 ``import desktop.selftest``。
+    """
+    global VERBOSE, ONLY
+    argv = list(argv if argv is not None else sys.argv[1:])
+    VERBOSE = "-v" in argv
+    ONLY = [a for a in argv if a.isdigit()]
+
     tests = []
     for name, obj in sorted(globals().items()):
         if callable(obj) and getattr(obj, "_group", None):
@@ -913,4 +924,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

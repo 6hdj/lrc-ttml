@@ -69,7 +69,28 @@ def describe_widgets(root, depth=0, out=None):
     return out
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    """跑完整套界面自检。返回退出码。
+
+    ⚠️ **必须是一个可调用的函数，不能只靠 ``runpy.run_path`` 启动**：
+    冻结之后 ``desktop/uicheck.py`` 是包内部的一个数据文件，
+    ``runpy.run_path`` 去找它的 ``__main__`` 会失败
+    （实测报 ``ImportError: can't find '__main__' module in
+    ...\\_internal\\desktop\\uicheck.py``，而且因为进程没退出，
+    调用方看到的是"卡住不动"）。所以打包版走 ``import desktop.uicheck``。
+    """
+    global VERBOSE, SHOT
+    argv = list(argv if argv is not None else sys.argv[1:])
+    VERBOSE = "-v" in argv
+    SHOT = ""
+    if "--shot" in argv:
+        i = argv.index("--shot")
+        if i + 1 < len(argv):
+            SHOT = argv[i + 1]
+    return _run()
+
+
+def _run() -> int:
     print("=" * 72)
     print("  Lyric2TTML 桌面版界面自检（offscreen，无显示环境）")
     print(f"  沙箱数据目录：{_SANDBOX}")
@@ -476,4 +497,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

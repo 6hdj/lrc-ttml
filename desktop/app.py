@@ -172,29 +172,28 @@ def _app_icon():
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
 
-    # ---- 无界面分支（CI / 远程 shell 也能验）----
+    # ---- 无界面分支（CI / 远程 shell / 打包版自检都能用）----
     if any(a in ("--doctor", "-doctor") for a in argv):
         _early_env()
         import doctor
         return int(doctor.main())
     if any(a in ("--selftest", "-selftest") for a in argv):
-        sys.argv = [a for a in argv if not a.startswith("-selftest")
-                    and a != "--selftest" and not a.isdigit()]
-        import runpy
-        from desktop import paths
-        return int(runpy.run_path(os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), "selftest.py"), run_name="__main__") or 0)
+        # ⚠️ 用 import 而不是 runpy.run_path：冻结之后脚本躺在 `_internal` 里，
+        # runpy 去找它的 __main__ 会失败（真踩过）
+        _early_env()
+        from desktop import selftest
+        rest = [a for a in argv if a not in ("--selftest", "-selftest")]
+        return int(selftest.main(rest))
     if any(a in ("--uicheck", "-uicheck") for a in argv):
-        sys.argv = [a for a in argv if not a.startswith("-uicheck")
-                    and a != "--uicheck"]
-        import runpy
-        return int(runpy.run_path(os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), "uicheck.py"), run_name="__main__") or 0)
+        _early_env()
+        from desktop import uicheck
+        rest = [a for a in argv if a not in ("--uicheck", "-uicheck")]
+        return int(uicheck.main(rest))
     if any(a in ("--model-cli",) for a in argv):
         _early_env()
         from desktop.services import model_manager
-        sys.argv = ["model_manager"] + [a for a in argv if a != "--model-cli"]
-        return int(model_manager._cli())
+        rest = [a for a in argv if a != "--model-cli"]
+        return int(model_manager._cli(rest))
     if any(a in ("--version", "-V") for a in argv):
         print(f"Lyric2TTML 桌面版 {__version__}")
         return 0

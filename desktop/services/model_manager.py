@@ -718,14 +718,14 @@ def _http_get_to_file(url: str, dst: str, log=print, p=None, stop=None,
 
 # --------------------------------------------------------------- CLI（自测用）
 
-def _cli() -> int:
+def _cli(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="模型管理器（检查 / 下载 / 清理）")
     ap.add_argument("action", choices=["list", "check", "download", "cleanup", "json"])
     ap.add_argument("model", nargs="?", default="")
     ap.add_argument("--manifest", default="")
     ap.add_argument("--hf-cache", default="")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     mm = ModelManager(manifest_path=args.manifest or None,
                       hf_cache=args.hf_cache or None)
