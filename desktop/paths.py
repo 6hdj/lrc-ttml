@@ -48,9 +48,21 @@ def app_dir() -> str:
 
 
 def _source_dir() -> str:
-    """源码目录（冻结时也在 ``_internal`` 里，用来找 ``index.html`` 等只读资源）。"""
+    """**只读资源**目录。
+
+    冻结时 = ``sys._MEIPASS``（= PyInstaller 的 ``_internal``）—— 那里放着
+    ``index.html``、``models/``、``desktop/`` 这些**随包分发、不需要写**的东西。
+    未冻结时 = 仓库根目录。
+
+    ⚠️ 和 ``app_dir()`` 的区别很重要，别混用：
+    * ``app_dir()``   = 用户能看到、能改的目录（exe 旁边）；
+      转换产物、用户自己放的模型、``portable.txt`` 都在这里。
+    * ``_source_dir()`` = 包内部，**只读**，升级会整体替换。
+      PyInstaller 把 datas 都放这儿。
+    """
     if frozen():
-        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
+        return getattr(sys, "_MEIPASS",
+                       os.path.dirname(os.path.abspath(sys.executable)))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -200,6 +212,26 @@ def apply_env() -> str:
     # 用 setdefault 之外的写法：桌面版要能覆盖安装器/launcher 设的旧值
     os.environ["HUGGINGFACE_HUB_CACHE"] = hub
     return hub
+
+
+def resource_roots() -> list:
+    """只读资源（``models/`` / ``index.html`` / ``desktop/``）可能在的目录。
+
+    顺序 = 优先级：**程序目录优先**（用户替换/加自己的模型最直观），
+    其次是包内部（PyInstaller 的 ``_internal``）。
+    ⚠️ 冻结时这两处**不是同一个地方** —— 只找程序目录的话，
+    安装包自带的 CAM++ 权重（在 ``_internal/models/``）会"找不到"，
+    用户看到的是"声纹模型缺失"（真踩过）。
+
+    ``L2T_APP_DIR`` 显式指定时**只返回它**（测试用，避免翻到真实程序目录）。
+    """
+    if os.environ.get("L2T_APP_DIR"):
+        return [app_dir()]
+    out = [app_dir()]
+    src = _source_dir()
+    if src not in out:
+        out.append(src)
+    return out
 
 
 def describe() -> dict:

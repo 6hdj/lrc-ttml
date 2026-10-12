@@ -204,14 +204,19 @@ class ModelManager:
     def _model_roots(self) -> List[str]:
         """模型权重可能待的目录（按优先级）。
 
-        程序目录优先 —— 旧版（Web/安装器）把 ``models/`` 放在程序旁边，
-        桌面版必须能就地认出来，不能让用户重下。
+        * 程序目录优先 —— 旧版（Web/安装器）把 ``models/`` 放在程序旁边，
+          桌面版必须能就地认出来，不能让用户重下；
+        * **包内部（``_internal``）也要找** —— 安装包自带的 CAM++ 权重
+          是 PyInstaller 的 data，落在 ``_internal/models/`` 里。
+          只找程序目录的话会报"声纹模型缺失"（真踩过：打包版
+          `--doctor` 说找不到 models/campplus，而它明明在包里）。
+
+        ⚠️ 注入了 ``app_dir`` 时（测试）只用注入的那个，不要再去翻真实的
+        程序目录 —— 否则测试会"看到"开发机上真有的模型，用例全乱。
         """
-        out = [self.app_dir]
-        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if here not in out:
-            out.append(here)
-        return out
+        if self._app_dir_override:
+            return [self._app_dir_override]
+        return list(paths.resource_roots())
 
     def _resolve_target(self, rel: str) -> Optional[str]:
         """把清单里的相对路径（``models/campplus/xxx.bin``）解析成真实路径。"""
@@ -223,7 +228,11 @@ class ModelManager:
         return None
 
     def _target_for_write(self, rel: str) -> str:
-        """要写入时用哪个根：优先程序目录（用户找得到），不行就数据目录。"""
+        """要写入时用哪个根。
+
+        ⚠️ **永远是程序目录**，不是包内部：``_internal`` 是只读资源区，
+        升级/重装会整个替换掉，把 3GB 模型写进去等于白下。
+        """
         return os.path.join(self.app_dir, *rel.replace("\\", "/").split("/"))
 
     def _hf_base(self, spec: dict) -> str:

@@ -105,6 +105,25 @@ def t_paths():
     # default_workspace：源码模式 = 仓库根（产物能直接看到）
     eq(paths.default_workspace(), _ROOT, "源码模式的默认工作目录应是仓库根")
 
+    # ---- 打包版的"资源在哪"（这条是真踩出来的）----
+    # 冻结时 app_dir() = exe 旁边，_source_dir() = PyInstaller 的 _internal，
+    # **两者不是同一个地方**。安装包自带的 models/ 落在 _internal 里，
+    # 只找 exe 旁边的话会报"声纹模型缺失"（打包版 --doctor 就这么错过一次）。
+    roots = paths.resource_roots()
+    ok(roots, "resource_roots() 不能为空")
+    eq(roots[0], paths.app_dir(), "程序目录应该排第一（用户自己的模型优先）")
+    ok(paths._source_dir() in roots,
+       f"资源目录里必须包含包内部 {paths._source_dir()}")
+    ok(len(roots) == len(set(roots)), "资源目录有重复")
+
+    # 模型管理器必须用同一套根（否则打包版找不到自带权重）
+    from desktop.services.model_manager import ModelManager
+    mm = ModelManager()
+    eq(mm._model_roots(), roots, "ModelManager 的模型根与 resource_roots() 不一致")
+    # 写入永远去程序目录，**不能**写进 _internal
+    w = mm._target_for_write("models/campplus/x.bin")
+    ok(w.startswith(paths.app_dir()), f"写入目标跑出程序目录了：{w}")
+
 
 # ================================================================ 2 配置
 

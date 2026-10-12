@@ -196,9 +196,17 @@ def main() -> int:
         sys.argv = ["download_model.py"] + rest
         return download_model.main()
 
-    # 走命令行：有参数、且不是 --web/--port 这类界面参数
-    cli_like = bool(argv) and not any(
-        a in ("--web", "--gui", "--server") for a in argv)
+    # 走命令行：有参数、且不是界面/桌面版专用的那些参数
+    #
+    # ⚠️ 这个判断很容易漏：`--uicheck` / `--selftest` / `--version` 这些
+    # **桌面版自己的开关**如果没列进来，就会被当成"普通参数"转发给
+    # `main.py` 的 argparse —— 结果是 `error: unrecognized arguments: --uicheck`
+    # 退出码 2（验收脚本就抓到过：打包版跑 `--uicheck` 直接失败，
+    # 而它的作用是**验证 Qt 平台插件在不在**，最容易坏的就是它）。
+    _UI_FLAGS = ("--web", "--gui", "--server", "--uicheck", "-uicheck",
+                 "--selftest", "-selftest", "--model-cli",
+                 "--version", "-V")
+    cli_like = bool(argv) and not any(a in _UI_FLAGS for a in argv)
     if cli_like:
         import main as cli
         return cli.main(argv)
@@ -209,11 +217,18 @@ def main() -> int:
     force_web = os.environ.get("L2T_FORCE_WEB") == "1"
     if not force_web and _qt_available():
         try:
+            # `--web` 是"我就要浏览器界面"的明确要求，不要再套桌面壳
+            if any(a in ("--web", "--gui", "--server") for a in argv):
+                raise _UserWantsWeb()
             _banner(base)
             print("  正在打开桌面窗口…")
             print("=" * 62)
             from desktop.app import main as desktop_main
+            # ⚠️ 把 argv 传下去：`--uicheck` / `--selftest` / `--doctor` /
+            # `--version` 这些桌面版自己的开关要能被它处理
             return int(desktop_main(argv))
+        except _UserWantsWeb:
+            pass
         except Exception as e:                           # noqa: BLE001
             # ⚠️ 桌面壳起不来**绝不能**变成"双击没反应"：
             # 打一行人能看懂的日志，然后退回浏览器界面，功能照样能用。
@@ -231,6 +246,10 @@ def main() -> int:
     import web_server
     port = int(os.environ.get("L2T_PORT", "8765"))
     return _start_web(base, port)
+
+
+class _UserWantsWeb(Exception):
+    """内部用：用户显式要 `--web`，跳过桌面壳。"""
 
 
 if __name__ == "__main__":
