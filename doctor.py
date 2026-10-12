@@ -30,6 +30,33 @@ def _base() -> str:
     return HERE
 
 
+def _resource_roots() -> list:
+    """只读资源（``models/``）可能在的目录。
+
+    ⚠️ 冻结时 ``_base()``（exe 旁边）和 ``sys._MEIPASS``（``_internal``）
+    **不是同一个地方**：安装包自带的 CAM++ 权重是 PyInstaller 的 data，
+    落在 ``_internal/models/`` 里。只查 exe 旁边的话，打包版会报
+    "声纹分声部模型：未找到"——**而它明明就在包里**（真踩过）。
+    桌面版 ``desktop/paths.resource_roots()`` 用的是同一套顺序，
+    两边必须一致，否则"桌面窗口说就绪、doctor 说缺失"。
+    """
+    out = [_base()]
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass and meipass not in out:
+        out.append(meipass)
+    return out
+
+
+def _find_resource(*rel: str) -> str:
+    """在资源根里找第一个存在的路径；都不存在时返回第一个候选（给报错用）。"""
+    first = os.path.join(_base(), *rel)
+    for root in _resource_roots():
+        p = os.path.join(root, *rel)
+        if os.path.exists(p):
+            return p
+    return first
+
+
 BASE = _base()
 
 CRIT = "crit"      # 缺了就跑不起来
@@ -133,7 +160,9 @@ def check_whisper_models() -> None:
 
 # ------------------------------------------------------- 5. 可选：声纹 / 分离权重
 def check_optional_weights() -> None:
-    ck = os.path.join(BASE, "models", "campplus")
+    # ⚠️ 用 _find_resource：打包版的 CAM++ 权重在 `_internal/models/` 里，
+    # 只查 exe 旁边会误报"未找到"（踩过）
+    ck = _find_resource("models", "campplus")
     has = os.path.isdir(ck) and any(
         f.endswith((".onnx", ".pt", ".bin", ".pth"))
         for r, _, fs in os.walk(ck) for f in fs)
@@ -142,7 +171,7 @@ def check_optional_weights() -> None:
         "不随仓库分发。拿到后放到 models/campplus/ 即可；\n"
         "        没有也不影响其它功能 —— 「演唱者分段」选「关闭」就行")
 
-    demucs = os.path.join(BASE, "models", "demucs")
+    demucs = _find_resource("models", "demucs")
     has_d = os.path.isdir(demucs) and any(
         f.endswith((".th", ".pt", ".bin"))
         for r, _, fs in os.walk(demucs) for f in fs)
