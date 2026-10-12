@@ -158,7 +158,7 @@ python web_server.py       # 或直接 python main.py --audio 歌.wav --lyrics �
 ```bash
 pip install -r requirements-desktop.txt
 python -m desktop                     # 桌面窗口
-python desktop/selftest.py            # 服务层自检（离线，13 组）
+python desktop/selftest.py            # 服务层自检（离线，14 组）
 python desktop/uicheck.py             # 界面自检（无显示环境也能跑，14 项）
 ```
 

@@ -47,7 +47,7 @@
 - **崩溃可查**：`desktop/services/log_service.py` 装了系统级 +
   线程级异常钩子，写 `logs/desktop.log` 与 `logs/crash.log`；
   打包后没有控制台，不装钩子的话崩溃是完全静默的。
-- **离线自检**：`python desktop/selftest.py`（13 组，不联网、不开窗口、
+- **离线自检**：`python desktop/selftest.py`（14 组，不联网、不开窗口、
   不用大模型），覆盖路径、配置降级、任务状态机、模型校验、
   参数漂移、产物保护、版本一致性。
 

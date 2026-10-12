@@ -579,7 +579,7 @@ import Qt**（`gpu_probe`/`environment_service` 也不行）。这条是硬性�
 ### 自检（都不需要显示设备）
 
 ```powershell
-python desktop\selftest.py            # 服务层 13 组（不导入 Qt）
+python desktop\selftest.py            # 服务层 14 组（不导入 Qt，含真下载）
 python desktop\selftest.py 7 -v       # 只跑第 7 组、打印细节
 python desktop\uicheck.py             # 界面 14 项（offscreen + 渲染断言）
 python desktop\uicheck.py --shot out.png --page home   # 顺手截图肉眼检查
