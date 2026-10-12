@@ -57,6 +57,32 @@
   这样**不引入 QtWebEngine**（否则安装包会再大几百 MB）。
 - 识别算法、TTML 写出、校验流程**一行没改**；桌面版只是新的入口与外壳。
 
+### 打包版实测（2026-10-12）
+
+`Lyric2TTML.spec` 支持 `L2T_WITH_QT=1` 把 Qt 打进包里（默认不带 Qt）。
+对**真的打包 exe** 跑 `python tools/accept_frozen.py <exe>` 的结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| 包结构（`_internal` / `models` / `index.html` / `desktop`） | 全部就位 |
+| `--version` / `--help` | 通过（冻结后控制台编码不炸） |
+| `--doctor --json` | 21 项检查可读；提示项只剩"Demucs 未内置 / torch 视角看不到显卡 / 语音识别模型待下载" |
+| `--uicheck`（**Qt 平台插件**） | 通过（打包版真的把窗口建出来，13 项全绿） |
+| 真转换《在出发之前》 | 通过，产物 18.8 KB |
+| 严格校验产物 | **0 个错误**（打包版自己 + 仓库校验器各一遍） |
+
+⚠️ 下面这些**只在冻结后才出现**的问题都已修掉（详见 `AGENTS.md` §4.5）：
+
+- `runpy.run_path` 在包内部找不到 `__main__` → `--uicheck` **卡死不动**
+  （失败还让进程不退出，看起来就是"点了没反应"）；
+- 桌面版自己的开关（`--uicheck` / `--selftest` / `--version`）被转发给
+  `main.py` 的 argparse → `unrecognized arguments`；
+- 包内自带的 CAM++ 权重在 `_internal/models/` 里，而模型管理器与 `doctor`
+  只找 exe 旁边 → 误报"声纹模型缺失"；
+- `collect_all('PySide6')` 把整个 Addons 拖进来（多约 90MB 用不到的
+  QtQuick / 3D / WebView DLL）；
+- `--web` 被桌面壳截胡（等于这个开关无效）。
+
 ---
 
 ## [未发布]

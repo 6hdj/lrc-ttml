@@ -289,18 +289,55 @@ def check_whisper(cache_dir: str) -> Item:
                 "想省流量可以选 small 小模型")
 
 
+def _resource_bases(base: str = "") -> list:
+    """只读资源（``models/``）可能在的目录，按优先级。
+
+    ⚠️ 冻结之后有**两个**不同的地方，都要找：
+      * exe 旁边（``base`` / ``sys.executable`` 的目录）—— 用户自己放的模型、
+        旧版安装器遗留的 `models/`；
+      * ``sys._MEIPASS``（= PyInstaller 的 ``_internal``）—— **安装包自带的**
+        ``models/campplus_src`` 与随包分发的 CAM++ 权重就在这里。
+    只查前者的话，打包版会报"声纹分声部模型：未找到"，
+    **而它明明就在包里**（真踩过：打包版 --doctor 输出"未找到"，桌面窗口
+    同一时刻说"已就绪" —— 两个检查器给出相反结论是最伤信任的）。
+    """
+    out = []
+    if base:
+        out.append(base)
+    if getattr(sys, "frozen", False):
+        out.append(os.path.dirname(os.path.abspath(sys.executable)))
+    else:
+        out.append(os.path.dirname(os.path.abspath(__file__)))
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        out.append(meipass)
+    seen, uniq = set(), []
+    for p in out:
+        if p and p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
 def check_campp(base: str) -> Item:
-    """CAM++ 声纹权重：看具体文件，别只看目录在不在。"""
-    d = os.path.join(base, "models", "campplus")
-    found = []
-    if os.path.isdir(d):
-        found = [f for f in os.listdir(d)
-                 if f.endswith((".onnx", ".pt", ".bin", ".pth"))]
+    """CAM++ 声纹权重：看具体文件，别只看目录在不在。
+
+    ``base`` = 安装目录 / exe 目录；另外还会找包内部（``_MEIPASS``），
+    因为安装包自带的权重在那里。
+    """
+    found, d = [], ""
+    for root in _resource_bases(base):
+        d = os.path.join(root, "models", "campplus")
+        if os.path.isdir(d):
+            found = [f for f in os.listdir(d)
+                     if f.endswith((".onnx", ".pt", ".bin", ".pth"))]
+            if found:
+                break
     if found:
         return Item("campp", "声纹分声部模型", "对唱分声部必需", CRIT, True,
                     "、".join(found[:3]) + ("…" if len(found) > 3 else ""))
     return Item("campp", "声纹分声部模型", "对唱分声部必需", CRIT, False,
-                f"未找到（{d}）",
+                f"未找到（{d or (base or '?')}）",
                 "点「开始补全」自动下载（ModelScope）。\n"
                 "        ⚠️ 缺了它，开了「对唱分声部」也**不会报错**，"
                 "只会退化成按单人处理 —— 看起来就像没生效")
