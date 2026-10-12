@@ -19,7 +19,9 @@
 """
 import os
 
-OUT = os.path.join("dist", "split", "merge-then-extract.bat")
+# 文件名带 v2：用户踩过一次"浏览器给的是缓存的旧脚本，文件名一样根本看不出来"。
+# 换名字是最省事的办法 —— 不可能再拿错。
+OUT = os.path.join("dist", "split", "merge-and-extract-v2.bat")
 
 LINES = [
     "@echo off",
@@ -28,6 +30,11 @@ LINES = [
     'set "HERE=%~dp0"',
     'set "ZIP=%HERE%Lyric2TTML-1.0.3-installer.zip"',
     'set "OUT=%HERE%解压结果"',
+    "echo.",
+    "echo   ============================================",
+    "echo    Lyric2TTML 安装包解压工具   版本 v2",
+    "echo    （看到这一行，说明你用的是新版脚本）",
+    "echo   ============================================",
     "echo.",
     "echo   [1/3] 正在合并两个分卷（约 1.8GB，需要一会儿）...",
     'copy /b "%HERE%Lyric2TTML-1.0.3-part1.bin" + "%HERE%Lyric2TTML-1.0.3-part2.bin" "%ZIP%" >nul',
