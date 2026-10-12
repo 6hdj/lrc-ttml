@@ -72,11 +72,14 @@ QPushButton:disabled {{ color: {C['faint']}; background: #1e2127; border-color: 
 QPushButton#primary {{
     background: {C['accent']};
     border: 1px solid {C['accent']};
-    color: #08131f;
+    /* 深色文字压在亮蓝上，对比度够但**中文字形细、11px 下显得糊**
+       （截图里"开始制作""下载识别模型"都偏虚）。改成白字更清楚，
+       也是这类"主操作按钮"的通行做法。 */
+    color: #ffffff;
     font-weight: 600;
     padding: 9px 22px;
 }}
-QPushButton#primary:hover {{ background: #63a9ff; }}
+QPushButton#primary:hover {{ background: #63a9ff; color: #ffffff; }}
 QPushButton#primary:disabled {{
     background: #24313f; border: 1px solid #2c3a4a; color: #93a1b1;
 }}

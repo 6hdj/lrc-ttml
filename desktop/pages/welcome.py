@@ -39,23 +39,26 @@ class WelcomePage(Page):
         btn_env = button("重新检查环境", on_click=lambda: self._env(True))
         btn_dl = button("下载识别模型（必需）", primary=True,
                         on_click=self._download)
-        btn_skip = button("先去用用看", on_click=self._skip)
         self.lb_dl = label("", wrap=True)
 
         self.check_box = self.card_with(
             h2("① 这台电脑能不能用"),
             self.lb_env,
-            btn_env,
+            # ⚠️ 按钮要包一行并加弹簧：直接 addWidget 的话它会**横向拉满**，
+            # 看起来像一条坏掉的进度条（截图里一眼能看到）。
+            row(btn_env, None, stretch_index=None),
             self.grid_widget,
         )
 
         self.model_box = self.card_with(
             h2("② 还差一个语音识别模型"),
-            label("模型有 3GB 左右，**不在安装包里**（GitHub 单个文件上限 2GB）。"
+            # ⚠️ QLabel 默认不是 Markdown：写成 **加粗** 会把星号原样显示出来
+            # （截图里就是这样）。要强调就用「」或者分开成两句，别用 Markdown 记号。
+            label("模型约 3GB，不在安装包里（GitHub 单个文件上限 2GB）。"
                   "点下面的按钮下载，支持断点续传，下完会核对文件完整性。"),
             hint("模型放在程序目录旁边（或数据目录），卸载软件时不会删掉，"
                  "重装不用重下。"),
-            btn_dl,
+            row(btn_dl, None, stretch_index=None),
             self.lb_dl,
         )
 
@@ -113,8 +116,10 @@ class WelcomePage(Page):
         for r, it in enumerate(show):
             color = STATUS_COLOR.get(it["level"], C["dim"])
             icon = STATUS_ICON.get(it["level"], "·")
+            # ⚠️ 宽度要够：中文名字（"Whisper medium（语音识别·中）"）比英文长，
+            # 固定宽度太小会被截成 "Whisper medium（语音识别·" 这种半截话。
             name = label(f"{icon} {it['name']}", color=color)
-            name.setFixedWidth(190)
+            name.setFixedWidth(250)
             detail = label(it["detail"] or "", wrap=True, kind="dim")
             self.grid.addWidget(name, r, 0)
             self.grid.addWidget(detail, r, 1)
