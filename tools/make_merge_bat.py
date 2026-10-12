@@ -21,7 +21,7 @@ import os
 
 # 文件名带 v2：用户踩过一次"浏览器给的是缓存的旧脚本，文件名一样根本看不出来"。
 # 换名字是最省事的办法 —— 不可能再拿错。
-OUT = os.path.join("dist", "split", "merge-and-extract-v2.bat")
+OUT = os.path.join("dist", "split", "merge-and-extract-v3.bat")
 
 LINES = [
     "@echo off",
@@ -32,9 +32,32 @@ LINES = [
     'set "OUT=%HERE%解压结果"',
     "echo.",
     "echo   ============================================",
-    "echo    Lyric2TTML 安装包解压工具   版本 v2",
+    "echo    Lyric2TTML 安装包解压工具   版本 v3",
     "echo    （看到这一行，说明你用的是新版脚本）",
     "echo   ============================================",
+    "echo.",
+    "echo   [0/3] 正在校验两个分卷的完整性...",
+    # ⚠️ 用户网络不稳，分卷很可能**下载不完整**。不校验就直接 copy /b，
+    # 合出来的 zip 表面看"合并成功"，一解压才在最后一个大条目上报
+    #     ZIP decompression failed (-3)
+    # 用户完全不知道该怪哪个文件。这里先把字节数和 GitHub 上记录的对一遍。
+    'for %%F in (Lyric2TTML-1.0.3-part1.bin) do if not "%%~zF"=="996147200" (',
+    "  echo.",
+    "  echo   [失败] part1 大小不对，多半是下载不完整。",
+    "  echo          应该有 996147200 字节，实际 %%~zF 字节。",
+    "  echo          请删掉它重新下载 part1。",
+    "  pause",
+    "  exit /b 1",
+    ")",
+    'for %%F in (Lyric2TTML-1.0.3-part2.bin) do if not "%%~zF"=="915931011" (',
+    "  echo.",
+    "  echo   [失败] part2 大小不对，多半是下载不完整。",
+    "  echo          应该有 915931011 字节，实际 %%~zF 字节。",
+    "  echo          请删掉它重新下载 part2。",
+    "  pause",
+    "  exit /b 1",
+    ")",
+    "echo       两个分卷大小都正确。",
     "echo.",
     "echo   [1/3] 正在合并两个分卷（约 1.8GB，需要一会儿）...",
     'copy /b "%HERE%Lyric2TTML-1.0.3-part1.bin" + "%HERE%Lyric2TTML-1.0.3-part2.bin" "%ZIP%" >nul',

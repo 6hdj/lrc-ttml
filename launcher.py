@@ -1,7 +1,7 @@
 """打包版（PyInstaller 冻结）的统一入口。
 
-双击 exe = 起 Web 界面；带参数 = 走命令行。两条路都复用原有模块，
-不复制任何逻辑。
+双击 exe = 起**桌面窗口**（装不上 Qt 时退回 Web 界面）；带参数 = 走命令行。
+两条路都复用原有模块，不复制任何逻辑。
 
 为什么要单独一个入口，而不是直接打包 ``main.py``：
 ``web_server`` 用 ``HERE = dirname(abspath(__file__))`` 定位 ``index.html``
@@ -10,9 +10,10 @@
 临时目录会被清理、Program Files 下还可能是只读的。
 所以这里把几个模块级路径**重定向到 exe 所在目录**（那里才是用户的数据目录）。
 
-    Lyric2TTML.exe                    → 起 Web 界面（默认 8765，浏览器自动打开）
-    Lyric2TTML.exe --web --port 9000  → 指定端口
+    Lyric2TTML.exe                    → 桌面窗口（没有 PySide6 就用浏览器界面）
+    Lyric2TTML.exe --web --port 9000  → 直接起 Web 界面
     Lyric2TTML.exe --audio a.wav --lyrics b.lrc -o out.ttml   → 命令行转换
+    Lyric2TTML.exe --doctor           → 环境体检
     Lyric2TTML.exe --help             → 命令行全部参数
 """
 from __future__ import annotations
@@ -115,6 +116,49 @@ def _open_browser(url: str) -> None:
         pass
 
 
+def _start_web(base: str, port: int) -> int:
+    """起本地 Web 界面（桌面版不可用时的退路，也是 `--web` 的实现）。"""
+    import web_server
+    for i, a in enumerate(sys.argv[1:]):
+        if a == "--port" and i + 1 < len(sys.argv):
+            port = int(sys.argv[i + 1])
+    os.environ["L2T_PORT"] = str(port)
+    _banner(base)
+    url = f"http://127.0.0.1:{port}"
+    print(f"  界面地址：{url}")
+    print("  关掉这个窗口即可退出服务")
+    print("=" * 62)
+
+    # 等服务起来再开浏览器（省得用户看到"无法访问"）
+    try:
+        import threading
+        import time
+        import urllib.request
+
+        def _open():
+            for _ in range(60):
+                try:
+                    urllib.request.urlopen(url, timeout=1).read(64)
+                    _open_browser(url)
+                    return
+                except Exception:
+                    time.sleep(0.5)
+        threading.Thread(target=_open, daemon=True).start()
+    except Exception:
+        pass
+
+    web_server.main()
+    return 0
+
+
+def _qt_available() -> bool:
+    try:
+        import PySide6  # noqa: F401
+        return True
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 def main() -> int:
     argv = sys.argv[1:]
     base = _rehome()
@@ -159,39 +203,34 @@ def main() -> int:
         import main as cli
         return cli.main(argv)
 
-    # 起 Web 界面
+    # ---- 默认：桌面窗口（装不上 Qt 就退回浏览器界面）----
+    # ⚠️ 用环境变量 ``L2T_FORCE_WEB=1`` 可以强制走浏览器界面，
+    # 排查"是桌面壳的问题还是后端的问题"时很有用。
+    force_web = os.environ.get("L2T_FORCE_WEB") == "1"
+    if not force_web and _qt_available():
+        try:
+            _banner(base)
+            print("  正在打开桌面窗口…")
+            print("=" * 62)
+            from desktop.app import main as desktop_main
+            return int(desktop_main(argv))
+        except Exception as e:                           # noqa: BLE001
+            # ⚠️ 桌面壳起不来**绝不能**变成"双击没反应"：
+            # 打一行人能看懂的日志，然后退回浏览器界面，功能照样能用。
+            import traceback
+            print(f"[警告] 桌面窗口启动失败（{type(e).__name__}: {e}），"
+                  f"改用浏览器界面。")
+            traceback.print_exc()
+            try:
+                from desktop.services import log_service
+                log_service.setup().error("桌面窗口启动失败：\n%s",
+                                          traceback.format_exc())
+            except Exception:                            # noqa: BLE001
+                pass
+
     import web_server
     port = int(os.environ.get("L2T_PORT", "8765"))
-    for i, a in enumerate(argv):
-        if a == "--port" and i + 1 < len(argv):
-            port = int(argv[i + 1])
-            os.environ["L2T_PORT"] = str(port)
-    _banner(base)
-    url = f"http://127.0.0.1:{port}"
-    print(f"  界面地址：{url}")
-    print("  关掉这个窗口即可退出服务")
-    print("=" * 62)
-
-    # 等服务起来再开浏览器（省得用户看到"无法访问"）
-    try:
-        import threading
-        import time
-        import urllib.request
-
-        def _open():
-            for _ in range(60):
-                try:
-                    urllib.request.urlopen(url, timeout=1).read(64)
-                    _open_browser(url)
-                    return
-                except Exception:
-                    time.sleep(0.5)
-        threading.Thread(target=_open, daemon=True).start()
-    except Exception:
-        pass
-
-    web_server.main()
-    return 0
+    return _start_web(base, port)
 
 
 if __name__ == "__main__":

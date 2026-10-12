@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "_comment": "模型清单。安装包**不含**任何模型权重，首次需要时由这里驱动下载。owner: desktop/services/model_manager.py",
+  "models": [
+    {
+      "id": "whisper-large-v3",
+      "category": "asr",
+      "name": "Whisper large-v3（语音识别）",
+      "purpose": "把音频里的演唱转成带时间戳的字，是对齐的输入",
+      "required_for": ["lyrics_alignment"],
+      "default": true,
+      "download_policy": "first_run",
+      "recommended": true,
+      "approx_size": 3200000000,
+      "license": "MIT（OpenAI Whisper）",
+      "note": "最准。中文歌建议用它；显存不足或想先跑通可用 small。",
+      "source": {
+        "kind": "hf",
+        "repository": "Systran/faster-whisper-large-v3",
+        "cache_key": "models--Systran--faster-whisper-large-v3"
+      },
+      "verify": {
+        "kind": "hf_snapshot",
+        "files": {
+          "config.json": 2394,
+          "model.bin": 3087284237,
+          "preprocessor_config.json": 340,
+          "tokenizer.json": 2480617,
+          "vocabulary.json": 1068114
+        }
+      }
+    },
+    {
+      "id": "whisper-medium",
+      "category": "asr",
+      "name": "Whisper medium（语音识别·中）",
+      "purpose": "比 large-v3 小，速度快、准确度略降",
+      "required_for": ["lyrics_alignment"],
+      "default": false,
+      "download_policy": "on_demand",
+      "approx_size": 1600000000,
+      "license": "MIT（OpenAI Whisper）",
+      "source": {
+        "kind": "hf",
+        "repository": "Systran/faster-whisper-medium",
+        "cache_key": "models--Systran--faster-whisper-medium"
+      },
+      "verify": { "kind": "hf_presence", "must_have": ["model.bin", "config.json"] }
+    },
+    {
+      "id": "whisper-small",
+      "category": "asr",
+      "name": "Whisper small（语音识别·小）",
+      "purpose": "体积最小，先跑通流程 / 显存紧张时用",
+      "required_for": ["lyrics_alignment"],
+      "default": false,
+      "download_policy": "on_demand",
+      "approx_size": 500000000,
+      "license": "MIT（OpenAI Whisper）",
+      "source": {
+        "kind": "hf",
+        "repository": "Systran/faster-whisper-small",
+        "cache_key": "models--Systran--faster-whisper-small"
+      },
+      "verify": { "kind": "hf_presence", "must_have": ["model.bin", "config.json"] }
+    },
+    {
+      "id": "campplus",
+      "category": "diarization",
+      "name": "CAM++ 声纹（分声部）",
+      "purpose": "判断每句是 v1/v2/v3 里谁唱的（对唱左右分栏靠它）",
+      "required_for": ["singer_split"],
+      "default": true,
+      "download_policy": "on_demand",
+      "approx_size": 28036335,
+      "license": "Apache-2.0（ModelScope 3D-Speaker）",
+      "note": "只有把「演唱者分段」设成强制 1/2/3 声部时才需要。",
+      "source": {
+        "kind": "http",
+        "urls": [
+          "https://modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common/resolve/master/campplus_cn_common.bin",
+          "https://hf-mirror.com/csukuangfj/speaker-embedding-models/resolve/main/campplus/campplus_cn_common.bin",
+          "https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/main/campplus/campplus_cn_common.bin"
+        ],
+        "filename": "campplus_cn_common.bin"
+      },
+      "verify": {
+        "kind": "file_sha256",
+        "target": "models/campplus/campplus_cn_common.bin",
+        "sha256": "3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8",
+        "size": 28036335
+      }
+    },
+    {
+      "id": "campplus-src",
+      "category": "diarization",
+      "name": "CAM++ 模型代码",
+      "purpose": "CAM++ 的网络定义，随安装包提供",
+      "required_for": ["singer_split"],
+      "default": true,
+      "download_policy": "bundled",
+      "approx_size": 45000,
+      "license": "Apache-2.0",
+      "note": "这是随程序分发的源码，不需要下载。",
+      "source": { "kind": "bundled", "path": "models/campplus_src" },
+      "verify": {
+        "kind": "files_exist",
+        "target": "models/campplus_src",
+        "must_have": ["model.py", "components.py", "amp.py", "utils.py"]
+      }
+    },
+    {
+      "id": "demucs",
+      "category": "separation",
+      "name": "Demucs 人声分离",
+      "purpose": "先把伴奏去掉再识别，嘈杂混音里更准（可选）",
+      "required_for": ["vocal_separation"],
+      "default": false,
+      "download_policy": "on_demand",
+      "approx_size": 84141911,
+      "license": "MIT（Demucs）",
+      "note": "只有打开「人声分离」时才需要。",
+      "source": {
+        "kind": "hf",
+        "repository": "adefossez/HTDemucs",
+        "cache_key": "hub/checkpoints",
+        "hub_dir": "models/demucs"
+      },
+      "verify": { "kind": "hf_presence", "must_have": ["955717e8-8726e21a.th"] }
+    }
+  ]
+}

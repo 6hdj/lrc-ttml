@@ -13,6 +13,11 @@
    python selftest.py                                          # 必须：全部自检通过 ✓
    python main.py --check-only <新生成的文件>.ttml --strict-time  # 必须：0 个错误
    ```
+   改了 `desktop/` 还要多跑两条（都不需要显示设备）：
+   ```powershell
+   python desktop\selftest.py     # 服务层（不导入 Qt）：路径/配置/任务/模型/参数
+   python desktop\uicheck.py      # 界面层：offscreen 构建 + **渲染断言**
+   ```
 2. **不要回退已修好的格式规则**（见 §1）。要改规则，先改文档再改代码。
 3. **多会话并行**：每次 `write`/`edit` 前重读文件；改完立刻跑测试；重要结论写进 `docs/`。
 
@@ -483,6 +488,106 @@ d=parse_ttml(open('out.ttml',encoding='utf-8').read()); print(normalize_timeline
   ⚠️ `mode`（amll/apple）作用面**很窄**：只影响 ①`markers=auto` 时解析成 agent/both
   ②apple 模式按 >4s 停顿断 `<div>`。**显式指定 markers 后它几乎不再改变产物** ——
   这是事实不是 bug，别照着"它应该大改产物"去改。
+
+---
+
+## 4.5 桌面版（`desktop/`）的约定（2026-10-12 新增）
+
+原版是"起本地 Web 服务 + 浏览器"，桌面版是**同一套算法**外面套了一层
+PySide6 原生窗口。**新界面不能绕过任何格式约束**（§1 全部照旧），
+它只是新的入口与外壳，另外补上了"安装期/运行期该谁管模型"这一块。
+
+### 分层与依赖方向（只能从上往下）
+
+```
+desktop/pages/*            页面（Qt 控件）
+desktop/main_window.py     主窗口：导航、页面懒加载、主线程 400ms 刷新
+desktop/context.py         界面 ↔ 服务层唯一接缝（AppContext 持有全部单例）
+desktop/workers/           后台 worker：服务层 → 任务中心
+desktop/services/*         业务服务
+desktop/paths.py, config.py 路径与配置
+desktop/app.py             入口（启动顺序见下）
+```
+
+⚠️ **`desktop/services/*`、`paths.py`、`config.py`、`fileguess.py` 一律不许
+import Qt**（`gpu_probe`/`environment_service` 也不行）。这条是硬性的：
+`desktop/selftest.py` 就是靠它才能在无图形环境里跑完整测试。
+想加 Qt 依赖的代码，放 `pages/` 或 `context.py`。
+
+### 启动顺序（不能乱）
+
+`desktop/app.py` 的顺序是有原因的，别重排：
+
+1. `log_service.setup()` —— 先有日志。
+2. `log_service.install_excepthook()` —— **打包后没有控制台**，
+   不装钩子的话崩溃是完全静默的（用户只能说"点了没反应"）；
+   线程级 `threading.excepthook` 也要装（普通线程的异常默认只进 stderr）。
+3. `paths.apply_env()` + `backend_service.prepare_environment()`
+   —— **必须在任何 import torch/asr 之前**。它做两件要紧的事：
+   定模型缓存目录；**把 CUDA DLL 目录注册进搜索路径**。
+4. 单实例文件锁（两个实例会争同一个 `outputs/` 与模型缓存）。
+5. `QApplication` → **`app.setStyleSheet(QSS)`** → 主窗口。
+
+### 五个真踩过的坑（改桌面版前必读）
+
+1. **跨线程碰 Qt 会崩**（实测 `0xC0000005` 退出，报
+   `QObject: Cannot create children for a parent that is in a different thread`）。
+   `TaskManager` 的监听回调是在 **worker 线程**里跑的。
+   ⇒ 界面**不要** `subscribe()` 回调去改控件；统一用
+   `AppContext.drain_changes()`（主线程定时器里调，按内容指纹 `Task.rev()` 去重）。
+2. **`build()` 的返回值必须真的挂进页面布局**。只存进 `self._root` 的话，
+   页面是**一片空白**：控件都在、属性都对、`isVisible()` 却是 False。
+   纯属性断言查不出来 ⇒ `desktop/uicheck.py` 里必须有**渲染断言**
+   （可见 + 尺寸合理 + 截图里颜色不止一种）。
+3. **`self._built` 要在调用 `build()` 之前置位**。`build()` 结尾通常会自己调
+   `refresh()` 显示真实状态，而 `refresh()` 开头有 `if not self._built: return`
+   的保护 —— 顺序错了那次刷新会被静默跳过，页面永远停在
+   "正在读取模型状态…"这种占位文字上。
+4. **改 `objectName` 之后必须 `unpolish` + `polish`**，否则新选择器不生效。
+   而且 QSS 里 ID 选择器（`#primary`）优先级高于 `:disabled`，
+   **必须显式写 `QPushButton#primary:disabled`** —— 否则禁用按钮保留启用态的
+   深色文字，深蓝底 + 深色字，字**看不见**（截图一眼能看到，属性断言一辈子看不到）。
+5. **`QMessageBox.exec()` 在没有事件循环时会永远阻塞**。
+   所有弹窗走 `Page.say()/ask()`：识别 `L2T_HEADLESS=1` 时改成打印。
+   界面自检就是靠这条才不挂死；自检脚本还要给 `QMessageBox` 打桩兜底。
+
+### 模型管理（新的一层，别绕过它）
+
+`desktop/resources/model_manifest.json` 是**唯一**的模型清单：
+来源 / 缓存位置 / 校验方式 / 许可都在里面。规则：
+
+* **`READY` 的判据是"文件齐全 + 字节数一致 +（有 SHA256 就核 SHA256）"**，
+  不是"下载函数没报错"。半截的 `.part` 永远不算已安装。
+* **临时文件与正式缓存分开**：先下 `.part`，校验通过才 `os.replace` 上位；
+  断点续传用 HTTP `Range`，**服务器不支持续传时必须删掉半截文件重新下**
+  （拿 "ab" 接着写会拼出畸形文件，最后只报"校验失败"，看不出真原因）。
+* **检查结果有缓存**（否则界面 400ms 刷新一次会把 28MB~3GB 的 SHA256
+  反复算，肉眼可见地卡）。**下载/清理之后必须 `invalidate()`**，
+  否则"下完了界面还说没安装"。
+* **模型缓存优先复用程序目录下已有的 `.hf_cache`**（老用户升级不重下 3GB）。
+* **安装包不含任何模型权重**。`L2T_WITH_QT=1` 时 `Lyric2TTML.spec` 会带 Qt，
+  但**任何构建都不带模型**。
+
+### 参数映射只有一份
+
+界面参数 → `ConvertOptions` 一律走 `desktop/services/convert_params.build_options()`。
+⚠️ **不要再抄一份字段表**：加参数时漏掉一条入口，表现是"界面选了不生效"，
+最难查。`desktop/selftest.py` 第 8 组会用 `field_drift()` 比对
+`ConvertOptions` 的真实字段，**漏一个就报错**。同理平台 ID 要从
+`ttml_writer.META_KEYS` 取（第 8 组也守着）。
+
+### 自检（都不需要显示设备）
+
+```powershell
+python desktop\selftest.py            # 服务层 13 组（不导入 Qt）
+python desktop\selftest.py 7 -v       # 只跑第 7 组、打印细节
+python desktop\uicheck.py             # 界面 14 项（offscreen + 渲染断言）
+python desktop\uicheck.py --shot out.png --page home   # 顺手截图肉眼检查
+```
+
+⚠️ **改界面一定要看截图**（`.tmp/shot_pages.py` 那种逐页截图）。
+属性断言测不出"页面空白""字看不见"这类问题 —— 本轮两个真 bug
+（`_built` 顺序、QSS 优先级）都是靠看图才发现的。
 
 ---
 

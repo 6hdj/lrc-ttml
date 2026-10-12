@@ -76,6 +76,29 @@
 
 ## 快速开始
 
+### 两个界面，同一套算法
+
+| 界面 | 怎么开 | 适合 |
+| --- | --- | --- |
+| **桌面窗口**（1.1 新增） | 双击桌面快捷方式 / `python -m desktop` | 日常做歌词：选文件 → 开始 → 看结果；**模型管理**（下载/校验/清理）在这里 |
+| **浏览器编辑台** | `python web_server.py` / 桌面窗口里点「打开编辑台」 | 精修：逐字改时间、改声部、改文本与和声 |
+
+桌面窗口**不做**逐字精修（那部分保持浏览器里的编辑台），
+所以也**不需要 QtWebEngine** —— 安装包不会因此再大几百 MB。
+
+> ### 桌面窗口的四条设计约束
+>
+> 1. **模型与安装包分离**：安装包里**不含任何模型权重**，第一次要用的识别模型
+>    由程序在「模型」页下载（约 3 GB，支持断点续传）。`READY` 的判据是
+>    "文件齐全 + 字节数一致 +（有 SHA256 就核 SHA256）"，不是"下载函数没报错"；
+>    半截的 `.part` 永远不会被当成已安装。
+> 2. **程序目录 ≠ 数据目录**：配置、日志、输出写 `%LOCALAPPDATA%\Lyric2TTML`
+>    （装到 `Program Files` 也能跑）；程序目录里放 `portable.txt` 则全部就地存放。
+>    **模型缓存优先复用程序目录下已有的 `.hf_cache`**，老用户升级不用重下 3 GB。
+> 3. **耗时操作全在后台**：转换、下载、体检都走任务中心，界面不卡、可取消、
+>    可持久化（关了软件再打开，任务历史和日志还在）。
+> 4. **产物先写临时文件再原子替换**：转换失败**不会**覆盖上一次做好的文件。
+
 ### Windows 一键安装（推荐，不用装 Python）
 
 1. 从 [Releases](https://github.com/6hdj/lrc-ttml/releases) 下载
@@ -116,6 +139,15 @@ python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 python install.py          # 检查并补全缺的东西（推荐）
 python web_server.py       # 或直接 python main.py --audio 歌.wav --lyrics 歌.lrc
+```
+
+**想要原生桌面窗口**（多装约 350 MB 的 Qt）：
+
+```bash
+pip install -r requirements-desktop.txt
+python -m desktop                     # 桌面窗口
+python desktop/selftest.py            # 服务层自检（离线，13 组）
+python desktop/uicheck.py             # 界面自检（无显示环境也能跑，14 项）
 ```
 
 **想了解代码结构**：见 [`docs/模块说明.md`](docs/模块说明.md)。那份文档由

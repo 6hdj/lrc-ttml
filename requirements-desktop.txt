@@ -1,0 +1,28 @@
+# Lyric2TTML **桌面版**额外依赖
+#
+#   pip install -r requirements.txt -r requirements-desktop.txt
+#
+# 只有想用**原生桌面窗口**（`python -m desktop`）时才需要装。
+# 原来的浏览器界面（`python web_server.py` / `启动.bat`）**不需要**它。
+#
+# 官方安装包（Release 里的 `安装程序.exe`）**已经内置**这些依赖，
+# 普通用户不需要自己 pip。
+
+# ── Qt 界面 ────────────────────────────────────────────
+# PySide6 = Qt for Python（官方绑定，LGPLv3 / 商业双许可）。
+#
+# ⚠️ **装 PySide6 就会连带装 PySide6-Essentials + PySide6-Addons +
+#    shiboken6，解包后约 350MB**，安装包也会相应变大。这是桌面窗口的
+#    固定成本，不是可以"省掉"的东西。
+# ⚠️ 版本用下限而不是精确锁定：PySide6 的 abi3 轮子在 Python 3.10+
+#    之间通用（实测 6.12.0 在 Python 3.14 上可用）。
+PySide6>=6.7
+
+# ── 说明 ────────────────────────────────────────────────
+# * **不需要 QtWebEngine**。编辑台（精修界面）仍然用系统浏览器打开，
+#   桌面窗口只做"选文件 / 看进度 / 管模型"。装 QtWebEngine 会再大几百 MB，
+#   收益只是"少开一个浏览器标签页"，不划算。
+# * **不需要 pyqtgraph / matplotlib** 之类的绘图库：进度用 QProgressBar，
+#   时间轴可视化在编辑台（HTML）里做。
+# * 桌面版自己**不引入任何新的网络依赖**：模型下载走原来那套
+#   （huggingface_hub / 直链 HTTP），环境体检用 stdlib。
