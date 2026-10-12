@@ -576,10 +576,16 @@ class ModelManager:
                 raise RuntimeError(f"落盘后校验仍不过：{st.detail}")
             return st
 
-        _safe_remove(tmp)
+        # ⚠️ **失败时千万不要删掉 .part** —— 那是"已下好的那部分"，
+        # 断点续传全靠它。第一版这里写了 `_safe_remove(tmp)`，
+        # 结果"下载中断→重试"永远从 0 开始，3GB 的模型能白下好几次。
+        # （真踩过；`.tmp/t_http_dl.py` 的"断点续传"用例就是守这条的。）
+        # 只有"校验不通过"时才删 —— 那种 .part 的内容是**错的**，
+        # 留着只会让下一次继续拼出一个永远过不了校验的文件。
         raise RuntimeError(
             f"所有下载地址都失败了（最后：{type(last_err).__name__}: "
-            f"{str(last_err)[:160]}）")
+            f"{str(last_err)[:160]}）。已下好的部分保留在 {tmp}，"
+            f"重试会**接着下**。")
 
     # ------------------------------------------------------------- 清理
     def cleanup(self, model_id: str, log: Callable[[str], None] = print) -> ModelState:

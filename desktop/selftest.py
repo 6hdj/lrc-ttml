@@ -16,6 +16,7 @@ model_manager / convert_params / environment / log_service / workers）。
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -678,6 +679,166 @@ def t_consistency():
     from desktop.services import model_manager as mm_mod
     man = mm_mod.load_manifest()
     eq(man["schema_version"], 1)
+
+
+# ========================================================== 14 真下载（本地 HTTP）
+
+@group(14, "model_manager：真下载（本地 HTTP）—— 续传 / 校验 / 取消")
+def t_http_download():
+    """起一个本地 HTTP 服务，把"下载"这条路径**真跑一遍**。
+
+    为什么必须真跑：这一段全是 IO 与边界（Range 续传、连接中断、
+    Content-Length 不符、SHA256 对不上、取消）。只 mock 的话，
+    下面那个真 bug 一辈子抓不到：
+
+    ⚠️ **失败时删掉 .part** 曾把"下载中断→重试"变成"永远从 0 开始"，
+    3GB 的模型能白下好几次。所以这条用例是**守着报错信息的**。
+    """
+    import http.server
+    import socketserver
+    import threading
+
+    body = os.urandom(256 * 1024)
+    digest = hashlib.sha256(body).hexdigest()
+    # fail_times: 0 = 正常；-1 = 一直"发一半就断"；N>0 = 再断 N 次
+    state = {"range_ok": True, "fail_times": 0}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            if state["fail_times"] != 0:
+                if state["fail_times"] > 0:
+                    state["fail_times"] -= 1
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body[: len(body) // 2])
+                self.wfile.flush()
+                self.connection.close()
+                return
+            rng = self.headers.get("Range")
+            if rng and state["range_ok"]:
+                start = int(rng.split("=")[1].split("-")[0])
+                chunk = body[start:]
+                self.send_response(206)
+                self.send_header("Content-Range",
+                                 f"bytes {start}-{len(body) - 1}/{len(body)}")
+                self.send_header("Content-Length", str(len(chunk)))
+                self.end_headers()
+                self.wfile.write(chunk)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = socketserver.TCPServer(("127.0.0.1", 0), H)
+    srv.timeout = 1
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/model.bin"
+
+    root = os.path.join(_SANDBOX, "httpdl")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(root, exist_ok=True)
+    manifest = os.path.join(root, "manifest.json")
+    rel = "models/campplus/campplus_cn_common.bin"
+    with open(manifest, "w", encoding="utf-8") as fh:
+        json.dump({"schema_version": 1, "models": [{
+            "id": "probe", "category": "diarization", "name": "下载探针",
+            "download_policy": "on_demand", "approx_size": len(body),
+            "source": {"kind": "http", "urls": [url]},
+            "verify": {"kind": "file_sha256", "target": rel,
+                       "sha256": digest, "size": len(body)},
+        }]}, fh, ensure_ascii=False)
+
+    app = os.path.join(root, "app")
+    os.makedirs(app, exist_ok=True)
+    target = os.path.join(app, *rel.split("/"))
+    part = target + ".part"
+
+    def fresh():
+        from desktop.services import model_manager as mm_mod
+        for p in (target, part):
+            if os.path.isfile(p):
+                os.remove(p)
+        return mm_mod.ModelManager(manifest_path=manifest, app_dir=app)
+
+    try:
+        # ---- a) 正常下载 + SHA256 ----
+        mm = fresh()
+        st = mm.download("probe", log=lambda m: None)
+        eq(st.status, "ready", f"正常下载没成功：{st.detail}")
+        ok(not os.path.isfile(part), "下载成功后不该留 .part")
+        with open(target, "rb") as fh:
+            eq(hashlib.sha256(fh.read()).hexdigest(), digest, "内容不对")
+
+        # ---- b) 内容损坏（大小对）必须判失败 ----
+        with open(target, "wb") as fh:
+            fh.write(b"x" * len(body))
+        mm.invalidate("probe")
+        st = mm.check("probe")
+        eq(st.status, "failed", "大小对但内容错，必须判失败")
+
+        # ---- c) 中断后**必须留着 .part**，重试接着下 ----
+        from desktop.services import model_manager as mm_mod
+        mm = fresh()
+        state["fail_times"] = -1
+        try:
+            mm.download("probe", log=lambda m: None)
+            raise AssertionError("服务器一直断，下载不该成功")
+        except mm_mod.DownloadCancelled:
+            raise
+        except Exception:                             # noqa: BLE001
+            pass
+        state["fail_times"] = 0
+        ok(os.path.isfile(part) and os.path.getsize(part) > 0,
+           "下载失败后必须保留 .part —— 删掉它会让断点续传变成永远重下")
+        st = mm.download("probe", log=lambda m: None)
+        eq(st.status, "ready", f"续传后没成功：{st.detail}")
+        with open(target, "rb") as fh:
+            eq(hashlib.sha256(fh.read()).hexdigest(), digest, "续传后内容不对")
+
+        # ---- d) 服务器不支持 Range → 从头下，不能拼畸形文件 ----
+        mm = fresh()
+        state["range_ok"] = False
+        state["fail_times"] = -1
+        try:
+            mm.download("probe", log=lambda m: None)
+        except Exception:                             # noqa: BLE001
+            pass
+        ok(os.path.isfile(part) and os.path.getsize(part) > 0,
+           "没留下 .part，这条用例没测到续传路径")
+        state["fail_times"] = 0
+        logs = []
+        st = mm.download("probe", log=logs.append)
+        state["range_ok"] = True
+        eq(st.status, "ready", f"不支持 Range 时没成功：{st.detail}")
+        with open(target, "rb") as fh:
+            eq(hashlib.sha256(fh.read()).hexdigest(), digest,
+               "不支持 Range 时拼出了畸形文件")
+        ok(any("从头下载" in x for x in logs),
+           f"应该明确说明『服务器不支持续传』，日志：{logs[:6]}")
+
+        # ---- e) 取消：抛 DownloadCancelled，且不留下正式文件 ----
+        mm = fresh()
+        n = {"i": 0}
+
+        def cancel():
+            n["i"] += 1
+            return n["i"] > 2
+
+        try:
+            mm.download("probe", log=lambda m: None, cancel=cancel)
+            raise AssertionError("取消之后不该成功")
+        except mm_mod.DownloadCancelled:
+            pass
+        ok(not os.path.isfile(target), "取消之后不该有正式文件")
+        ok(mm.check("probe").status != "ready", "取消之后不该判就绪")
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 def _wait(mgr, tid, timeout: float = 30.0):
