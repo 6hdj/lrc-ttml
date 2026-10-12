@@ -1,0 +1,10 @@
+# promo/ 下的本地产物：不随仓库分发
+#
+# 依赖与 Remotion 缓存（node_modules/ 已在仓库根的 .gitignore 里，这里再写一遍防止单独 clone 子目录）
+node_modules/
+# Remotion 的浏览器缓存（chrome-headless-shell，120MB）与打包产物
+.remotion/
+# 渲染产物（成片/静帧/短样片；单文件 6.5MB，不入库）
+out/
+# 本地日志
+*.log

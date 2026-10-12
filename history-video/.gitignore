@@ -1,0 +1,5 @@
+# 渲染产物与依赖：不随仓库分发
+node_modules/
+out/
+.remotion/
+*.log

@@ -68,6 +68,10 @@
 | `tools/verify_from_report.py` | 用 `outputs/*.report.json` 重建 TTML 并做独立结构校验（不需要重跑 ASR） | — |
 | `tools/audit_params.py` | **参数联调审计**：界面控件 → `params` → `/api/convert` → `ConvertOptions` → 有没有人读。查"纯 UI 控件""接了不用的死字段" | — |
 | `tools/test_param_effect.py` | **参数生效性联调**：逐个选项改一遍、断言**产物真的变了**（不是只看有没有传）。含 `main.py --help` 能起来 | — |
+| `promo/` | **宣传片的 Remotion 工程**（另一条独立流水线，不参与 TTML 转换）：`src/core` 版式常量、`src/scenes` 六个场景、`public/audio.wav`（旁白+自制配乐母带的副本）。渲染一次约 107 秒 / 1860 帧，比旧的 Edge 逐帧（约 18 分钟）快一个数量级。**改场景前先读 `tools/demo_video/README-REMOTION.md` 的时间轴与 token 表** | `node promo/tools/check-core.cjs`；改完重渲一遍 |
+| `promo/tools/check-core.cjs` | **宣传片数值自检**（91 项）：用 `react-dom/server` 真渲染组件，把 style 与 `slides.html` 的基线公式逐项比。**不用 esbuild、不用浏览器**，受限环境里也能跑 | — |
+| `promo/tools/render.cjs` | **宣传片全片渲染**（`@remotion/bundler` + `@remotion/renderer` 进程内 API）。⚠️ 跑之前必须把 `TMP`/`TEMP` 指到工作区内（自带 ffmpeg 写系统临时目录会 Permission denied），并显式 `--sample-rate 44100`（否则音频被升到 48 kHz，与基线不一致） | 改场景/改音频后重渲 |
+| `tools/verify_promo_frames.py` | **宣传片的独立验收**：容器/音轨语音块/逐帧 MAE/确定性 6 项。含"验证验证器"自测 | 重渲后跑 |
 | `selftest.py` | 离线自检（无网络/无大模型） | 任何改动后都要跑 |
 
 ---

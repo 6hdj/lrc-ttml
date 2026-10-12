@@ -46,6 +46,11 @@ legacy/
 # ---- 演示视频的中间产物（帧序列很大）----
 .demo/
 
+# ---- Remotion 浏览器缓存（chrome-headless-shell 约 120MB）----
+# 注意：从仓库根跑 `npx remotion` 时它会落在 <根>/.remotion/；
+# 从 promo/ 跑则落在 promo/node_modules/.remotion/。两处都不入库。
+.remotion/
+
 # ---- 运行期缓存 ----
 .tmp/
 _scratch/
