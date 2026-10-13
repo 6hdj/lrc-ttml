@@ -28,6 +28,12 @@ datas = [('index.html', '.'), ('.venvpack/Lib/site-packages/nvidia', 'nvidia'), 
 datas += [('desktop/resources/model_manifest.json', 'desktop/resources')]
 binaries = []
 hiddenimports = ['doctor', 'envcheck', 'install', 'download_model',
+                 # 卸载逻辑在 installer_gui.uninstall()，由 `--uninstall` 触发
+                 # （launcher 里是延迟导入，静态分析看不到）。
+                 # 少了它 → 卸载脚本报"找不到卸载所需的程序"，
+                 # 用户只能手工删目录（而模型到底删不删又没人管了）。
+                 'installer_gui',
+                 'desktop.selftest', 'desktop.uicheck',
                  # 桌面壳（launcher 里是**延迟导入**，PyInstaller 静态分析看不到）
                  'desktop', 'desktop.app', 'desktop.main_window', 'desktop.context',
                  'desktop.paths', 'desktop.config', 'desktop.fileguess',

@@ -189,6 +189,15 @@ def main() -> int:
         rest = [a for a in argv if a not in ("--install", "-install", "install")]
         sys.argv = ["install.py"] + rest
         return install.main()
+    # 卸载：`卸载程序.bat` 会调 `Lyric2TTML.exe --uninstall <目录>`
+    # ⚠️ 逻辑在 installer_gui 里而**不是**写在 .bat 里：
+    # "搬 3GB 模型"必须由能验证结果的代码来做 —— .bat 里的 xcopy / robocopy
+    # 在"含中文的路径 + 目标子目录还不存在"时会**报成功却没搬**
+    # （真踩过，详见 installer_gui._move_tree 的说明）。
+    for _uflag in ("--uninstall", "-uninstall"):
+        if _uflag in argv:
+            import installer_gui
+            return int(installer_gui.uninstall_cli(argv[argv.index(_uflag) + 1:]))
     if any(a in ("--download-model", "download-model") for a in argv):
         import download_model
         # 复用它的参数（--model small 之类）

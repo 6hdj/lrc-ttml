@@ -94,6 +94,182 @@ def payload_zip() -> str:
     return p if os.path.exists(p) else ""
 
 
+# --------------------------------------------------------------- 卸载（命令行）
+def default_data_dir() -> str:
+    """桌面版放配置/模型/日志的地方（与 ``desktop/paths.data_dir()`` 一致）。"""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "Lyric2TTML")
+
+
+def _dir_size(path: str) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def _human(n: float) -> str:
+    for u in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.1f}{u}"
+        n /= 1024
+    return f"{n:.1f}TB"
+
+
+def _move_tree(src: str, dst: str) -> bool:
+    """把 ``src`` 搬到 ``dst``，返回是否**确认成功**。
+
+    ⚠️⚠️ 为什么不在 `.bat` 里用 `xcopy` / `robocopy`（真踩过，查了很久）：
+    实测在"目标子目录还不存在 + 路径里带中文"的组合下，
+    `xcopy` 会打印 `1 File(s) copied` 且返回 0、`robocopy /MOVE` 会报告
+    "1 个文件已复制"，**但目标里什么都没有**。
+    搬 3GB 的模型不能赌这个 —— 所以卸载脚本改成"一条 .bat 只负责
+    把 python 侧的卸载逻辑叫起来"，真正的搬移用 `shutil.move`
+    （自己的代码，可测、编码可控；同盘是 rename，秒完成）。
+    """
+    try:
+        parent = os.path.dirname(dst.rstrip("\\/"))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        if os.path.isdir(dst):
+            # 目标已存在：逐个合并，免得 shutil.move 把整个目录塞成子目录
+            for name in os.listdir(src):
+                s, d = os.path.join(src, name), os.path.join(dst, name)
+                if os.path.exists(d):
+                    if os.path.isdir(s) and os.path.isdir(d):
+                        if not _move_tree(s, d):
+                            return False
+                        continue
+                    if os.path.isdir(d):
+                        shutil.rmtree(d, ignore_errors=True)
+                    else:
+                        os.remove(d)
+                shutil.move(s, d)
+        else:
+            shutil.move(src, dst)
+    except Exception as e:                              # noqa: BLE001
+        print(f"  [搬移失败] {type(e).__name__}: {e}")
+        return False
+    # **验证**：源已经空了（不存在或没内容）、目标里有东西，才算成功。
+    # ⚠️ 不能只判"源不存在"：目标已存在时是**逐个合并**，源目录会留下来、
+    # 只是变空 —— 那种情况同样是成功的（第一版就是这么误判的）。
+    try:
+        src_empty = (not os.path.exists(src)) or (not os.listdir(src))
+        return src_empty and os.path.isdir(dst) and bool(os.listdir(dst))
+    except OSError:
+        return False
+
+
+def uninstall(install_dir: str, keep_models: bool = True,
+              assume_yes: bool = False, desk: str = "") -> int:
+    """卸载：删安装目录 + 桌面快捷方式；**默认保留模型**。
+
+    返回 0 成功 / 1 有东西没删掉 / 2 用户取消 / 3 拒绝执行（怕丢模型）。
+    """
+    install_dir = os.path.abspath(install_dir)
+    if not os.path.isdir(install_dir):
+        print(f"  目录不存在：{install_dir}")
+        return 1
+    data_dir = default_data_dir()
+    desk = desk or os.path.join(os.path.expanduser("~"), "Desktop")
+
+    print("=" * 58)
+    print("  卸载 Lyric2TTML")
+    print(f"  安装目录：{install_dir}")
+    hf_in_install = os.path.join(install_dir, ".hf_cache")
+    hf_in_data = os.path.join(data_dir, ".hf_cache")
+    if os.path.isdir(hf_in_install):
+        print(f"  安装目录里有模型：{_human(_dir_size(hf_in_install))}")
+    if os.path.isdir(hf_in_data):
+        print(f"  用户数据目录里有模型：{_human(_dir_size(data_dir))}")
+    print("=" * 58)
+
+    if not assume_yes:
+        try:
+            ans = input("  确定卸载吗？[Y=是  N=取消] ").strip().lower()
+        except EOFError:
+            ans = "n"
+        if ans not in ("y", "yes"):
+            print("  已取消。")
+            return 2
+
+    # ---- ① 安装目录里的模型：默认先搬走 ----
+    if os.path.isdir(hf_in_install):
+        if keep_models:
+            print(f"  正在把模型搬到：{hf_in_data}")
+            if not _move_tree(hf_in_install, hf_in_data):
+                # ⚠️ **搬不动就什么都别删** —— 宁可卸载不干净，
+                # 也不能让用户白下 3GB
+                print("  [中止] 模型没能安全搬走，所以**没有删除任何东西**。")
+                print("         请先手工把下面这个目录复制到别处：")
+                print(f"           {hf_in_install}")
+                print("         复制好之后再运行一次本卸载程序。")
+                return 3
+            print(f"  [OK] 模型已保留：{hf_in_data}")
+        else:
+            print(f"  正在删除安装目录里的模型"
+                  f"（{_human(_dir_size(hf_in_install))}）…")
+            shutil.rmtree(hf_in_install, ignore_errors=True)
+
+    # ---- ② 用户数据目录里的模型 ----
+    if os.path.isdir(hf_in_data) and not keep_models:
+        print(f"  正在删除模型缓存：{data_dir}")
+        shutil.rmtree(data_dir, ignore_errors=True)
+    elif os.path.isdir(hf_in_data):
+        print(f"  模型缓存保留在：{data_dir}")
+
+    # ---- ③ 桌面快捷方式 ----
+    for name in ("Lyric2TTML.lnk", "卸载 Lyric2TTML.lnk"):
+        p = os.path.join(desk, name)
+        try:
+            if os.path.isfile(p):
+                os.remove(p)
+                print(f"  已删除快捷方式：{name}")
+        except OSError as e:
+            print(f"  [提示] 快捷方式没删掉（{name}）：{e}")
+
+    # ---- ④ 程序文件：**先 cd 走**再删自己所在的目录 ----
+    try:
+        os.chdir(os.environ.get("TEMP") or os.path.expanduser("~"))
+    except OSError:
+        pass
+    print("  正在删除程序文件…")
+    shutil.rmtree(install_dir, ignore_errors=True)
+    if os.path.isdir(install_dir):
+        print(f"  [提示] 还有 {_human(_dir_size(install_dir))} 没删掉"
+              f"（多半是被占用）。")
+        print("         把软件关掉之后再运行一次这个卸载程序即可。")
+        return 1
+    print("  [完成] 已卸载。")
+    return 0
+
+
+def uninstall_cli(argv=None) -> int:
+    """``安装程序.exe --uninstall <目录> [--with-models] [--yes]``
+
+    卸载程序.bat 就是调这个。放在这里而不是写成一大串 .bat，
+    是为了**把"搬 3GB 模型"这件事交给可测的 Python 代码**（见
+    ``_move_tree`` 的说明）。
+    """
+    import argparse
+    ap = argparse.ArgumentParser(prog="卸载", description="卸载 Lyric2TTML")
+    ap.add_argument("install_dir")
+    ap.add_argument("--keep-models", action="store_true", default=True,
+                    help="保留模型（默认）")
+    ap.add_argument("--with-models", action="store_true",
+                    help="连模型一起删除（约 3GB）")
+    ap.add_argument("--yes", action="store_true",
+                    help="不再问一次（给脚本/自动测试用）")
+    ap.add_argument("--desktop", default="", help="桌面目录（测试用）")
+    a = ap.parse_args(argv)
+    return uninstall(a.install_dir, keep_models=not a.with_models,
+                     assume_yes=a.yes, desk=a.desktop)
+
+
 def default_install_dir() -> str:
     """默认装到哪。
 
@@ -614,50 +790,84 @@ class Installer:
     def write_uninstaller(self) -> None:
         """写一个能"一键卸载"的 `卸载程序.bat`。
 
-        卸载要删的东西：整个安装目录 + 桌面快捷方式 + 卸载快捷方式自己。
+        要删的东西：安装目录 + 桌面快捷方式。**默认保留已下载的模型**。
+
         ⚠️ 用 `%~dp0` 定位自己，绝不写死路径 —— 用户可能装到任何地方。
         ⚠️ 删自己所在目录时，bat 必须**先 cd 到别处**，否则 Windows 会因为
         "文件正在使用"删不掉。
+
+        ------------------------------------------------------------------
+        "保留模型"这条为什么要写得这么绕（血泪）
+        ------------------------------------------------------------------
+        模型（约 3GB）可能在两个地方：
+          * **用户数据目录** `<LOCALAPPDATA>\\Lyric2TTML\\.hf_cache` —— 桌面版
+            默认位置，删安装目录动不到它，什么都不用做；
+          * **安装目录** `<安装目录>\\.hf_cache` —— 旧版 / 就地模式。
+
+        麻烦的是后者：`rmdir /s /q 安装目录` 会**连同模型一起删掉**。
+        所以必须先把它搬出去。而"搬"这一步**不能用会失败还报成功的写法**：
+
+        * `xcopy "<中文长路径>" "<还不存在的目标子目录>\\\\"` 实测会打印
+          `1 File(s) copied` 并返回 0，**但目标里什么都没有**；
+        * `robocopy /MOVE` 在普通路径上是好的（实测 src 消失、dst 出现），
+          但在带中文的路径上出现过"报告搬了 1 个文件、目标却是空的"。
+
+        搬 3GB 的文件**不能赌**。所以这里的原则是：
+        **先确认目标真的存在，才允许删源。** 确认不了就**不搬也不删**，
+        直接告诉用户"模型还在安装目录里，手工移走再删目录"。
+        宁可留一个不干净的卸载，也不能让用户白下 3GB。
         """
         bat = os.path.join(self.install_dir, "卸载程序.bat")
         desk = os.path.join(os.path.expanduser("~"), "Desktop")
-        # ⚠️⚠️ **绝对不要在这里写 `chcp 65001`**。
-        # 这个 .bat 是用 **GBK** 编码写的（cmd.exe 按本机 ANSI 代码页读批处理），
-        # 一旦开头 chcp 65001，cmd 就会拿 UTF-8 去解 GBK 的字节 →
-        # 用户看到满屏乱码，根本不知道在问什么（真踩过，用户反馈"卸载程序乱码、无响应"）。
-        # 中文 Windows 上保持默认代码页 + GBK 编码才是对的。
+        # ⚠️⚠️ 这个 .bat **只负责把卸载逻辑叫起来**，真正的删除/搬移在
+        # `uninstall()`（Python）里做。原因：`.bat` 里的 xcopy / robocopy
+        # 在"含中文的路径 + 目标子目录还不存在"时会**报成功却没搬**，
+        # 而它要搬的是 3GB 的模型 —— 不能赌（详见 `_move_tree` 的说明）。
+        # Python 侧还能真正验证"源没了、目标有东西"，搬不动就什么都不删。
+        #
+        # 用哪个 Python 来跑？
+        #   ① 安装目录里的主程序（自带运行时，永远可用）——
+        #      它是 GUI 程序，但带 --uninstall 参数时走命令行分支；
+        #   ② 万一主程序被删了，退回系统 python（开发机上就是这样）。
         content = (
             "@echo off\r\n"
             "title 卸载 Lyric2TTML\r\n"
             "setlocal\r\n"
             "set \"DIR=%~dp0\"\r\n"
             "if \"%DIR:~-1%\"==\"\\\" set \"DIR=%DIR:~0,-1%\"\r\n"
+            "set \"PYTHONIOENCODING=utf-8\"\r\n"
             "echo.\r\n"
             "echo   将要卸载 Lyric2TTML\r\n"
             "echo   位置：%DIR%\r\n"
             "echo.\r\n"
-            "echo   会一并删除：桌面快捷方式、以及已下载的语音识别模型（约3GB）。\r\n"
+            "echo   语音识别模型（约 3GB）默认保留，这样以后重装不用重下。\r\n"
             "echo.\r\n"
             "choice /c YN /n /m \"   确定卸载吗？[Y=是  N=取消] \"\r\n"
-            "if errorlevel 2 (\r\n"
-            "  echo.\r\n"
-            "  echo   已取消。\r\n"
-            "  pause\r\n"
-            "  exit /b 0\r\n"
-            ")\r\n"
+            "if errorlevel 2 goto cancelled\r\n"
             "echo.\r\n"
-            "echo   正在删除桌面快捷方式…\r\n"
-            f"del /q \"{desk}\\Lyric2TTML.lnk\" 2>nul\r\n"
-            f"del /q \"{desk}\\卸载 Lyric2TTML.lnk\" 2>nul\r\n"
-            "echo   正在删除程序文件（模型较大，请耐心等，可能要一两分钟）…\r\n"
-            "cd /d \"%TEMP%\"\r\n"
-            "rmdir /s /q \"%DIR%\"\r\n"
+            "if exist \"%DIR%\\Lyric2TTML.exe\" goto useexe\r\n"
+            "goto usepython\r\n"
+            # ---- 用主程序（打包版，自带 Python）----
+            ":useexe\r\n"
+            "\"%DIR%\\Lyric2TTML.exe\" --uninstall \"%DIR%\" --keep-models\r\n"
+            "goto after\r\n"
+            # ---- 退回系统 python（开发/便携版）----
+            ":usepython\r\n"
+            "where python >nul 2>nul\r\n"
+            "if errorlevel 1 goto nopython\r\n"
+            "python -c \"import sys;sys.path.insert(0,r'%DIR%');import installer_gui as g;sys.exit(g.uninstall(r'%DIR%', keep_models=True, assume_yes=True))\"\r\n"
+            "goto after\r\n"
+            ":nopython\r\n"
+            "echo   [错误] 找不到卸载所需的程序。\r\n"
+            "echo          请手工删除这个目录：%DIR%\r\n"
+            "echo          （模型在 %%LOCALAPPDATA%%\\Lyric2TTML，默认保留）\r\n"
+            ":after\r\n"
             "echo.\r\n"
-            "if exist \"%DIR%\" (\r\n"
-            "  echo   [未完全删除] 可能有文件被占用，请关掉程序窗口后重试。\r\n"
-            ") else (\r\n"
-            "  echo   [完成] 已卸载干净。\r\n"
-            ")\r\n"
+            "pause\r\n"
+            "goto :eof\r\n"
+            ":cancelled\r\n"
+            "echo.\r\n"
+            "echo   已取消。\r\n"
             "pause\r\n"
         )
         try:
@@ -1089,6 +1299,14 @@ def relaunch_elevated() -> bool:
 
 
 def main() -> int:
+    # ---- 卸载：`卸载程序.bat` 和主程序的 `--uninstall` 都走这里 ----
+    # ⚠️ 必须放在**提权之前**：卸载不需要管理员（删自己安装的目录），
+    # 而且提权会让"双击卸载"多弹一次 UAC，用户会以为要装东西。
+    if "--uninstall" in sys.argv:
+        i = sys.argv.index("--uninstall")
+        rest = sys.argv[i + 1:]
+        return uninstall_cli(rest)
+
     # ---- 无界面自测：让"打包后的真安装程序"能被我自动化跑一遍 ----
     # 用法：安装程序.exe --e2e E:\Lyric2TTML
     # ⚠️ 自测**跳过提权**，否则 UAC 弹窗会把自动化测试挂死。

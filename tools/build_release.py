@@ -4,11 +4,22 @@
     python tools/build_release.py --full        # 完整版（含 torch，约 5 GB，不建议）
     python tools/build_release.py --portable    # 便携 ZIP（不打包 exe，直接用 Python）
 
+**桌面窗口（Qt）默认不带**，要带就设环境变量：
+
+    set L2T_WITH_QT=1
+    python tools/build_release.py --lite        # 带 Qt，约 3 GB
+
+⚠️ 发布给普通用户的安装包**应该带 Qt**（README 承诺"双击桌面图标直接进软件"）；
+不带 Qt 的包双击后会退回浏览器界面 —— 那是给"只想用 Web 界面/要省体积"的人的选项。
+官方 GUI 安装包（`--installer`）会自动带上 Qt（见 `build_installer`）。
+
 产物落在 ``dist/``：
 
-    dist/Lyric2TTML-1.0.0-win64-lite.zip      ← 上传到 GitHub Release
-    dist/Lyric2TTML-1.0.0-win64-full.zip
-    dist/Lyric2TTML-1.0.0-portable.zip
+    dist/Lyric2TTML-<版本>-win64-lite.zip     ← 上传到 GitHub Release
+    dist/Lyric2TTML-<版本>-win64-full.zip
+    dist/Lyric2TTML-<版本>-portable.zip
+
+``*_WITH_QT=0`` 时上面几个文件名会带 ``-noweb`` 后缀以免混淆。
 
 --------------------------------------------------------------------------
 为什么默认是"轻量版"
@@ -42,7 +53,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(HERE)
 
 APP = "Lyric2TTML"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # 不随包分发的大件（见文件头的说明）
 HEAVY = ["torch", "torchvision", "torchaudio", "torchgen", "functorch",
@@ -51,6 +62,33 @@ HEAVY = ["torch", "torchvision", "torchaudio", "torchgen", "functorch",
 UNUSED = ["tkinter", "matplotlib", "PyQt5", "PyQt6", "PySide2", "PySide6",
           "IPython", "pytest", "notebook", "torch.distributed", "scipy",
           "pandas", "PIL", "setuptools", "pip", "wheel"]
+
+# 桌面版（PySide6）要不要打进包里。默认**不带**（省约 350MB）；
+# 官方 GUI 安装包会自动打开它。
+WITH_QT = os.environ.get("L2T_WITH_QT") == "1"
+
+# PySide6 里我们**一个都不用**的模块。
+# ⚠️ 必须显式排除：`collect_all('PySide6')` 会把 Essentials + Addons 全拖进来
+# （QtQuick / QtQml / Qt3D* / QtWebView / QtMultimedia / QtCharts …），
+# 实测多约 90MB DLL 和几百个无用文件。桌面窗口是纯 QtWidgets。
+QT_UNUSED = [
+    "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickWidgets",
+    "PySide6.QtQuick3D", "PySide6.QtQuickControls2", "PySide6.QtQuickTest",
+    "PySide6.Qt3DCore", "PySide6.Qt3DRender", "PySide6.Qt3DInput",
+    "PySide6.Qt3DLogic", "PySide6.Qt3DAnimation", "PySide6.Qt3DExtras",
+    "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
+    "PySide6.QtWebEngineQuick", "PySide6.QtWebView", "PySide6.QtWebChannel",
+    "PySide6.QtWebSockets", "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets",
+    "PySide6.QtCharts", "PySide6.QtDataVisualization", "PySide6.QtGraphs",
+    "PySide6.QtDesigner", "PySide6.QtUiTools", "PySide6.QtHelp",
+    "PySide6.QtSql", "PySide6.QtTest", "PySide6.QtBluetooth",
+    "PySide6.QtNfc", "PySide6.QtPositioning", "PySide6.QtLocation",
+    "PySide6.QtSerialPort", "PySide6.QtSerialBus", "PySide6.QtSensors",
+    "PySide6.QtSpatialAudio", "PySide6.QtTextToSpeech", "PySide6.QtScxml",
+    "PySide6.QtRemoteObjects", "PySide6.QtNetworkAuth", "PySide6.QtHttpServer",
+    "PySide6.QtStateMachine", "PySide6.QtLottie", "PySide6.QtPdf",
+    "PySide6.QtPdfWidgets", "PySide6.QtVirtualKeyboard",
+]
 
 # 挨着 exe 放的"用户能看见/能改"的东西
 SIDE_FILES = ["index.html", "README.md", "LICENSE", "CHANGELOG.md", "启动.bat",
@@ -226,6 +264,9 @@ def clean(keep_dist: bool = True) -> None:
 
 def build_exe(full: bool) -> str:
     variant = "full" if full else "lite"
+    if WITH_QT:
+        # 文件名要能区分"带不带桌面窗口"，否则发布时两个包长得一样
+        variant += "-desktop"
     out = os.path.join("dist", APP)
     if os.path.isdir(out):
         shutil.rmtree(out, ignore_errors=True)
@@ -258,7 +299,42 @@ def build_exe(full: bool) -> str:
            "--hidden-import", "install",
            "--hidden-import", "download_model",
            ]
+    # ⚠️ 桌面壳（desktop/）是**延迟导入**的（launcher 里 import desktop.app），
+    # 而 desktop 内部又有一堆按需 import 的页面/服务模块 —— PyInstaller 的
+    # 静态分析追不全，必须显式列。漏了的后果不是崩溃，而是
+    # **"双击进不去桌面窗口、悄悄退回浏览器界面"**（有兜底，所以更难发现）。
+    for m in (
+        "desktop", "desktop.app", "desktop.main_window", "desktop.context",
+        "desktop.paths", "desktop.config", "desktop.fileguess",
+        "desktop.pages", "desktop.pages.base", "desktop.pages.welcome",
+        "desktop.pages.home", "desktop.pages.tasks", "desktop.pages.models",
+        "desktop.pages.settings",
+        "desktop.services", "desktop.services.task_manager",
+        "desktop.services.model_manager", "desktop.services.convert_params",
+        "desktop.services.backend_service",
+        "desktop.services.environment_service", "desktop.services.gpu_probe",
+        "desktop.services.log_service", "desktop.workers",
+        # 打包版自检用（--selftest / --uicheck 走 import，不走 runpy）
+        "desktop.selftest", "desktop.uicheck",
+    ):
+        cmd += ["--hidden-import", m]
+    # 模型清单必须随包带上（第一次启动就按它检查模型；不带的话
+    # 模型页一行都显示不出来）
+    cmd += ["--add-data",
+            os.path.join("desktop", "resources", "model_manifest.json")
+            + os.pathsep + os.path.join("desktop", "resources")]
+    if WITH_QT:
+        # ⚠️ 只收我们真的用的三个模块。`--collect-all PySide6` 会把
+        # Essentials + Addons 全拖进来（实测多约 90MB 无用 DLL）。
+        for m in ("PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets",
+                  "shiboken6"):
+            cmd += ["--collect-all", m]
+        print("  带上 Qt 桌面窗口（PySide6）")
     for m in UNUSED:
+        if WITH_QT and m == "PySide6":
+            continue                       # 带了 Qt 就不能再排除它
+        cmd += ["--exclude-module", m]
+    for m in (QT_UNUSED if WITH_QT else []):
         cmd += ["--exclude-module", m]
     # ⚠️ **torch 必须留在包里**（除非显式要求排除）。
     # CAM++ 声纹分声部的网络是用 PyTorch 写的（speaker_campplus.py），
@@ -417,7 +493,17 @@ def build_installer() -> str:
 
     做法：先把主程序（onedir）打成一份 zip 当**载荷**，再用 `--add-data` 塞进安装程序。
     运行时 `installer_gui` 把载荷解到用户选的目录，然后照常检查/补全/启动。
+
+    ⚠️ **安装包默认带 Qt**（`L2T_WITH_QT` 会被强制打开）：桌面快捷方式必须
+    双击就出窗口；不带 Qt 的包双击会退回浏览器界面，那就不叫"桌面应用"了。
+    想刻意做"不带 Qt 的安装包"，设 `L2T_WITH_QT=0` 明确要求。
     """
+    global WITH_QT
+    if os.environ.get("L2T_WITH_QT", "1") == "1" and not WITH_QT:
+        WITH_QT = True
+        os.environ["L2T_WITH_QT"] = "1"
+        print("  安装包强制带上 Qt 桌面窗口（L2T_WITH_QT=1）")
+
     # ① 先把主程序构建出来（安装包里要有东西可装）
     app_dir = os.path.join("dist", APP)
     if not os.path.isdir(app_dir) or not os.path.exists(
@@ -486,6 +572,25 @@ def smoke_test(out: str) -> bool:
     if not ok:
         print((r.stdout or "")[-500:])
         print((r.stderr or "")[-800:])
+
+    # ⚠️ 带 Qt 的包要额外验一次"桌面窗口能不能建出来" —— 这是本次改造的
+    # 核心验收点。缺 Qt 平台插件时 exe 起不来，而 `--help` 照样通过，
+    # 所以不测这一条的话"打包版没有桌面窗口"会一路溜到用户手里。
+    if WITH_QT:
+        print("\n  冒烟测试：桌面窗口（Qt 平台插件）")
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
+                   L2T_ALLOW_MULTI="1", L2T_HEADLESS="1",
+                   L2T_DATA_DIR=os.path.join(out, ".smoke-data"))
+        r = subprocess.run([exe, "--uicheck"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=env,
+                           cwd=out, timeout=900)
+        ui_ok = r.returncode == 0 and "全部通过" in (r.stdout or "")
+        print(f"    {'✓' if ui_ok else '✗'} 退出码 {r.returncode}")
+        if not ui_ok:
+            print((r.stdout or "")[-800:])
+            print((r.stderr or "")[-800:])
+            return False
+
     print("\n  冒烟测试：起 Web 服务")
     env = dict(os.environ, L2T_PORT="8877")
     p = subprocess.Popen([exe, "--web"], env=env, cwd=out,
