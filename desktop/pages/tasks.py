@@ -91,7 +91,7 @@ class TasksPage(Page):
         lay.addWidget(page_header(self))
         lay.addWidget(hint("点一行看它的日志。「取消」只会停在**步骤之间**"
                            "（正在跑的识别那一步不会被打断），所以按下去"
-                           "状态会先变成「取消中…」。"))
+                           "状态会先变成「取消中...」。"))
         lay.addWidget(split, 1)
         lay.addWidget(row(self.btn_clear, None, stretch_index=None))
         return inner
@@ -104,7 +104,7 @@ class TasksPage(Page):
         self.table.setRowCount(len(tasks))
         for r, t in enumerate(tasks):
             state = t.get("state", "")
-            c0 = QTableWidgetItem(f"{STATUS_ICON.get(state, '·')} "
+            c0 = QTableWidgetItem(f"{STATUS_ICON.get(state, '•')} "
                                   f"{STATE_LABEL.get(state, state)}")
             c0.setForeground(_qcolor(STATUS_COLOR.get(state, C["dim"])))
             self.table.setItem(r, 0, c0)
@@ -113,7 +113,7 @@ class TasksPage(Page):
                 f"{t.get('title') or ''}"))
             pct = t.get("progress")
             self.table.setItem(r, 2, QTableWidgetItem(
-                f"{int(pct)}%" if pct is not None else "—"))
+                f"{int(pct)}%" if pct is not None else "-"))
             self.table.setItem(r, 3, QTableWidgetItem(f"{t.get('elapsed', 0):.0f}s"))
             self.table.setItem(r, 4, QTableWidgetItem(
                 time.strftime("%H:%M:%S", time.localtime(t.get("created") or 0))))
@@ -164,7 +164,7 @@ class TasksPage(Page):
             return
         d = t.public()
         state = d.get("state", "")
-        self.lb_title.setText(f"{STATUS_ICON.get(state, '·')} "
+        self.lb_title.setText(f"{STATUS_ICON.get(state, '•')} "
                               f"{KIND_LABEL.get(d.get('kind'), d.get('kind'))}"
                               f" · {d.get('title') or ''}")
         bits = [STATE_LABEL.get(state, state)]

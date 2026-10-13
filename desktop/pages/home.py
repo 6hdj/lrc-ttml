@@ -95,11 +95,11 @@ class HomePage(Page):
 
         # ---------- 文件 ----------
         self.ed_audio = QLineEdit()
-        self.ed_audio.setPlaceholderText("拖进来或点「浏览」——wav / mp3 / flac / m4a …")
-        self.btn_audio = button("浏览…", on_click=self._pick_audio)
+        self.ed_audio.setPlaceholderText("拖进来或点「浏览」--wav / mp3 / flac / m4a ...")
+        self.btn_audio = button("浏览...", on_click=self._pick_audio)
         self.ed_lyrics = QLineEdit()
         self.ed_lyrics.setPlaceholderText("TXT 或 LRC（GBK 编码也能读）")
-        self.btn_lyrics = button("浏览…", on_click=self._pick_lyrics)
+        self.btn_lyrics = button("浏览...", on_click=self._pick_lyrics)
         for e in (self.ed_audio, self.ed_lyrics):
             e.textChanged.connect(self._on_files_changed)
 
@@ -118,7 +118,7 @@ class HomePage(Page):
         self.cb_lang = _combo(LANGUAGES)
         self.cb_model = _combo([])                       # 稍后按清单填
         self.ed_output = QLineEdit(cfg.outputs_dir())
-        self.btn_output = button("…", on_click=self._pick_output)
+        self.btn_output = button("...", on_click=self._pick_output)
 
         self.ed_title.textEdited.connect(lambda: self._mark_manual("title"))
         self.ed_artists.textEdited.connect(lambda: self._mark_manual("artists"))
@@ -463,18 +463,18 @@ class HomePage(Page):
             return
         self.lb_problem.setText("")
         self.log_box.clear()
-        self.log_box.appendPlainText("正在准备…")
+        self.log_box.appendPlainText("正在准备...")
         self._current_task = self.ctx.start_convert(
             p, title=os.path.basename(p["lyrics"]))
         self.bar.setValue(0)
-        self.lb_stage.setText("已提交，等模型加载…")
+        self.lb_stage.setText("已提交，等模型加载...")
         self.btn_start.setEnabled(False)
         self.btn_cancel.setEnabled(True)
 
     def _cancel(self) -> None:
         if self._current_task:
             self.ctx.tasks.cancel(self._current_task)
-            self.lb_stage.setText("取消中…（当前这一步跑完就停）")
+            self.lb_stage.setText("取消中...（当前这一步跑完就停）")
 
     # ------------------------------------------------------------ 结果
     def _open_result(self) -> None:
@@ -513,8 +513,8 @@ class HomePage(Page):
             mid = self._model_id()
             st = self.ctx.models.check(mid)
             self.banner.setText(
-                f"⚠　识别模型「{st.name}」还没装好（{st.detail}）。"
-                f"到左侧「模型」页点「下载」即可 —— 只有第一次需要。")
+                f"!　识别模型「{st.name}」还没装好（{st.detail}）。"
+                f"到左侧「模型」页点「下载」即可 -- 只有第一次需要。")
             self.banner.setVisible(True)
             self.banner.setStyleSheet(f"color: {C['warn']};")
 
@@ -547,7 +547,7 @@ class HomePage(Page):
             sm = res.get("summary") or {}
             ok = bool(sm.get("format_ok"))
             self.lb_result_title.setText(
-                ("✓ 制作完成：" if ok else "⚠ 生成了，但格式自检有问题：")
+                ("√ 制作完成：" if ok else "! 生成了，但格式自检有问题：")
                 + os.path.basename(self._last_ttml))
             self.lb_result_body.setText(
                 f"匹配率 {float(sm.get('match_rate') or 0):.1%}　|　"

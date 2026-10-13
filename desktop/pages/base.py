@@ -157,10 +157,21 @@ STATUS_COLOR = {
     "info": C["dim"],
 }
 
+# ⚠️⚠️ 状态图标只能用**确认有字形**的字符（截图为证，见 `.tmp/exp_symbol_candidates.py`）。
+#
+# 真踩过：第一版用了 `✓`(U+2713) / `⚠`(U+26A0) / `…`(U+2026) / `·`(U+00B7)，
+# 而**本程序的主字体 Microsoft YaHei UI 没有这些字形** → 界面上显示成
+# **空心方框**（"已就绪 ▯"、"▯ 还有问题要处理"），看起来像界面坏了。
+# 实测渲染图（`.tmp/symbol_test.png`）确认：
+#
+#   能用：√  ✗  ▶  ⟳  ⊘  ↓  ！  ※  ∆  ▲  ○  ×  ●  ◆  ...  -  》  「  •
+#   不能用：✓  ✔  ⚠  …  ·  —（方框）   」→ 怪字符
+#
+# ⇒ 加新图标前**先渲染看一眼**，别照抄别处的符号。
 STATUS_ICON = {
-    "queued": "…", "running": "▶", "verifying": "⟳", "done": "✓",
-    "ready": "✓", "failed": "✗", "error": "✗", "cancelled": "⊘",
-    "not_installed": "·", "warn": "!", "ok": "✓", "info": "·",
+    "queued": "...", "running": "▶", "verifying": "⟳", "done": "√",
+    "ready": "√", "failed": "✗", "error": "✗", "cancelled": "⊘",
+    "not_installed": "•", "warn": "!", "ok": "√", "info": "•",
     "downloading": "↓",
 }
 
@@ -257,7 +268,7 @@ def col(*widgets, spacing: int = 8, margins=(0, 0, 0, 0)) -> QWidget:
 
 def status_dot(state: str, text: str = "") -> QLabel:
     color = STATUS_COLOR.get(state, C["dim"])
-    icon = STATUS_ICON.get(state, "·")
+    icon = STATUS_ICON.get(state, "•")
     return label(f"{icon} {text}".strip(), color=color)
 
 
@@ -309,7 +320,7 @@ class Page(QWidget):
            通常会自己调一次 ``refresh()`` 来显示真实状态，而 ``refresh()``
            开头有 ``if not self._built: return`` 的保护 ——
            顺序错了的话那次刷新会被静默跳过，页面停在
-           ``build()`` 里写的占位文字上（"正在读取模型状态…"），
+           ``build()`` 里写的占位文字上（"正在读取模型状态..."），
            看起来就像功能坏了。
         """
         if not self._built:

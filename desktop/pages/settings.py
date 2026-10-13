@@ -35,7 +35,7 @@ class SettingsPage(Page):
     def build(self) -> QWidget:
         # ---------- 目录 ----------
         self.ed_workspace = QLineEdit()
-        btn_pick = button("选择…", on_click=self._pick_workspace)
+        btn_pick = button("选择...", on_click=self._pick_workspace)
         btn_open_out = button("打开输出目录",
                               on_click=lambda: self.ctx.open_path(
                                   self.ctx.config.outputs_dir()))
@@ -59,7 +59,7 @@ class SettingsPage(Page):
         self.cb_lang = _combo(LANGUAGES)
         self.cb_singer = _combo(SINGER_MODES)
         self.cb_timefmt = _combo(TIME_FORMATS)
-        self.chk_portable = QCheckBox("便携模式说明（把 portable.txt 放到程序目录…）")
+        self.chk_portable = QCheckBox("便携模式说明（把 portable.txt 放到程序目录...）")
         self.chk_portable.setEnabled(False)
         self.chk_portable.setChecked(paths.portable())
 
@@ -185,7 +185,7 @@ class SettingsPage(Page):
 
     # ------------------------------------------------------------ 体检
     def _env_check(self, full: bool) -> None:
-        self.lb_env.setText("检查中…（含显卡的话要几秒）")
+        self.lb_env.setText("检查中...（含显卡的话要几秒）")
         tid = self.ctx.workers.start_env_check(full=full)
         self._env_tid = tid
 
@@ -207,7 +207,7 @@ class SettingsPage(Page):
         self.lb_env.setStyleSheet(f"color: {color}; font-weight: 600;")
         lines = []
         for it in items:
-            icon = STATUS_ICON.get(it.get("level"), "·")
+            icon = STATUS_ICON.get(it.get("level"), "•")
             lines.append(f"[{icon}] {it['name']}：{it['detail']}")
             if it.get("fix"):
                 lines.append(f"      → {it['fix']}")

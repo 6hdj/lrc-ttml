@@ -104,6 +104,39 @@ def _run() -> int:
         return 0
 
     app = QApplication.instance() or QApplication([])
+
+    # ⚠️⚠️ **给 offscreen 的 Qt 手工装系统字体**，否则截图里中文全是"豆腐块"
+    # （□□□），"文字是否正常显示"就成了测试盲区。
+    #
+    # 原因：PySide6/Qt6 **不再随包带字体**，而 offscreen 平台插件
+    # **不枚举 Windows 系统字体**（实测 `QFontDatabase.families()` 返回 **0**）。
+    # `QT_QPA_FONTDIR` 也不行（本机 Qt 没有 fontconfig）。
+    # 真实 Windows 桌面上 `msyh.ttc` 就在系统里，显示本来就是好的 ——
+    # 所以这是**测试环境**的问题，不是产品缺陷；但不修就看不到真相。
+    _font_families = 0
+    try:
+        from PySide6.QtGui import QFontDatabase
+        if not QFontDatabase.families():
+            for _p in (r"C:\Windows\Fonts\msyh.ttc",
+                       r"C:\Windows\Fonts\msyhbd.ttc",
+                       r"C:\Windows\Fonts\simsun.ttc",
+                       r"C:\Windows\Fonts\simhei.ttf",
+                       r"C:\Windows\Fonts\segoeui.ttf"):
+                if os.path.isfile(_p):
+                    _fid = QFontDatabase.addApplicationFont(_p)
+                    if _fid >= 0:
+                        _font_families += len(
+                            QFontDatabase.applicationFontFamilies(_fid))
+        _font_families = len(QFontDatabase.families())
+    except Exception:                                   # noqa: BLE001
+        pass
+    if _font_families:
+        print(f"  已加载系统字体：{_font_families} 个家族"
+              f"（截图里的中文才看得见）")
+    else:
+        print("  ⚠️ 没有可用字体 —— 截图里的中文会是豆腐块，"
+              "**不能**用它判断文字渲染")
+
     # ⚠️ 必须和 `desktop/app.py` 一样把样式表挂在 QApplication 上。
     # 以前这里忘了设，结果"UI 自检全绿、实际界面没样式"——
     # 自检的自检（下面那条渲染断言）就是为了堵这个。

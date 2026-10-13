@@ -42,7 +42,7 @@ class ModelsPage(Page):
         self._rows: Dict[str, Dict[str, Any]] = {}
         self._watch_ids: Dict[str, List[str]] = {}
 
-        self.lb_head = h2("正在读取模型状态…")
+        self.lb_head = h2("正在读取模型状态...")
         self.lb_cache = hint("")
         btn_recheck = button("重新检查", on_click=self._recheck)
         btn_dl_base = button("下载基础必需模型", primary=True,
@@ -184,7 +184,7 @@ class ModelsPage(Page):
         self.lb_head.setText(
             f"{rep['ready']} / {rep['total']} 个模型已就绪"
             + ("" if rep["asr_ready"]
-               else "　⚠ 语音识别模型还没装，现在不能做歌词"))
+               else "　! 语音识别模型还没装，现在不能做歌词"))
         self.lb_cache.setText(f"缓存目录：{rep['hf_cache']}")
 
     def on_show(self) -> None:
@@ -239,14 +239,14 @@ class ModelsPage(Page):
         if len(ids) > 1:
             if not self.ask("开始下载",
                             f"将下载 {len(ids)} 个模型：\n\n"
-                            + "\n".join("· " + n for n in names)
+                            + "\n".join("• " + n for n in names)
                             + f"\n\n合计约 {model_manager.human(total)}，"
                               f"下载中可以随时取消，断了也能接着下。\n\n现在开始？"):
                 return
         tid = (self.ctx.workers.start_model_download(ids[0])
                if len(ids) == 1
                else self.ctx.workers.start_model_download_many(ids, title))
-        self._set_row_busy(ids, "排队中…")
+        self._set_row_busy(ids, "排队中...")
         self._watch(tid, ids)
 
     def _set_row_busy(self, ids: List[str], text: str) -> None:
@@ -281,7 +281,7 @@ class ModelsPage(Page):
         tid = self.ctx.workers.start_model_cleanup(mid)
         r = self._rows.get(mid)
         if r:
-            r["msg"].setText("清理中…")
+            r["msg"].setText("清理中...")
             r["msg"].setVisible(True)
         self._watch(tid, [mid])
 
@@ -312,7 +312,7 @@ class ModelsPage(Page):
                 r["bar"].setVisible(False)
                 r["bar"].setRange(0, 100)
                 if state == "done":
-                    r["msg"].setText("✓ 完成")
+                    r["msg"].setText("√ 完成")
                 elif state == "cancelled":
                     r["msg"].setText("⊘ 已取消（下次会接着下）")
                 else:
