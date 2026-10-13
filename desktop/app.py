@@ -156,14 +156,38 @@ def run_gui(argv: Optional[List[str]] = None) -> int:
 
 
 def _app_icon():
-    """程序图标（没有就用默认的，不报错）。"""
+    """程序图标（没有就用默认的，不报错）。
+
+    ⚠️⚠️ 冻结版里**必须两个地方都找**：
+      * `app_dir()`（exe 旁边）—— 用户自己换了图标可以用这个覆盖；
+      * `source_dir()`（`_internal/`）—— 图标是随包分发的资源，
+        打包后它在 `_internal/desktop/resources/app.ico`。
+    老实现只看 `app_dir()`，而 `app.ico` 从来没被放进过安装目录 ⇒
+    `QIcon(None)` ⇒ **窗口/任务栏用的是 Qt 默认图标**（真踩过）。
+    `ttml_writer` 的 `index.html`、模型清单都是"两个地方都找"，
+    图标漏了同一套规矩。
+    """
     try:
         from PySide6.QtGui import QIcon
         from desktop import paths
-        for cand in ("desktop/resources/app.ico", "app.ico", "icon.ico"):
-            p = os.path.join(paths.app_dir(), cand)
-            if os.path.isfile(p):
-                return QIcon(p)
+        roots = []
+        for fn in ("app_dir", "source_dir", "data_dir"):
+            f = getattr(paths, fn, None)
+            if not callable(f):
+                continue
+            try:
+                roots.append(f())
+            except Exception:                           # noqa: BLE001
+                pass
+        rels = ("desktop/resources/app.ico", "app.ico", "icon.ico",
+                "resources/app.ico")
+        for root in roots:
+            for rel in rels:
+                p = os.path.join(root, rel.replace("/", os.sep))
+                if os.path.isfile(p):
+                    ic = QIcon(p)
+                    if not ic.isNull():
+                        return ic
     except Exception:                                  # noqa: BLE001
         pass
     return None

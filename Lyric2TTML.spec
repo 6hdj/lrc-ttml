@@ -112,6 +112,12 @@ else:
 # 状态机独立、提示文案独立（需求第 9 条：不得互相误报）。
 datas += [('desktop/resources/model_manifest.json', 'desktop/resources'),
           ('desktop/resources/runtime_manifest.json', 'desktop/resources')]
+# ⚠️ 图标也要**随包分发**（不只是嵌进 exe 的资源段）：
+# `desktop/app.py::_app_icon()` 会去 `_internal/desktop/resources/app.ico` 找它，
+# 用来设**窗口与任务栏**图标。只嵌 exe 资源段的话，窗口图标仍然是 Qt 默认的。
+if os.path.isfile('desktop/resources/app.ico'):
+    datas += [('desktop/resources/app.ico', 'desktop/resources')]
+    print('[icon] 随包分发 desktop/resources/app.ico（窗口/任务栏图标用）')
 binaries = []
 hiddenimports = ['doctor', 'envcheck', 'install', 'download_model',
                  # 卸载逻辑在 uninstall_core（**故意不放在 installer_gui**：
@@ -383,6 +389,24 @@ _WITH_CONSOLE = os.environ.get("L2T_WITH_CONSOLE") == "1"
 print(f"[console] console=True, hide_console="
       f"{'None（调试：显示黑窗）' if _WITH_CONSOLE else 'hide-early（双击无黑窗）'}")
 
+# ==========================================================================
+#  应用图标 —— ⚠️ 之前**根本没有**，用的是 PyInstaller 默认图标
+# ==========================================================================
+# 实测（2026-10-13）：`dist/Lyric2TTML/Lyric2TTML.exe` 的图标是
+# **PyInstaller 自带的那个橙色 Python + 窗口**，因为仓库里一个 `.ico` 都没有、
+# 这里也没有 `icon=`。后果是桌面快捷方式、开始菜单、任务栏、
+# 「设置 → 已安装的应用」里**全是 Python 图标** —— 用户会觉得
+# "这是个脚本"而不是一个商业软件。
+#
+# 图标由 `tools/make_icon.py` 从 `assets/icon.svg` 生成多尺寸 `.ico`
+# （16/24/32/48/64/128/256），配色跟随 `desktop/pages/base.py` 的调色板。
+_ICON = os.path.join('assets', 'icon.ico')
+if not os.path.isfile(_ICON):
+    print(f'[icon] ⚠️ 没有 {_ICON} —— 会退回 PyInstaller 默认图标！'
+          f'（先跑 `python tools/make_icon.py`）')
+else:
+    print(f'[icon] 使用 {_ICON}（{os.path.getsize(_ICON)} 字节）')
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -400,6 +424,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=_ICON if os.path.isfile(_ICON) else None,
 )
 coll = COLLECT(
     exe,
