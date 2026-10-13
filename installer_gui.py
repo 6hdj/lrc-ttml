@@ -80,6 +80,15 @@ def ask_app_report(base: str) -> dict:
         return {}
 
 
+def e2e_mode() -> bool:
+    """是不是在跑无人值守自测（`--e2e` / `--no-shortcuts`）。
+
+    自测**绝不能**往用户真实的桌面/开始菜单/注册表写东西 —— 会留垃圾，
+    而且清理起来很麻烦（真踩过：测试在真实开始菜单里留了 `Lyric2TTML.lnk`）。
+    """
+    return any(a in ("--e2e", "--no-shortcuts") for a in sys.argv)
+
+
 def payload_zip() -> str:
     """安装包里**自带的主程序载荷**（一个 zip）。
 
@@ -571,7 +580,13 @@ class Installer:
         self._app_ready = True
         # 装完顺手做两件用户会期待的事：桌面快捷方式 + 卸载程序
         self.set_sub("正在创建快捷方式…")
-        self.make_shortcut()
+        # ⚠️ `--e2e` / `--no-shortcuts` 时**不建真实快捷方式**：
+        # 端到端自测跑在开发机上，往**真实**桌面/开始菜单写东西会留垃圾，
+        # 而且很难清理（真踩过：测试在真实开始菜单里留了 Lyric2TTML.lnk）。
+        if e2e_mode():
+            self.say("[跳过] 自测模式：不创建快捷方式与注册表项。")
+        else:
+            self.make_shortcut()
         self.write_uninstaller()
         return True
 
