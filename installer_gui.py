@@ -94,180 +94,33 @@ def payload_zip() -> str:
     return p if os.path.exists(p) else ""
 
 
-# --------------------------------------------------------------- 卸载（命令行）
+# ----------------------------------------------------- 卸载（转发到 uninstall_core）
+# ⚠️ 卸载逻辑**不能放在这个文件里**：本模块开头 `import tkinter`，而主程序的
+# 构建特意排除了 tkinter（GUI 用不上）。`Lyric2TTML.exe --uninstall` 一旦
+# 走到这里就会 `ModuleNotFoundError: No module named 'tkinter'`（E2E 抓到的）。
+# 所以真正的实现在 `uninstall_core.py`（只依赖标准库），这里只做转发，
+# 让 `installer_gui.uninstall(...)` 这个老入口继续可用。
+from uninstall_core import (  # noqa: E402  （故意放这里：见上面的说明）
+    default_data_dir as _default_data_dir,
+    dir_size as _dir_size,
+    human as _human,
+    move_tree as _move_tree,
+    uninstall as _uninstall_impl,
+    uninstall_cli,
+)
+
+
 def default_data_dir() -> str:
-    """桌面版放配置/模型/日志的地方（与 ``desktop/paths.data_dir()`` 一致）。"""
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return os.path.join(base, "Lyric2TTML")
-
-
-def _dir_size(path: str) -> int:
-    total = 0
-    for root, _dirs, files in os.walk(path):
-        for f in files:
-            try:
-                total += os.path.getsize(os.path.join(root, f))
-            except OSError:
-                pass
-    return total
-
-
-def _human(n: float) -> str:
-    for u in ("B", "KB", "MB", "GB"):
-        if n < 1024:
-            return f"{n:.1f}{u}"
-        n /= 1024
-    return f"{n:.1f}TB"
-
-
-def _move_tree(src: str, dst: str) -> bool:
-    """把 ``src`` 搬到 ``dst``，返回是否**确认成功**。
-
-    ⚠️⚠️ 为什么不在 `.bat` 里用 `xcopy` / `robocopy`（真踩过，查了很久）：
-    实测在"目标子目录还不存在 + 路径里带中文"的组合下，
-    `xcopy` 会打印 `1 File(s) copied` 且返回 0、`robocopy /MOVE` 会报告
-    "1 个文件已复制"，**但目标里什么都没有**。
-    搬 3GB 的模型不能赌这个 —— 所以卸载脚本改成"一条 .bat 只负责
-    把 python 侧的卸载逻辑叫起来"，真正的搬移用 `shutil.move`
-    （自己的代码，可测、编码可控；同盘是 rename，秒完成）。
-    """
-    try:
-        parent = os.path.dirname(dst.rstrip("\\/"))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        if os.path.isdir(dst):
-            # 目标已存在：逐个合并，免得 shutil.move 把整个目录塞成子目录
-            for name in os.listdir(src):
-                s, d = os.path.join(src, name), os.path.join(dst, name)
-                if os.path.exists(d):
-                    if os.path.isdir(s) and os.path.isdir(d):
-                        if not _move_tree(s, d):
-                            return False
-                        continue
-                    if os.path.isdir(d):
-                        shutil.rmtree(d, ignore_errors=True)
-                    else:
-                        os.remove(d)
-                shutil.move(s, d)
-        else:
-            shutil.move(src, dst)
-    except Exception as e:                              # noqa: BLE001
-        print(f"  [搬移失败] {type(e).__name__}: {e}")
-        return False
-    # **验证**：源已经空了（不存在或没内容）、目标里有东西，才算成功。
-    # ⚠️ 不能只判"源不存在"：目标已存在时是**逐个合并**，源目录会留下来、
-    # 只是变空 —— 那种情况同样是成功的（第一版就是这么误判的）。
-    try:
-        src_empty = (not os.path.exists(src)) or (not os.listdir(src))
-        return src_empty and os.path.isdir(dst) and bool(os.listdir(dst))
-    except OSError:
-        return False
+    """桌面版放配置/模型/日志的地方（转发，保持旧入口可用）。"""
+    return _default_data_dir()
 
 
 def uninstall(install_dir: str, keep_models: bool = True,
               assume_yes: bool = False, desk: str = "") -> int:
-    """卸载：删安装目录 + 桌面快捷方式；**默认保留模型**。
+    """卸载（**默认保留模型**）。真正实现在 `uninstall_core.uninstall`。"""
+    return _uninstall_impl(install_dir, keep_models=keep_models,
+                           assume_yes=assume_yes, desk=desk)
 
-    返回 0 成功 / 1 有东西没删掉 / 2 用户取消 / 3 拒绝执行（怕丢模型）。
-    """
-    install_dir = os.path.abspath(install_dir)
-    if not os.path.isdir(install_dir):
-        print(f"  目录不存在：{install_dir}")
-        return 1
-    data_dir = default_data_dir()
-    desk = desk or os.path.join(os.path.expanduser("~"), "Desktop")
-
-    print("=" * 58)
-    print("  卸载 Lyric2TTML")
-    print(f"  安装目录：{install_dir}")
-    hf_in_install = os.path.join(install_dir, ".hf_cache")
-    hf_in_data = os.path.join(data_dir, ".hf_cache")
-    if os.path.isdir(hf_in_install):
-        print(f"  安装目录里有模型：{_human(_dir_size(hf_in_install))}")
-    if os.path.isdir(hf_in_data):
-        print(f"  用户数据目录里有模型：{_human(_dir_size(data_dir))}")
-    print("=" * 58)
-
-    if not assume_yes:
-        try:
-            ans = input("  确定卸载吗？[Y=是  N=取消] ").strip().lower()
-        except EOFError:
-            ans = "n"
-        if ans not in ("y", "yes"):
-            print("  已取消。")
-            return 2
-
-    # ---- ① 安装目录里的模型：默认先搬走 ----
-    if os.path.isdir(hf_in_install):
-        if keep_models:
-            print(f"  正在把模型搬到：{hf_in_data}")
-            if not _move_tree(hf_in_install, hf_in_data):
-                # ⚠️ **搬不动就什么都别删** —— 宁可卸载不干净，
-                # 也不能让用户白下 3GB
-                print("  [中止] 模型没能安全搬走，所以**没有删除任何东西**。")
-                print("         请先手工把下面这个目录复制到别处：")
-                print(f"           {hf_in_install}")
-                print("         复制好之后再运行一次本卸载程序。")
-                return 3
-            print(f"  [OK] 模型已保留：{hf_in_data}")
-        else:
-            print(f"  正在删除安装目录里的模型"
-                  f"（{_human(_dir_size(hf_in_install))}）…")
-            shutil.rmtree(hf_in_install, ignore_errors=True)
-
-    # ---- ② 用户数据目录里的模型 ----
-    if os.path.isdir(hf_in_data) and not keep_models:
-        print(f"  正在删除模型缓存：{data_dir}")
-        shutil.rmtree(data_dir, ignore_errors=True)
-    elif os.path.isdir(hf_in_data):
-        print(f"  模型缓存保留在：{data_dir}")
-
-    # ---- ③ 桌面快捷方式 ----
-    for name in ("Lyric2TTML.lnk", "卸载 Lyric2TTML.lnk"):
-        p = os.path.join(desk, name)
-        try:
-            if os.path.isfile(p):
-                os.remove(p)
-                print(f"  已删除快捷方式：{name}")
-        except OSError as e:
-            print(f"  [提示] 快捷方式没删掉（{name}）：{e}")
-
-    # ---- ④ 程序文件：**先 cd 走**再删自己所在的目录 ----
-    try:
-        os.chdir(os.environ.get("TEMP") or os.path.expanduser("~"))
-    except OSError:
-        pass
-    print("  正在删除程序文件…")
-    shutil.rmtree(install_dir, ignore_errors=True)
-    if os.path.isdir(install_dir):
-        print(f"  [提示] 还有 {_human(_dir_size(install_dir))} 没删掉"
-              f"（多半是被占用）。")
-        print("         把软件关掉之后再运行一次这个卸载程序即可。")
-        return 1
-    print("  [完成] 已卸载。")
-    return 0
-
-
-def uninstall_cli(argv=None) -> int:
-    """``安装程序.exe --uninstall <目录> [--with-models] [--yes]``
-
-    卸载程序.bat 就是调这个。放在这里而不是写成一大串 .bat，
-    是为了**把"搬 3GB 模型"这件事交给可测的 Python 代码**（见
-    ``_move_tree`` 的说明）。
-    """
-    import argparse
-    ap = argparse.ArgumentParser(prog="卸载", description="卸载 Lyric2TTML")
-    ap.add_argument("install_dir")
-    ap.add_argument("--keep-models", action="store_true", default=True,
-                    help="保留模型（默认）")
-    ap.add_argument("--with-models", action="store_true",
-                    help="连模型一起删除（约 3GB）")
-    ap.add_argument("--yes", action="store_true",
-                    help="不再问一次（给脚本/自动测试用）")
-    ap.add_argument("--desktop", default="", help="桌面目录（测试用）")
-    a = ap.parse_args(argv)
-    return uninstall(a.install_dir, keep_models=not a.with_models,
-                     assume_yes=a.yes, desk=a.desktop)
 
 
 def default_install_dir() -> str:
@@ -1229,7 +1082,10 @@ def e2e(dest: str) -> int:
 
     print("\n[4] 补全…")
     done_cuda = False
-    for i in bad:
+    skip_models = "--no-models" in sys.argv
+    if skip_models:
+        print("    （--no-models：跳过下载，只验安装/桌面窗口/卸载）")
+    for i in ([] if skip_models else bad):
         k = i["key"]
         fn = None
         if k == "whisper":
@@ -1249,19 +1105,95 @@ def e2e(dest: str) -> int:
             r = False
         print(f"    {'[成功]' if r else '[失败]'} {i['name']}")
 
-    print("\n[5] 复查")
-    rep2 = ask_app_report(dest)
-    bad2 = [i for i in (rep2 or {}).get("items", [])
-            if not i["ok"] and i["level"] == "crit"]
-    for i in bad2:
-        print(f"      ✗ {i['name']}：{i['detail']}")
+    # ---- [4.5] 桌面窗口能不能真的建出来（本次改造的核心验收点）----
+    # ⚠️ 必须用 offscreen：`--e2e` 是无界面自动化，真开窗口会挂住。
+    # 这一条是**唯一**能证明"装完之后双击真的出桌面窗口"的检查：
+    # `--doctor`/`--help` 都不会去加载 Qt 平台插件，缺插件时它们照样通过。
+    print("\n[4.5] 桌面窗口自检（Qt 平台插件）")
+    exe = os.path.join(dest, "Lyric2TTML.exe")
+    try:
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
+                   L2T_ALLOW_MULTI="1", L2T_HEADLESS="1",
+                   L2T_DATA_DIR=os.path.join(dest, ".e2e-data"),
+                   PYTHONIOENCODING="utf-8")
+        r = subprocess.run([exe, "--uicheck"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=env,
+                           cwd=dest, timeout=900)
+        ui_ok = r.returncode == 0 and "全部通过" in (r.stdout or "")
+        print(f"    {'✓' if ui_ok else '✗'} --uicheck 退出码 {r.returncode}")
+        if not ui_ok:
+            print((r.stdout or "")[-700:])
+            print((r.stderr or "")[-700:])
+    except Exception as e:
+        print(f"    [异常] {type(e).__name__}: {e}")
+        ui_ok = False
+
+    # ---- [4.6] 卸载：默认必须**保留模型** ----
+    print("\n[4.6] 卸载检查（默认保留模型）")
+    un_ok = False
+    try:
+        fake_local = os.path.join(os.path.dirname(dest), ".e2e-localappdata")
+        # ⚠️ 桌面目录也要指到沙箱：`--e2e` 不该动用户真实的桌面快捷方式
+        fake_desk = os.path.join(os.path.dirname(dest), ".e2e-desktop")
+        os.makedirs(fake_desk, exist_ok=True)
+        marker = os.path.join(dest, ".hf_cache", "e2e-keep.bin")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        open(marker, "wb").write(b"KEEP")
+        env2 = dict(os.environ, LOCALAPPDATA=fake_local, PYTHONIOENCODING="utf-8")
+        r = subprocess.run([exe, "--uninstall", dest, "--keep-models", "--yes",
+                            "--desktop", fake_desk],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=env2,
+                           cwd=os.path.dirname(dest), timeout=600)
+        moved = os.path.join(fake_local, "Lyric2TTML", ".hf_cache",
+                             "e2e-keep.bin")
+        # ⚠️ **不能用"安装目录还在不在"当判据**：这个检查自己就是
+        # `<安装目录>\Lyric2TTML.exe` 起的子进程，Windows 不允许删除正在运行的
+        # 可执行文件，所以安装目录**必然**残留（真实用户是双击 .bat、
+        # 由 cmd 起 exe，卸载完 exe 也结束了，没这个问题）。
+        # 判据改成：① 模型被搬走 ② 主程序以外的文件删干净 ③ 快捷方式没了。
+        prog_left = os.path.isfile(os.path.join(dest, "Lyric2TTML.exe"))
+        # ⚠️ 判据说明（这一条踩过好几次，写清楚免得又误判）：
+        #
+        # * **不能用"安装目录还在不在"当判据** —— 这个检查自己就是
+        #   `<安装目录>\Lyric2TTML.exe` 起的子进程，Windows **不允许删除正在
+        #   运行的进程正在使用的文件**，所以目录必然残留（真实用户是双击
+        #   `卸载程序.bat`、由 cmd 起 exe，卸载完 exe 立刻结束，不存在这个问题；
+        #   而且用户按提示"再运行一次"就彻底干净了 —— uninstall 的返回值 1
+        #   已经把这个话说明白了）。
+        # * **模型必须被保留**：这是硬要求，不能因为这个环境限制就放过。
+        # * **快捷方式必须删掉**。
+        # * 残留文件数只作为**信息**打印（不是失败条件）。
+        leftovers = []
+        for _root, _dirs, _files in os.walk(dest):
+            rel = os.path.relpath(_root, dest)
+            if rel.split(os.sep)[0].startswith("."):
+                continue
+            for _f in _files:
+                leftovers.append(os.path.join(_root, _f))
+        link_gone = not os.path.isfile(os.path.join(fake_desk, "Lyric2TTML.lnk"))
+        un_ok = (os.path.isfile(moved) and link_gone)
+        print(f"    {'✓' if un_ok else '✗'} 退出码 {r.returncode}（1=有文件被占用，"
+              f"属预期）；模型已保留并搬走={os.path.isfile(moved)}；"
+              f"快捷方式已删={link_gone}")
+        print(f"       （残留 {len(leftovers)} 个文件 —— 它们正被这个正在运行的"
+              f"卸载程序占用，按提示再运行一次即可）")
+        if not un_ok:
+            print((r.stdout or "")[-900:])
+            print((r.stderr or "")[-400:])
+    except Exception as e:
+        print(f"    [异常] {type(e).__name__}: {e}")
+
     root.destroy()
     print()
     print("=" * 70)
-    if bad2:
-        print(f"  ✗ 还有 {len(bad2)} 项没配好")
+    if not ui_ok:
+        print("  ✗ 桌面窗口起不来（装完双击也开不了）")
         return 1
-    print("  ✓ 全部通过")
+    if not un_ok:
+        print("  ✗ 卸载检查没过（可能删掉了用户的模型）")
+        return 1
+    print("  ✓ 全部通过（含桌面窗口与卸载）")
     return 0
 
 

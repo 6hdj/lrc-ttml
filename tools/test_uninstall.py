@@ -7,7 +7,7 @@
 
   1. `.bat` 里的 `xcopy` / `robocopy` 在"含中文的路径 + 目标子目录还不存在"
      时会**报成功却没搬**，随后 `rmdir /s /q 安装目录` 就把模型删了
-     —— 现在搬移在 Python 侧（`installer_gui._move_tree`），
+     —— 现在搬移在 Python 侧（`uc.move_tree`），
      并且**搬不动就什么都不删**；
   2. 卸载脚本必须**默认保留**模型（用户需求），只有明确选"删"才清。
 """
@@ -21,7 +21,8 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.chdir(HERE)
 
-import installer_gui  # noqa: E402
+import installer_gui  # noqa: E402  （生成卸载脚本用）
+import uninstall_core as uc  # noqa: E402  （卸载实现）
 
 SANDBOX = os.path.join(HERE, ".tmp", "test-uninstall")
 FAILED = []
@@ -63,7 +64,7 @@ def _run(install, desk, keep=True, yes=True):
     import subprocess
     code = (
         "import sys; sys.path.insert(0, r'%s');"
-        "import installer_gui as g;"
+        "import uninstall_core as g;"
         "sys.exit(g.uninstall(r'%s', keep_models=%r, assume_yes=%r, desk=r'%s'))"
         % (HERE, install, keep, yes, desk)
     )
@@ -128,17 +129,17 @@ def t_refuse_when_move_fails():
     install, data, desk = _setup(hf_in_install=True)
     old_local = os.environ.get("LOCALAPPDATA")
     os.environ["LOCALAPPDATA"] = os.path.join(SANDBOX, "localappdata")
-    real_move = installer_gui._move_tree
+    real_move = uc.move_tree
 
     def boom(src, dst):
         return False                                   # 模拟"搬不动"
 
-    installer_gui._move_tree = boom
+    uc.move_tree = boom
     try:
-        rc = installer_gui.uninstall(install, keep_models=True, assume_yes=True,
+        rc = uc.uninstall(install, keep_models=True, assume_yes=True,
                                      desk=desk)
     finally:
-        installer_gui._move_tree = real_move
+        uc.move_tree = real_move
         if old_local is None:
             os.environ.pop("LOCALAPPDATA", None)
         else:
@@ -156,7 +157,7 @@ def t_move_tree_verifies():
     dst = os.path.join(SANDBOX, "dst", ".hf_cache")
     os.makedirs(src, exist_ok=True)
     open(os.path.join(src, "model.bin"), "wb").write(b"M" * 128)
-    ok = installer_gui._move_tree(os.path.join(SANDBOX, "src", ".hf_cache"), dst)
+    ok = uc.move_tree(os.path.join(SANDBOX, "src", ".hf_cache"), dst)
     assert ok, "_move_tree 说没搬成功"
     assert not os.path.isdir(os.path.join(SANDBOX, "src", ".hf_cache")), \
         "源还在（没搬走）"
@@ -166,7 +167,7 @@ def t_move_tree_verifies():
     src2 = os.path.join(SANDBOX, "src2", ".hf_cache", "m2", "rev")
     os.makedirs(src2, exist_ok=True)
     open(os.path.join(src2, "model2.bin"), "wb").write(b"M" * 64)
-    ok2 = installer_gui._move_tree(os.path.join(SANDBOX, "src2", ".hf_cache"), dst)
+    ok2 = uc.move_tree(os.path.join(SANDBOX, "src2", ".hf_cache"), dst)
     assert ok2, "目标已存在时合并失败"
     assert os.path.isfile(os.path.join(dst, "m2", "rev", "model2.bin")), \
         "合并后没看到第二个模型"
