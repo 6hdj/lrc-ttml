@@ -589,6 +589,58 @@ python desktop\uicheck.py --shot out.png --page home   # 顺手截图肉眼检�
 属性断言测不出"页面空白""字看不见"这类问题 —— 本轮两个真 bug
 （`_built` 顺序、QSS 优先级）都是靠看图才发现的。
 
+### 打包版（冻结 exe）的四条铁律
+
+**① 冻结之后 `app_dir()` 和 `_source_dir()` 不是同一个地方。**
+`app_dir()` = exe 旁边（用户可见、可写）；`_source_dir()` = PyInstaller 的
+`_internal`（只读资源区，datas 都在这儿）。找 `models/`、`index.html`
+**两个都要找**，顺序：程序目录优先、然后包内部。三处必须一致：
+`desktop/paths.resource_roots()` / `doctor._resource_roots()` /
+`envcheck._resource_bases()`。不一致会出现"桌面窗口说已就绪、体检说缺失"。
+**写入永远去程序目录**（`_internal` 升级会被替换，把 3GB 模型写进去等于白下）。
+
+**② 冻结后入口必须是"可导入的模块"，不能用 `runpy.run_path`。**
+`runpy` 在 `_internal` 里找不到脚本的 `__main__`，报
+`ImportError: can't find '__main__' module in ...`，而且**进程不退出**
+（看起来就是"卡死、没反应"）。所以 `desktop/uicheck.py`、
+`desktop/selftest.py` 的入口都做成 `main(argv)` 函数，
+`desktop/app.py` 用 `from desktop import uicheck; uicheck.main(rest)`。
+
+**③ 打包版的开关要在 launcher 的白名单里。**
+`--uicheck` / `--selftest` / `--version` / `--model-cli` / `--uninstall`
+如果没列进 `_UI_FLAGS`，会被转发给 `main.py` 的 argparse →
+`error: unrecognized arguments`（退出码 2）。最典型的是 `--uicheck`：
+它的作用就是**验证 Qt 平台插件在不在**，而它自己先坏了。
+
+**④ `collect_all('PySide6')` 会把整个 Addons 拖进来**（多约 90MB 的
+QtQuick / QtQml / Qt3D* / QtWebView / QtMultimedia —— 我们一个都不用）。
+只对 `PySide6.QtCore/QtGui/QtWidgets` + `shiboken6` 做 collect_all，
+插件由 PyInstaller 的标准 Qt 钩子按真实 import 收。
+
+**验收脚本**：`python tools/accept_frozen.py <exe>` —— 对真 exe 跑
+`--version` / `--help` / `--doctor --json` / `--uicheck` / **真转换一次** /
+严格校验产物。**源码模式全绿不代表打包版能用**：本轮 8 个打包版问题
+全靠它抓到。⚠️ 里面的音频/歌词必须传**绝对路径**（脚本用 `cwd=exe 目录`
+跑子进程，相对路径会被 exe 当成"相对自己"）。
+
+### 卸载：默认保留模型，且搬移必须可验证
+
+* **默认保留**已下载的模型（约 3GB），只有明确选"删"才清。
+* ⚠️⚠️ **绝对不要把"搬 3GB"交给 `.bat` 里的 `xcopy` / `robocopy`**：
+  实测在"路径含中文 + 目标子目录还不存在"时，两者都会**报成功却没搬**
+  （`xcopy` 打印 `1 File(s) copied` 返回 0；`robocopy /MOVE` 报告
+  "1 个文件已复制"、源也消失，但 Python 侧看不到目标目录），
+  而随后 `rmdir /s /q` 就把模型删了 —— 用户白下 3GB。
+  现在的做法：`卸载程序.bat` 只是**瘦启动器**（`Lyric2TTML.exe --uninstall`），
+  搬移用 `installer_gui._move_tree`（`shutil.move` + **搬完真去验证**
+  "源已空 + 目标有东西"），**验证不过就什么都不删**。
+* ⚠️ **`.bat` 一律 CRLF + GBK**（LF 会让 cmd 吞掉下一行首字符：
+  `setlocal`→`tlocal`、`copy`→`opy`）。`启动.bat` 就中过这个招。
+* ⚠️ **测卸载不要在本进程里直接调 `uninstall()` 而不设 `LOCALAPPDATA`** ——
+  它会去动用户真实的 `%LOCALAPPDATA%\Lyric2TTML`（写测试时真踩过，
+  得手工清理）。`tools/test_uninstall.py` 里所有用例都指向沙箱。
+* 回归测试：`python tools/test_uninstall.py`（6 项，守数据安全）。
+
 ---
 
 ## 5. 背景人声/对唱的"正确形状"速查
