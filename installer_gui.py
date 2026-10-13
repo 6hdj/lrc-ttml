@@ -689,22 +689,33 @@ class Installer:
                 # 常见原因是这个文件夹当初是**以管理员权限**创建的（比如用管理员命令行
                 # mkdir、或管理员权限的程序建的）—— 属主是 Administrators，
                 # 普通用户只有读权限。真踩过（我自己用管理员权限建过一个，害用户连试好几次）。
-                self.say("  这个文件夹**已经存在，但当前用户写不进去**。")
-                self.say("  最常见的原因：它是**以管理员权限**创建/解压出来的，")
+                self.say("  这个文件夹已经存在，但当前用户写不进去。")
+                self.say("  最常见的原因：它是**以管理员权限**创建或解压出来的，")
                 self.say("  属主变成了 Administrators，普通用户只有读权限。")
                 self.say("")
                 self.say("  解决办法（任选）：")
-                self.say(f"    ① 把它整删掉，然后在资源管理器里**手动新建**一个，再选它")
+                self.say("    ① 把它整删掉，然后在资源管理器里手动新建一个，再选它")
                 self.say(f"       （要删的：{dest}）")
                 self.say("    ② 直接换一个位置，比如下面这个必然能写：")
                 self.say(f"       {default_install_dir()}")
+                self.say("    ③ 确实想装到这个位置：**关掉本窗口**，在安装程序上右键 →")
+                self.say("       「以管理员身份运行」，再选这个文件夹")
             else:
                 self.say("  这个位置建不出文件夹。")
                 self.say("")
+                # ⚠️⚠️ 必须**明确告诉用户「以管理员身份运行」**这条路（用户 2026-10-13
+                # 明确要求："不能只在界面上声称支持"）。最常见的场景就是用户在
+                # 「浏览…」里选了 `C:\\Program Files\\...` —— 那是机器级目录，
+                # 普通用户建不了。只给"换个位置"是不够的：用户想要的就是装到那。
+                # 真踩过（`tools/test_perm_denied.py` 抓到的）：这里原来只说了
+                # ①默认位置 ②手动建文件夹，**完全没提管理员** —— 想装 Program Files
+                # 的用户看完会以为"这软件不支持装到那里"。
                 self.say("  解决办法（任选）：")
-                self.say(f"    ① 用默认位置：{default_install_dir()}")
-                self.say("    ② 在资源管理器里先手动建好文件夹，再用「浏览…」选中它")
-            self.set_sub("安装位置不可写，请换一个", BAD)
+                self.say(f"    ① 用默认位置（不需要管理员）：{default_install_dir()}")
+                self.say("    ② 确实想装到这个位置：**关掉本窗口**，在安装程序上右键 →")
+                self.say("       「以管理员身份运行」，再选这个文件夹")
+                self.say("       （Program Files 这类机器级目录必须提权才能写）")
+            self.set_sub("安装位置不可写，请换一个或改用管理员运行", BAD)
             return False
         locked: list = []
         self.say(f"[安装] 正在解压到 {dest}")
@@ -1376,60 +1387,81 @@ def e2e(dest: str) -> int:
         ui_ok = False
 
     # ---- [4.6] 卸载：默认必须**保留模型** ----
-    print("\n[4.6] 卸载检查（默认保留模型）")
-    un_ok = False
-    try:
-        fake_local = os.path.join(os.path.dirname(dest), ".e2e-localappdata")
-        # ⚠️ 桌面目录也要指到沙箱：`--e2e` 不该动用户真实的桌面快捷方式
-        fake_desk = os.path.join(os.path.dirname(dest), ".e2e-desktop")
-        os.makedirs(fake_desk, exist_ok=True)
-        marker = os.path.join(dest, ".hf_cache", "e2e-keep.bin")
-        os.makedirs(os.path.dirname(marker), exist_ok=True)
-        open(marker, "wb").write(b"KEEP")
-        env2 = dict(os.environ, LOCALAPPDATA=fake_local, PYTHONIOENCODING="utf-8")
-        r = subprocess.run([exe, "--uninstall", dest, "--keep-models", "--yes",
-                            "--desktop", fake_desk],
-                           capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", env=env2,
-                           cwd=os.path.dirname(dest), timeout=600)
-        moved = os.path.join(fake_local, "Lyric2TTML", ".hf_cache",
-                             "e2e-keep.bin")
-        # ⚠️ **不能用"安装目录还在不在"当判据**：这个检查自己就是
-        # `<安装目录>\Lyric2TTML.exe` 起的子进程，Windows 不允许删除正在运行的
-        # 可执行文件，所以安装目录**必然**残留（真实用户是双击 .bat、
-        # 由 cmd 起 exe，卸载完 exe 也结束了，没这个问题）。
-        # 判据改成：① 模型被搬走 ② 主程序以外的文件删干净 ③ 快捷方式没了。
-        prog_left = os.path.isfile(os.path.join(dest, "Lyric2TTML.exe"))
-        # ⚠️ 判据说明（这一条踩过好几次，写清楚免得又误判）：
-        #
-        # * **不能用"安装目录还在不在"当判据** —— 这个检查自己就是
-        #   `<安装目录>\Lyric2TTML.exe` 起的子进程，Windows **不允许删除正在
-        #   运行的进程正在使用的文件**，所以目录必然残留（真实用户是双击
-        #   `卸载程序.bat`、由 cmd 起 exe，卸载完 exe 立刻结束，不存在这个问题；
-        #   而且用户按提示"再运行一次"就彻底干净了 —— uninstall 的返回值 1
-        #   已经把这个话说明白了）。
-        # * **模型必须被保留**：这是硬要求，不能因为这个环境限制就放过。
-        # * **快捷方式必须删掉**。
-        # * 残留文件数只作为**信息**打印（不是失败条件）。
-        leftovers = []
-        for _root, _dirs, _files in os.walk(dest):
-            rel = os.path.relpath(_root, dest)
-            if rel.split(os.sep)[0].startswith("."):
-                continue
-            for _f in _files:
-                leftovers.append(os.path.join(_root, _f))
-        link_gone = not os.path.isfile(os.path.join(fake_desk, "Lyric2TTML.lnk"))
-        un_ok = (os.path.isfile(moved) and link_gone)
-        print(f"    {'✓' if un_ok else '✗'} 退出码 {r.returncode}（1=有文件被占用，"
-              f"属预期）；模型已保留并搬走={os.path.isfile(moved)}；"
-              f"快捷方式已删={link_gone}")
-        print(f"       （残留 {len(leftovers)} 个文件 —— 它们正被这个正在运行的"
-              f"卸载程序占用，按提示再运行一次即可）")
-        if not un_ok:
-            print((r.stdout or "")[-900:])
-            print((r.stderr or "")[-400:])
-    except Exception as e:
-        print(f"    [异常] {type(e).__name__}: {e}")
+    # ⚠️ `--no-uninstall`：只安装、不自动卸载。
+    # 用来单独测"卸载/重试"这条路（否则 [4.6] 会在同进程里先卸一遍，
+    # 安装目录已经被动过，没法再验卸载行为）。
+    if "--no-uninstall" in sys.argv:
+        print("\n[4.6] 跳过卸载检查（--no-uninstall）")
+    else:
+        print("\n[4.6] 卸载检查（默认保留模型）")
+        un_ok = False
+        try:
+            fake_local = os.path.join(os.path.dirname(dest), ".e2e-localappdata")
+            # ⚠️ 桌面目录也要指到沙箱：`--e2e` 不该动用户真实的桌面快捷方式
+            fake_desk = os.path.join(os.path.dirname(dest), ".e2e-desktop")
+            os.makedirs(fake_desk, exist_ok=True)
+            marker = os.path.join(dest, ".hf_cache", "e2e-keep.bin")
+            os.makedirs(os.path.dirname(marker), exist_ok=True)
+            open(marker, "wb").write(b"KEEP")
+            env2 = dict(os.environ, LOCALAPPDATA=fake_local,
+                        PYTHONIOENCODING="utf-8")
+            r = subprocess.run([exe, "--uninstall", dest, "--keep-models", "--yes",
+                                "--desktop", fake_desk],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", env=env2,
+                               cwd=os.path.dirname(dest), timeout=600)
+            moved = os.path.join(fake_local, "Lyric2TTML", ".hf_cache",
+                                 "e2e-keep.bin")
+            # ⚠️ **不能用"安装目录还在不在"当判据**：这个检查自己就是
+            # `<安装目录>\Lyric2TTML.exe` 起的子进程，Windows 不允许删除正在运行的
+            # 可执行文件，所以安装目录**必然**残留（真实用户是双击 .bat、
+            # 由 cmd 起 exe，卸载完 exe 也结束了，没这个问题）。
+            # 判据改成：① 模型被搬走 ② 主程序以外的文件删干净 ③ 快捷方式没了。
+            prog_left = os.path.isfile(os.path.join(dest, "Lyric2TTML.exe"))
+            # ⚠️ 判据说明（这一条踩过好几次，写清楚免得又误判）：
+            #
+            # * **不能用"安装目录还在不在"当判据** —— 这个检查自己就是
+            #   `<安装目录>\Lyric2TTML.exe` 起的子进程，Windows **不允许删除正在
+            #   运行的进程正在使用的文件**，所以目录必然残留（真实用户是双击
+            #   `卸载程序.bat`、由 cmd 起 exe，卸载完 exe 立刻结束，不存在这个问题；
+            #   而且用户按提示"再运行一次"就彻底干净了 —— uninstall 的返回值 1
+            #   已经把这个话说明白了）。
+            # * **模型必须被保留**：这是硬要求，不能因为这个环境限制就放过。
+            # * **快捷方式必须删掉**。
+            # * 残留文件数只作为**信息**打印（不是失败条件）。
+            leftovers = []
+            for _root, _dirs, _files in os.walk(dest):
+                rel = os.path.relpath(_root, dest)
+                if rel.split(os.sep)[0].startswith("."):
+                    continue
+                for _f in _files:
+                    leftovers.append(os.path.join(_root, _f))
+            link_gone = not os.path.isfile(os.path.join(fake_desk, "Lyric2TTML.lnk"))
+            un_ok = (os.path.isfile(moved) and link_gone)
+            print(f"    {'✓' if un_ok else '✗'} 退出码 {r.returncode}（1=有文件被占用，"
+                  f"属预期）；模型已保留并搬走={os.path.isfile(moved)}；"
+                  f"快捷方式已删={link_gone}")
+            print(f"       （残留 {len(leftovers)} 个文件 —— 卸载进程自己就是"
+                  f"<安装目录>\\Lyric2TTML.exe，Windows 删不掉正在运行的程序；"
+                  f"已交给退出后运行的清理助手收尾）")
+            # ⚠️⚠️ 这里曾经写"按提示再运行一次即可" —— **那句话是错的**，
+            # 而且从没人验证过。实测（`tools/test_uninstall_real.py`）：
+            # 老的卸载实现会把 `_internal/` 一起删掉（384 → 32 个文件，
+            # 连 `encodings` 都没了），而冻结版 exe 必须靠它才能启动 ⇒
+            # 用户"再运行一次"只会得到 `Failed to import encodings module`。
+            # 现在改成**当场验证**"还能不能重试"：运行库还在不在。
+            enc = os.path.join(dest, "_internal", "encodings")
+            enc_ok = os.path.isdir(enc)
+            print(f"       `_internal/encodings` 完好={enc_ok}"
+                  f"（True 才说明用户还能再运行一次卸载）")
+            if not enc_ok:
+                print("       ⚠ 运行库被删 ⇒ exe 无法再启动，卸载**无法重试**")
+                un_ok = False
+            if not un_ok:
+                print((r.stdout or "")[-900:])
+                print((r.stderr or "")[-400:])
+        except Exception as e:
+            print(f"    [异常] {type(e).__name__}: {e}")
 
     root.destroy()
     print()

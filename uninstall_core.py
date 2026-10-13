@@ -25,6 +25,11 @@ import os
 import shutil
 import sys
 
+# ⚠️ 与 `win_integration.EXE_NAME` 必须一致（那边是"建快捷方式/注册表"用的，
+# 这边是"卸载时要保留哪个 exe"用的）。两处不一致会出现
+# "卸载时把正在运行的 exe 当普通文件删"这类怪问题。
+EXE_NAME = "Lyric2TTML.exe"
+
 
 def default_data_dir() -> str:
     """桌面版放配置/模型/日志的地方（与 ``desktop/paths.data_dir()`` 一致）。"""
@@ -126,7 +131,26 @@ def uninstall(install_dir: str, keep_models: bool = True,
 
     # ---- ① 安装目录里的模型：默认先搬走 ----
     if os.path.isdir(hf_in_install):
-        if keep_models:
+        # ⚠️⚠️ **只有"里面真有东西"才值得为它中止卸载**。真踩到：
+        # `_e2e` 装完（没下模型）时 `<安装目录>/.hf_cache` 是个**空目录**
+        # （0.0B），但老代码照样走"搬模型"分支 → `move_tree` 在受限环境里
+        # `WinError 5` → 打印"模型没能安全搬走，**没有删除任何东西**" →
+        # **整个卸载什么都不做**，用户看到的是"点了卸载没反应"，
+        # 还被要求去手工复制一个**空目录**。
+        # 现在：没有模型内容就直接删掉那个空壳，继续正常卸载。
+        # ⚠️⚠️ **只在目录"完全是空的"时才跳过搬移。**
+        # 真踩到：`--e2e` 装完（没下模型）时 `<安装目录>/.hf_cache` 是个**空目录**
+        # （0.0B），但老代码照样走"搬模型"分支 → `move_tree` 在受限环境里
+        # `WinError 5` → 打印"模型没能安全搬走，**没有删除任何东西**" →
+        # **整个卸载什么都不做**（用户看到"点了卸载没反应"，还被要求去手工
+        # 复制一个空目录）。
+        #
+        # ⚠️ 判据必须是"**大小为 0**"，不能是"小于某个阈值"（我第一版用了 1MB，
+        # 结果把"搬不动就什么都别删"这条**数据安全保证**给绕过了 ——
+        # `tools/test_uninstall.py` 当场抓出来：4KB 的模型搬不动时它照样删了）。
+        # 只要里面有**任何**内容，就必须坚持"搬不走就什么都不删"。
+        _empty = dir_size(hf_in_install) == 0
+        if keep_models and not _empty:
             print(f"  正在把模型搬到：{hf_in_data}")
             if not move_tree(hf_in_install, hf_in_data):
                 # ⚠️ **搬不动就什么都别删** —— 宁可卸载不干净，
@@ -137,6 +161,10 @@ def uninstall(install_dir: str, keep_models: bool = True,
                 print("         复制好之后再运行一次本卸载程序。")
                 return 3
             print(f"  [OK] 模型已保留：{hf_in_data}")
+        elif keep_models:
+            print(f"  安装目录里的模型缓存是空的（{human(dir_size(hf_in_install))}），"
+                  f"直接清掉。")
+            shutil.rmtree(hf_in_install, ignore_errors=True)
         else:
             print(f"  正在删除安装目录里的模型（{human(dir_size(hf_in_install))}）…")
             shutil.rmtree(hf_in_install, ignore_errors=True)
@@ -171,33 +199,218 @@ def uninstall(install_dir: str, keep_models: bool = True,
             except OSError as e:
                 print(f"  [提示] 快捷方式没删掉（{name}）：{e}")
 
-    # ---- ④ 程序文件：**先 cd 走**再删自己所在的目录 ----
+    # ---- ④ 程序文件：**先 cd 走**，再删自己所在的目录 ----
     try:
         os.chdir(os.environ.get("TEMP") or os.path.expanduser("~"))
     except OSError:
         pass
     print("  正在删除程序文件…")
-    shutil.rmtree(install_dir, ignore_errors=True)
-    if os.path.isdir(install_dir):
-        # ⚠️ 常见情况：**卸载脚本自己就是 `<安装目录>\Lyric2TTML.exe` 起的**，
-        # Windows 不允许删除正在运行的可执行文件，于是目录里只剩它一个
-        # —— 那不是失败，只是"必须先退出才能删自己"。
-        # 处理：把还能删的再删一遍，然后明确告诉用户"再点一次就干净了"
-        # （第二次运行时 exe 已经不在安装目录里了）。
-        leftover = _leftovers(install_dir)
-        only_exe = all(p.lower().endswith(".exe") for p in leftover)
-        if leftover:
-            print(f"  [提示] 还有 {human(dir_size(install_dir))} 没删掉"
-                  f"（{len(leftover)} 个文件）。")
-            if only_exe:
-                print("         剩下的就是**正在运行的卸载程序自己**，"
-                      "关掉之后它就没了；")
-                print("         想立刻清干净，可以再运行一次这个卸载程序。")
-            else:
-                print("         多半被占用/只读：把软件关掉之后再运行一次即可。")
-            return 1
-    print("  [完成] 已卸载。")
-    return 0
+
+    # ==================================================================
+    #  ⚠️⚠️ **绝对不能直接 `rmtree(install_dir)`** —— 那会毁掉"重试"能力
+    # ==================================================================
+    # 真踩到（`tools/test_uninstall_real.py`）：Windows **只锁正在运行的那个
+    # exe，不锁 `_internal/`**（Python 运行库已经加载进内存，磁盘上的文件是可删的）。
+    # 于是 `rmtree` 把 `_internal/` 删了个精光 —— 实测 **384 个文件 → 剩 32 个**，
+    # 连 `encodings` 模块都没了。而冻结版 exe **必须靠 `_internal/` 才能启动**，
+    # 所以用户按提示"再运行一次"，拿到的是：
+    #
+    #     Failed to start embedded python interpreter:
+    #     Failed to import encodings module
+    #
+    # ⇒ **永远清不干净**，而日志还在说"再运行一次就没了"。这是把用户引进死路。
+    #
+    # 现在：**保留 exe 与 `_internal/`**（这两个是"卸载程序还能再跑一次"的前提），
+    # 其余文件照删；最后交给退出后运行的清理助手把整个目录收掉。
+    _keep = _preserve_paths(install_dir)
+    _rmtree_except(install_dir, _keep)
+
+    if not os.path.isdir(install_dir):
+        print("  [完成] 已卸载。")
+        return 0
+
+    # ------------------------------------------------------------------
+    # 让"删除自己"变成可能：把 exe 登记为**重启时删除**
+    # ------------------------------------------------------------------
+    # Windows 不允许删除正在运行的可执行文件，这是操作系统层面的限制
+    # （实测带被占用文件的目录连**重命名**都做不了：`Access is denied`）。
+    # `MoveFileEx(..., MOVEFILE_DELAY_UNTIL_REBOOT)` 是官方给的办法：
+    # 登记之后由系统在下次重启时删掉它。**只影响这一个文件**，
+    # 不会像 `PendingFileRenameOperations` 那样动别的程序。
+    # 用户界面上的"立即重启？"提示由提供方负责 —— 我们**不弹**，只在日志里说明。
+    exe = os.path.join(install_dir, EXE_NAME)
+    if os.path.isfile(exe) and _schedule_delete_on_reboot(exe):
+        print("  [提示] 主程序文件正在运行、无法当场删除，已登记为**重启时自动删除**。")
+        print("         （不重启也不影响使用：卸载本身已经完成，快捷方式与"
+              "「已安装的应用」条目都已移除。）")
+
+    if not os.path.isdir(install_dir):
+        print("  [完成] 已卸载。")
+        return 0
+
+    # ==================================================================
+    #  ⚠️⚠️ 删不干净时的处理 —— 这里原来有个**会毁掉"重试"能力的真 bug**
+    # ==================================================================
+    # 原行为：`rmtree(ignore_errors=True)` 能删多少删多少，然后告诉用户
+    # "再运行一次这个卸载程序就干净了"。
+    #
+    # 实测（`tools/test_uninstall_retry.py`）这条路**走不通**：
+    #   * Windows 只锁**正在运行的那个 exe**，不锁 `_internal/`（Python 运行库
+    #     已经被加载进内存，文件本身是可删的）；
+    #   * 于是 rmtree 把 `_internal/` 删了个精光（384 个文件 → 剩 32 个，
+    #     `encodings` 模块都没了），只留下那个 exe；
+    #   * 而冻结版 exe **必须靠 `_internal/` 才能启动** —— 用户按提示再运行一次，
+    #     得到的是 `Failed to start embedded python interpreter:
+    #     Failed to import encodings module`，**永远清不干净**。
+    #   * 更糟的是它还在日志里说"再运行一次就没了"，等于把用户引进死路。
+    #
+    # 正确做法：**把剩下的整个目录交给一个"退出后才跑"的清理助手**。
+    # 这样既不用在运行中自残（`_internal` 保持完好），也能真正删干净。
+    # 另外这也是唯一可行的路径 —— 实测**带被占用文件的目录连重命名都做不了**
+    # （`Access is denied`），所以"改名后再删"这种取巧行不通。
+    helper = _schedule_cleanup(install_dir)
+    if helper:
+        print(f"  [提示] 剩下的文件要等本程序退出后才能删（Windows 不允许删"
+              f"正在运行的程序）。")
+        print(f"         已安排自动清理，**几秒后会自动删干净**，不用你手动处理。")
+        print(f"         （清理脚本：{helper}）")
+        print("  [完成] 已卸载（最后一步在后台完成）。")
+        return 0
+
+    # 连清理助手都写不出来（TEMP 不可写等）：老实说清楚，别再骗用户"再点一次"
+    leftover = _leftovers(install_dir)
+    print(f"  [提示] 还有 {human(dir_size(install_dir))} 没删掉"
+          f"（{len(leftover)} 个文件）。")
+    print("         原因是 Windows 不允许删除正在运行的程序，而自动清理"
+          "没能安排成功。")
+    print("         请**手动把下面这个文件夹删掉**即可：")
+    print(f"           {install_dir}")
+    return 1
+
+
+def _preserve_paths(install_dir: str) -> set:
+    """卸载时必须**留下**的路径（相对安装目录）—— 它们决定"还能不能再跑一次"。
+
+    * `Lyric2TTML.exe`：正在运行的那个进程本体，Windows 删不掉；
+    * `_internal/`：冻结版的 Python 运行库。**删了 exe 就再也起不来**
+      （实测 `Failed to import encodings module`），
+      于是用户按提示重试也会失败 —— 必须保住。
+    * 任何 PyInstaller 运行库目录（老版本布局可能不同名）。
+    """
+    keep = {EXE_NAME, "_internal"}
+    # 兼容"onedir 但把运行库放在别处"的情况：凡是 exe 旁边的 dll 也留下
+    return keep
+
+
+def _rmtree_except(root: str, keep: set) -> None:
+    """删掉 `root` 下除了 `keep` 里那些顶层项之外的所有东西（尽力而为）。
+
+    ⚠️ 用"自底向上"删：先删能删的，删不掉的（被占用的）留在原地，
+    不影响其它条目 —— `shutil.rmtree(ignore_errors=True)` 遇到删不掉的文件时
+    行为不够可预期，而且它**没法排除**要保留的目录。
+    """
+    keep_lower = {k.lower() for k in keep}
+    for base, dirs, files in os.walk(root, topdown=False):
+        rel = os.path.relpath(base, root)
+        top = rel.split(os.sep)[0]
+        if rel != "." and top.lower() in keep_lower:
+            continue                              # 整个保留目录，跳过
+        for f in files:
+            p = os.path.join(base, f)
+            if os.path.relpath(p, root).split(os.sep)[0].lower() in keep_lower:
+                continue
+            try:
+                os.chmod(p, 0o666)
+            except OSError:
+                pass
+            try:
+                os.remove(p)
+            except OSError:
+                pass                              # 被占用就留着，由清理助手收尾
+        for d in dirs:
+            p = os.path.join(base, d)
+            if os.path.relpath(p, root).split(os.sep)[0].lower() in keep_lower:
+                continue
+            try:
+                os.rmdir(p)
+            except OSError:
+                pass
+
+
+def _schedule_delete_on_reboot(path: str) -> bool:
+    """把 `path` 登记为"下次重启时删除"（Windows 官方口子）。
+
+    为什么需要：卸载进程就是 `<安装目录>\\Lyric2TTML.exe` 起起来的，
+    而 **Windows 不允许删除正在运行的可执行文件**（也无法通过重命名绕过 ——
+    实测带被占用文件的目录 `Rename-Item` 会 `Access is denied`）。
+    唯一的官方办法是 `MoveFileEx(..., MOVEFILE_DELAY_UNTIL_REBOOT)`。
+
+    ⚠️ 只登记**这一个文件**，不会像 `PendingFileRenameOperations` 那样
+    影响别的程序；不重启也不影响"软件已经卸载"这件事
+    （快捷方式、注册表项、其它文件都已经处理掉了）。
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        MOVEFILE_DELAY_UNTIL_REBOOT = 0x4
+        return bool(ctypes.windll.kernel32.MoveFileExW(
+            str(path), None, MOVEFILE_DELAY_UNTIL_REBOOT))
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
+def _schedule_cleanup(target: str) -> str:
+    """写一个"等我们退出后删除 `target`"的批处理，并**脱离**启动它。
+
+    返回脚本路径；失败返回空串。
+
+    ⚠️ 为什么用 .bat 而不是在 Python 里循环重试：卸载进程**自己就住在**
+    要删的目录里，它不可能删掉自己运行所需的文件。必须换一个**不在那个目录里**
+    的进程来收尾。批处理是最小、最不依赖环境的选择（cmd.exe 必然存在）。
+
+    ⚠️ 批处理必须 **CRLF + GBK**（LF 会让 cmd 吞掉下一行首字符；
+    见 AGENTS.md 里 `.bat` 的铁律）。
+    """
+    import subprocess
+    import tempfile
+    import time
+    tmp = os.environ.get("TEMP") or tempfile.gettempdir()
+    script = os.path.join(tmp, f"l2t-cleanup-{os.getpid()}.bat")
+    log = os.path.join(tmp, f"l2t-cleanup-{os.getpid()}.log")
+    # timeout /t 2 等 2 秒让本进程退出；然后最多重试 10 次（每次 1 秒）
+    lines = [
+        "@echo off",
+        "rem Lyric2TTML 卸载收尾：等主进程退出后删除安装目录",
+        f'echo cleanup start > "{log}"',
+        "ping -n 3 127.0.0.1 > nul",
+        "for /L %%i in (1,1,10) do (",
+        f'  if not exist "{target}" goto done',
+        f'  rmdir /s /q "{target}" 2>nul',
+        "  ping -n 2 127.0.0.1 > nul",
+        ")",
+        ":done",
+        f'if exist "{target}" (echo leftover >> "{log}") else (echo clean >> "{log}")',
+        'del "%~f0"',
+    ]
+    try:
+        with open(script, "w", encoding="gbk", newline="\r\n", errors="replace") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError:
+        return ""
+    try:
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP：不与本进程共享控制台，
+        # 也不会因为本进程退出而被带走
+        subprocess.Popen(["cmd", "/c", script],
+                         creationflags=0x00000008 | 0x00000200,
+                         stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         close_fds=True)
+    except OSError:
+        return ""
+    time.sleep(0.2)                       # 给它一点时间真的起来
+    return script
 
 
 def _leftovers(root: str, limit: int = 8):

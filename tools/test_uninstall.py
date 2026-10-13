@@ -82,6 +82,22 @@ def _run(install, desk, keep=True, yes=True):
     return r.returncode, (r.stdout or b"").decode("utf-8", "replace")
 
 
+def _scheduled_cleanup() -> bool:
+    """卸载是否**安排了退出后运行的清理助手**（延迟清理）。
+
+    卸载进程自己住在安装目录里，Windows 不允许它删掉自己正在用的文件，
+    所以最后一步交给 TEMP 下的 `l2t-cleanup-*.bat`（退出后执行）。
+    测试里用"TEMP 下有没有这个脚本"当判据。
+    """
+    # ⚠️ 卸载跑在**子进程**里、且 `_run` 没有改 TEMP，所以脚本会写进
+    # 当前进程的 TEMP —— 这里读的就是同一个目录。
+    tmp = os.environ.get("TEMP") or os.environ.get("TMP") or ""
+    if not tmp or not os.path.isdir(tmp):
+        return False
+    return any(f.startswith("l2t-cleanup-") and f.endswith(".bat")
+               for f in os.listdir(tmp))
+
+
 def _models_under(root):
     out = []
     for a, _d, fs in os.walk(root):
@@ -98,7 +114,13 @@ def t_keep_models_from_install():
     install, data, desk = _setup(hf_in_install=True)
     rc, out = _run(install, desk, keep=True)
     assert rc == 0, f"退出码 {rc}\n{out}"
-    assert not os.path.isdir(install), "安装目录没删掉"
+    # ⚠️ 卸载改成"延迟清理"之后，返回时目录**还在**（要留 exe 与 _internal/
+    # 给清理助手收尾），所以不能再用"目录立刻消失"当判据。
+    # 改验：程序目录里**已经有内容被删掉** + **安排了清理助手**。
+    assert _scheduled_cleanup(), "没有安排清理助手（目录会永远留着）"
+    if os.path.isdir(install):
+        assert not os.path.isdir(os.path.join(install, "outputs")), \
+            "程序文件一个都没删（卸载没生效）"
     found = _models_under(SANDBOX)
     assert found, "模型被删了！这会让用户白下 3GB"
     assert any(os.path.abspath(p).startswith(os.path.abspath(data))
@@ -112,7 +134,13 @@ def t_keep_models_already_in_data():
     install, data, desk = _setup(hf_in_install=False, hf_in_data=True)
     rc, out = _run(install, desk, keep=True)
     assert rc == 0, f"退出码 {rc}\n{out}"
-    assert not os.path.isdir(install), "安装目录没删掉"
+    # ⚠️ 卸载改成"延迟清理"之后，返回时目录**还在**（要留 exe 与 _internal/
+    # 给清理助手收尾），所以不能再用"目录立刻消失"当判据。
+    # 改验：程序目录里**已经有内容被删掉** + **安排了清理助手**。
+    assert _scheduled_cleanup(), "没有安排清理助手（目录会永远留着）"
+    if os.path.isdir(install):
+        assert not os.path.isdir(os.path.join(install, "outputs")), \
+            "程序文件一个都没删（卸载没生效）"
     found = _models_under(SANDBOX)
     assert found and all(os.path.abspath(p).startswith(os.path.abspath(data))
                          for p in found), f"数据目录里的模型被动了：{found}"
@@ -123,7 +151,13 @@ def t_delete_models_when_asked():
     install, data, desk = _setup(hf_in_install=True, hf_in_data=True)
     rc, out = _run(install, desk, keep=False)
     assert rc == 0, f"退出码 {rc}\n{out}"
-    assert not os.path.isdir(install), "安装目录没删掉"
+    # ⚠️ 卸载改成"延迟清理"之后，返回时目录**还在**（要留 exe 与 _internal/
+    # 给清理助手收尾），所以不能再用"目录立刻消失"当判据。
+    # 改验：程序目录里**已经有内容被删掉** + **安排了清理助手**。
+    assert _scheduled_cleanup(), "没有安排清理助手（目录会永远留着）"
+    if os.path.isdir(install):
+        assert not os.path.isdir(os.path.join(install, "outputs")), \
+            "程序文件一个都没删（卸载没生效）"
     assert not _models_under(SANDBOX), "选了删除却还有模型残留"
 
 
