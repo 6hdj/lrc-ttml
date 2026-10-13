@@ -60,13 +60,21 @@ def _setup(hf_in_install=True, hf_in_data=False, model_bytes=4096):
 
 
 def _run(install, desk, keep=True, yes=True):
-    """在**子进程**里跑卸载（避免它 os.chdir 影响本测试进程）。"""
+    """在**子进程**里跑卸载（避免它 os.chdir 影响本测试进程）。
+
+    ⚠️⚠️ **`desk` 与 `programs` 都必须注入沙箱路径**（真踩过）：
+    不传 `programs` 的话，`win_integration.integrate_remove()` 会去删
+    **用户真实的开始菜单项**；不传 `desk` 同理。测试绝不能碰真实系统位置。
+    """
     import subprocess
+    programs = os.path.join(SANDBOX, "Programs")
+    os.makedirs(programs, exist_ok=True)
     code = (
         "import sys; sys.path.insert(0, r'%s');"
         "import uninstall_core as g;"
-        "sys.exit(g.uninstall(r'%s', keep_models=%r, assume_yes=%r, desk=r'%s'))"
-        % (HERE, install, keep, yes, desk)
+        "sys.exit(g.uninstall(r'%s', keep_models=%r, assume_yes=%r, "
+        "desk=r'%s', programs=r'%s'))"
+        % (HERE, install, keep, yes, desk, programs)
     )
     env = dict(os.environ, LOCALAPPDATA=os.path.join(SANDBOX, "localappdata"))
     r = subprocess.run([sys.executable, "-c", code], capture_output=True,

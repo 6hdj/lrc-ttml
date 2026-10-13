@@ -87,10 +87,15 @@ def move_tree(src: str, dst: str) -> bool:
 
 
 def uninstall(install_dir: str, keep_models: bool = True,
-              assume_yes: bool = False, desk: str = "") -> int:
-    """删安装目录 + 桌面快捷方式；**默认保留模型**。
+              assume_yes: bool = False, desk: str = "",
+              programs: str = "") -> int:
+    """删安装目录 + 快捷方式 + 卸载注册表项；**默认保留模型**。
 
     返回 0 成功 / 1 有东西没删掉 / 2 用户取消 / 3 拒绝执行（怕丢模型）。
+
+    ⚠️ `desk` / `programs` 是**测试注入点**：不传就会落到**用户真实的
+    桌面与开始菜单**（真踩过：测试跑完在真实开始菜单里留了东西）。
+    自测请一律传沙箱路径，见 `tools/test_uninstall.py`。
     """
     install_dir = os.path.abspath(install_dir)
     if not os.path.isdir(install_dir):
@@ -143,15 +148,28 @@ def uninstall(install_dir: str, keep_models: bool = True,
     elif os.path.isdir(hf_in_data):
         print(f"  模型缓存保留在：{data_dir}")
 
-    # ---- ③ 桌面快捷方式 ----
-    for name in ("Lyric2TTML.lnk", "卸载 Lyric2TTML.lnk"):
-        p = os.path.join(desk, name)
-        try:
-            if os.path.isfile(p):
-                os.remove(p)
-                print(f"  已删除快捷方式：{name}")
-        except OSError as e:
-            print(f"  [提示] 快捷方式没删掉（{name}）：{e}")
+    # ---- ③ 桌面 / 开始菜单快捷方式 + 卸载注册表项 ----
+    # ⚠️⚠️ **必须与安装用同一份逻辑**（`win_integration`），否则必然漂移：
+    # 安装时写进去的开始菜单项和注册表项，卸载时漏删就成了
+    # "设置里留一个删不掉的条目 + 桌面留一个死链接"，用户会认定没卸干净。
+    _integrated = False
+    try:
+        import win_integration
+        win_integration.integrate_remove(install_dir, desk=desk,
+                                         programs=programs)
+        _integrated = True
+    except Exception as e:                              # noqa: BLE001
+        print(f"  [提示] 外壳集成清理出错（继续卸载）：{type(e).__name__}: {e}")
+    if not _integrated:
+        # 退路：至少把桌面快捷方式删掉，别让小错挡住卸载
+        for name in ("Lyric2TTML.lnk", "卸载 Lyric2TTML.lnk"):
+            p = os.path.join(desk, name)
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+                    print(f"  已删除快捷方式：{name}")
+            except OSError as e:
+                print(f"  [提示] 快捷方式没删掉（{name}）：{e}")
 
     # ---- ④ 程序文件：**先 cd 走**再删自己所在的目录 ----
     try:

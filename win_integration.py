@@ -65,19 +65,54 @@ def _run_ps(script: str, timeout: int = 60) -> tuple:
 def start_menu_dir(programs: str = "") -> str:
     """开始菜单"程序"目录。
 
-    默认从 `%APPDATA%` 推，**不调 shell API**（避免依赖 + 便于测试注入）。
+    优先问 Windows（`CSIDL_PROGRAMS`）—— 和桌面一样，它也可能被重定向；
+    问不到才用 `%APPDATA%` 拼。
     """
     if programs:
         return programs
+    p = _shell_folder(2)              # CSIDL_PROGRAMS
+    if p and os.path.isdir(p):
+        return p
     appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
     return os.path.join(appdata, "Microsoft", "Windows", "Start Menu",
                         "Programs")
 
 
 def desktop_dir() -> str:
-    """桌面目录（用户自己的，不是 Public）。"""
+    """桌面目录（用户自己的）。
+
+    ⚠️⚠️ **不能用 `%USERPROFILE%\\Desktop` 拼**（真踩过）：桌面是可以被
+    重定向/改名的（OneDrive 备份、企业重定向、用户手动改位置），
+    本机就是 `E:\\HXJ\\桌面` —— 拼出来的路径指向一个**根本不存在的目录**，
+    于是"快捷方式建成功了"却出现在用户看不到的地方。
+
+    正确做法是问 Windows 要（`SHGetFolderPathW`，纯 ctypes、不引第三方库）；
+    失败才退回 `%USERPROFILE%\\Desktop`。
+    """
+    p = _shell_folder(0)              # CSIDL_DESKTOPDIRECTORY
+    if p and os.path.isdir(p):
+        return p
     return os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"),
                         "Desktop")
+
+
+def _shell_folder(csidl: int) -> str:
+    """用 Shell API 取标准文件夹（不依赖第三方库）。
+
+    `CSIDL_PERSONAL=5`、`CSIDL_DESKTOPDIRECTORY=0x10`、
+    `CSIDL_PROGRAMS=2`（开始菜单\\程序）。
+    """
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        # SHGetFolderPathW(hwnd, csidl, token, flags, path)；0x0000 = 默认
+        if ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf) == 0:
+            return buf.value or ""
+    except Exception:                                   # noqa: BLE001
+        pass
+    return ""
 
 
 def make_shortcut(lnk: str, target: str, workdir: str = "",

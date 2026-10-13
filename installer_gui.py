@@ -597,48 +597,51 @@ class Installer:
         self.path_var.set(d)
 
     # ------------------------------------------------- 快捷方式 / 卸载程序
-    def make_shortcut(self) -> None:
-        """在桌面建快捷方式。
+    def make_shortcut(self, desktop: bool = False) -> None:
+        """建立外壳集成：开始菜单（**总是**）＋ 桌面（**用户勾了才建**）＋ 卸载注册表项。
 
-        ⚠️ 用 PowerShell 的 WScript.Shell，不引第三方库。
-        `.lnk` 指向 `启动.bat`（用户双击能直接起服务并打开浏览器）。
+        ⚠️ 改造前的三个问题（都是"不像正式软件"的直接原因）：
+        1. 快捷方式指向 **`启动.bat`** —— 点开先弹黑窗，用户看到的还是"批处理"。
+           现在指向 **`Lyric2TTML.exe` 本体**（spec 里已改 `hide_console`，无黑窗）。
+        2. **没有开始菜单项** —— 装完只能在桌面找，卸载后更找不到。
+           现在按 Windows 规范建 `开始菜单\\程序\\Lyric2TTML.lnk`。
+        3. **没写卸载注册表项** —— Windows 设置里看不到这个软件。
+           现在写 HKCU（普通用户可写、**不需要管理员**）。
+
+        ⚠️ 逻辑都在 `win_integration` 里，**卸载走同一个模块** ——
+        分成两份写必然漂移，最后变成"设置里留一个删不掉的条目"。
         """
-        desk = os.path.join(os.path.expanduser("~"), "Desktop")
-        if not os.path.isdir(desk):
-            try:
-                import ctypes
-                from ctypes import wintypes
-                buf = ctypes.create_unicode_buffer(260)
-                ctypes.windll.shell32.SHGetFolderPathW(None, 0, None, 0, buf)
-                d2 = buf.value
-                if d2:
-                    desk = d2
-            except Exception:
-                pass
-        if not os.path.isdir(desk):
-            self.say("[跳过] 找不到桌面目录，未建快捷方式。")
-            return
-        lnk = os.path.join(desk, "Lyric2TTML.lnk")
-        target = os.path.join(self.install_dir, "启动.bat")
-        exe = os.path.join(self.install_dir, "Lyric2TTML.exe")
-        if not os.path.exists(target) and os.path.exists(exe):
-            target = exe
-        ps = (
-            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%s');"
-            "$s.TargetPath='%s';$s.WorkingDirectory='%s';"
-            "$s.IconLocation='%s';$s.Description='歌词转 Apple Music / AMLL 逐字 TTML';"
-            "$s.Save()" % (lnk, target, self.install_dir,
-                           os.path.join(self.install_dir, "Lyric2TTML.exe"))
-        )
         try:
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                           timeout=60, capture_output=True)
-            if os.path.exists(lnk):
-                self.say(f"[完成] 桌面快捷方式：{lnk}")
-            else:
-                self.say("[提示] 快捷方式没建成功，可以手动把 启动.bat 发到桌面。")
-        except Exception as e:
-            self.say(f"[提示] 建快捷方式失败：{type(e).__name__}")
+            import win_integration
+        except ImportError:
+            self.say("[提示] 找不到 win_integration，跳过外壳集成。")
+            return
+        exe = os.path.join(self.install_dir, "Lyric2TTML.exe")
+        size_kb = 0
+        try:
+            total = 0
+            for root, _d, files in os.walk(self.install_dir):
+                for f in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, f))
+                    except OSError:
+                        pass
+            size_kb = total // 1024
+        except OSError:
+            pass
+        try:
+            from desktop import __version__ as _v
+            version = str(_v)
+        except Exception:                               # noqa: BLE001
+            version = "1.1.0"
+        res = win_integration.integrate(
+            self.install_dir, version,
+            desktop=desktop or getattr(self, "want_desktop", False),
+            start_menu=True, size_kb=size_kb,
+            log=lambda m: self.say(m))
+        if res.get("errors"):
+            for e in res["errors"]:
+                self.say(f"  [提示] {e}")
 
     def write_uninstaller(self) -> None:
         """写一个能"一键卸载"的 `卸载程序.bat`。
