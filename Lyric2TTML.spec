@@ -82,6 +82,29 @@ if os.path.isdir(_NV):
 if os.path.isdir(os.path.join('models', 'campplus_src')):
     datas += [('models/campplus_src', 'models/campplus_src')]
     print('[models] 只打网络定义 models/campplus_src（权重由模型管理器下载）')
+
+# ⚠️⚠️ **CAM++ 的 ONNX 图要打进包**（28 MB，含结构与权重，自包含）。
+#
+# 为什么值得（2026-10-13 起）：它让「对唱分声部」**不再依赖 PyTorch** ——
+#   * 只依赖 onnxruntime（本来就在包里）；
+#   * 用户不必再下 118 MB 的 PyTorch 运行时组件；
+#   * **冻结版里一直没解决的 `import torch` 崩溃问题直接绕过去了**
+#     （实测：ONNX 与 torch 在真实音频上归一化后 max|Δ|=5.5e-04、
+#      cos=0.999995；同一套 `tools/eval_diarization.py` 跑出 **85.0%**，
+#      与历史基线逐首一致）。
+#
+# ⚠️ 但**不能因此就不打 `campplus_src` 与 `.bin`**：前者是 torch 后端的网络定义，
+# 后者是权重（torch 后端与 ONNX 导出都从它来，也是"用户确实下过模型"的凭据）。
+# 两个后端要能互相回退，见 `speaker_campplus.backend()`。
+_ONNX_SRC = os.path.join('models', 'campplus', 'campplus.onnx')
+if os.path.isfile(_ONNX_SRC):
+    datas += [(_ONNX_SRC, 'models/campplus')]
+    print(f'[models] 打入 CAM++ ONNX 图'
+          f'（{os.path.getsize(_ONNX_SRC) / 1048576:.1f} MiB，免 torch 后端）')
+else:
+    print('[models] ⚠️ 没有 models/campplus/campplus.onnx —— '
+          '分声部将要求 pyTorch 运行时组件；'
+          '可用 `python tools/export_campplus_onnx.py` 生成')
 # 桌面版的两份清单都必须随包带上（第一次启动就要按它们检查状态）：
 #   * model_manifest.json    —— 模型权重（CAM++/Whisper/Demucs）
 #   * runtime_manifest.json  —— 运行时组件（PyTorch，按需下载）

@@ -65,9 +65,27 @@
       "verify": { "kind": "hf_presence", "must_have": ["model.bin", "config.json"] }
     },
     {
+      "id": "campplus-onnx",
+      "category": "diarization",
+      "name": "CAM++ ONNX 图（分声部·免 PyTorch）",
+      "purpose": "CAM++ 的 ONNX 版本，结构与权重自包含；有了它分声部只依赖 onnxruntime，**不需要 PyTorch**",
+      "required_for": ["singer_split"],
+      "default": true,
+      "download_policy": "bundled",
+      "approx_size": 28836000,
+      "license": "Apache-2.0（ModelScope 3D-Speaker；图由本仓库从同一份权重导出）",
+      "note": "随安装包提供，由 tools/export_campplus_onnx.py 生成。数值一致性有实测：真实音频归一化后 max|Δ|=5.5e-04、cos=0.999995；同一套评估脚本跑出 85.0%，与历史基线逐首一致。",
+      "source": { "kind": "bundled", "path": "models/campplus/campplus.onnx" },
+      "verify": {
+        "kind": "files_exist",
+        "target": "models/campplus",
+        "must_have": ["campplus.onnx"]
+      }
+    },
+    {
       "id": "campplus",
       "category": "diarization",
-      "name": "CAM++ 声纹（分声部）",
+      "name": "CAM++ 声纹权重（分声部）",
       "purpose": "判断每句是 v1/v2/v3 里谁唱的（对唱左右分栏靠它）",
       "required_for": ["singer_split"],
       "default": true,

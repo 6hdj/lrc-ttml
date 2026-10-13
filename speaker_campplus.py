@@ -53,6 +53,11 @@ def _find(rel: str) -> str:
 
 _SRC = _find(os.path.join("models", "campplus_src"))
 _MODEL = _find(os.path.join("models", "campplus", "campplus_cn_common.bin"))
+# ONNX 版（**首选后端**）：由 `tools/export_campplus_onnx.py` 从上面同一份权重
+# 导出，数值一致性有实测（max|Δ| ≤ 2.3e-05，含生产常用的 801 帧）。
+# 它只依赖 **onnxruntime**（已在主安装包里），**不需要 PyTorch** ——
+# 于是"对唱分声部"在冻结版里也能用，而且用户不必再下 118 MB 的运行时组件。
+_ONNX = _find(os.path.join("models", "campplus", "campplus.onnx"))
 
 SR = 16000
 N_MELS = 80
@@ -66,6 +71,31 @@ SIM_THRESHOLD = 0.31     # 官方 configuration.json 里的 yesOrno_thr
 
 _model = None
 _lock = threading.Lock()
+_onnx_sess = None
+_backend_used = ""       # "onnx" / "torch"，只用于诊断上报
+
+
+def backend() -> str:
+    """当前会用哪个后端：`onnx` / `torch` / `""`（都不可用）。
+
+    ⚠️ 顺序是**ONNX 优先**：它不需要 torch（见 `_ONNX` 的说明），
+    而 torch 现在是"按需下载的运行时组件"，能不用就不用。
+    用环境变量 `L2T_CAMPP_BACKEND=torch|onnx` 可以强制（排查用）。
+    """
+    force = (os.environ.get("L2T_CAMPP_BACKEND") or "").strip().lower()
+    if force in ("onnx", "torch"):
+        return force
+    if os.path.exists(_ONNX):
+        try:
+            import onnxruntime                            # noqa: F401
+            return "onnx"
+        except Exception:                                 # noqa: BLE001
+            pass
+    try:
+        import torch                                      # noqa: F401
+        return "torch"
+    except Exception:                                     # noqa: BLE001
+        return ""
 
 
 # --------------------------------------------------------------------------
@@ -178,15 +208,65 @@ def _pick_device():
 
 
 def embed(waveform: np.ndarray, sr: int = SR) -> Optional[np.ndarray]:
-    """一段音频 → 192 维 L2 归一化声纹向量；音频太短返回 None"""
+    """一段音频 → 192 维 L2 归一化声纹向量；音频太短返回 None。
+
+    ⚠️ **前端（fbank）与后端（ONNX / torch）严格分离**：
+    `fbank()` 是纯 numpy 的，两种后端共用同一份特征，
+    所以"换后端"不会悄悄改变特征提取（需求明确要求保持这一点）。
+    """
+    global _backend_used
     x = np.asarray(waveform, dtype=np.float32)
     if len(x) < int(0.2 * sr):
         return None
-    import torch
 
     feat = fbank(x, sr)
     if feat.shape[0] < 10:
         return None
+
+    be = backend()
+    if be == "onnx":
+        try:
+            v = _embed_onnx(feat)
+            _backend_used = "onnx"
+        except Exception:                                 # noqa: BLE001
+            # ⚠️ ONNX 出问题就退回 torch（如果装了），**不能让功能直接挂**
+            v = _embed_torch(feat)
+            _backend_used = "torch(onnx 失败回退)"
+    elif be == "torch":
+        v = _embed_torch(feat)
+        _backend_used = "torch"
+    else:
+        raise RuntimeError(
+            "没有可用的 CAM++ 推理后端：既没有 models/campplus/campplus.onnx"
+            "（随程序分发），也没有可用的 PyTorch 运行时。")
+    n = np.linalg.norm(v) + 1e-9
+    return (v / n).astype(np.float32)
+
+
+def _get_onnx_session():
+    """懒加载 ONNX 会话（线程安全）。会话创建约几十毫秒，只做一次。"""
+    global _onnx_sess
+    with _lock:
+        if _onnx_sess is None:
+            import onnxruntime as ort
+            # ⚠️ 只用 CPU：CAM++ 极小（单行约 10 ms），GPU 版的收益
+            # 抵不上"多一个 CUDA 依赖 + 显存占用"的代价；而 ONNX 的 CUDA
+            # provider 还需要额外的 CUDA DLL，与"主包只带 cublas"冲突。
+            _onnx_sess = ort.InferenceSession(
+                _ONNX, providers=["CPUExecutionProvider"])
+        return _onnx_sess
+
+
+def _embed_onnx(feat: np.ndarray) -> np.ndarray:
+    """ONNX 后端：输入 (T, 80)，输出 (192,)。**未归一化**，归一化在 `embed()`。"""
+    sess = _get_onnx_session()
+    out = sess.run(None, {"feat": feat[None, :, :].astype(np.float32)})[0]
+    return np.asarray(out).reshape(-1).astype(np.float32)
+
+
+def _embed_torch(feat: np.ndarray) -> np.ndarray:
+    """torch 后端（原实现，保持不变）。"""
+    import torch
     net = _load_model()
     dev = _pick_device()
     try:
@@ -196,14 +276,12 @@ def embed(waveform: np.ndarray, sr: int = SR) -> Optional[np.ndarray]:
                 t = t.to(dev)
                 net = net.to(dev)
             out = net(t)
-        v = out.detach().cpu().numpy().reshape(-1).astype(np.float32)
-    except Exception:
+        return out.detach().cpu().numpy().reshape(-1).astype(np.float32)
+    except Exception:                                     # noqa: BLE001
         # 显卡出问题就退回 CPU，不能因为加速把功能弄挂
         with torch.no_grad():
             out = net.to("cpu")(torch.from_numpy(feat[None, :, :]))
-        v = out.detach().cpu().numpy().reshape(-1).astype(np.float32)
-    n = np.linalg.norm(v) + 1e-9
-    return v / n
+        return out.detach().cpu().numpy().reshape(-1).astype(np.float32)
 
 
 def cosine(a: np.ndarray, b: np.ndarray) -> float:
@@ -211,27 +289,31 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def available() -> bool:
-    """权重 + 网络定义**都有**，才算可用。
+    """**能真的推理**才算可用（权重 + 网络定义 + 至少一个推理后端）。
 
-    ⚠️⚠️ 以前这里**只看文件在不在**，不看 torch 能不能 import。
-    2026-10-13 起 PyTorch 被移出主安装包、改成**按需下载的运行时组件**
-    （体积原因，省 425 MiB），于是 "文件在" 不再等于 "能用"：
-    用户没下运行时组件时，`available()` 若还返回 True，
-    `diarize` 会在 `import torch` 那里直接抛 ImportError ——
-    界面上看到的是"分声部崩了"，而不是"需要先准备运行时"。
+    ⚠️⚠️ 判据演进（每一步都是踩出来的，别退回去）：
 
-    所以这里把 torch 也算进"可用"的判据：
-      * 权重在 + 网络定义在 + **torch 能 import** → True；
-      * 少任何一样 → False（调用方据此给出**对应的**提示，两者不能混）。
+    * 最早：`os.path.exists(_MODEL)` —— **只看权重**。网络定义丢了、
+      或后端不可用时照样返回 True，`diarize` 静默降级成单人演唱。
+    * 2026-10-13 上：加上"网络定义在不在"。
+    * 2026-10-13 下（PyTorch 移出主包后）：再加上"**torch 能不能 import**"。
+    * **现在**：判据是"**有没有可用的后端**"，而不是"有没有 torch" ——
+      ONNX 后端（`campplus.onnx` + onnxruntime）**不需要 torch**，
+      所以"没装 PyTorch"不再是"分声部不可用"。
+
+    两种后端的文件要求不同，不能混着判：
+      * ONNX 后端：需要 `campplus.onnx` + onnxruntime + 权重（权重用于校验存在性）；
+      * torch 后端：需要权重 + `campplus_src/model.py` + torch。
     """
-    if not (os.path.exists(_MODEL) and os.path.exists(os.path.join(_SRC, "model.py"))):
-        return False
-    # 运行时组件（PyTorch）没装 → 也不算可用
-    try:
-        import torch                                        # noqa: F401
-    except Exception:                                       # noqa: BLE001
-        return False
-    return True
+    be = backend()
+    if be == "onnx":
+        # ONNX 图是自包含的（结构+权重都在里面），但权重文件仍必须存在 ——
+        # 它同时是"用户确实下过模型"的证据，也让两种后端可切换。
+        return os.path.exists(_ONNX) and os.path.exists(_MODEL)
+    if be == "torch":
+        return (os.path.exists(_MODEL)
+                and os.path.exists(os.path.join(_SRC, "model.py")))
+    return False
 
 
 def missing_reason() -> str:
@@ -241,16 +323,39 @@ def missing_reason() -> str:
     """
     has_model = os.path.exists(_MODEL)
     has_src = os.path.exists(os.path.join(_SRC, "model.py"))
-    if not has_src:
-        return ("缺少 CAM++ 网络定义（models/campplus_src）—— "
-                "这是随程序分发的文件，说明安装包不完整，请重新安装。")
+    has_onnx = os.path.exists(_ONNX)
+    be = backend()
+
+    if be == "onnx":
+        if not has_model and not has_onnx:
+            return ("缺少 CAM++ 声纹模型（约 27 MB）—— "
+                    "在「模型管理」里下载「CAM++ 声纹（分声部）」即可。")
+        return ""
+
+    # 走到这里：ONNX 用不了
+    if has_model and has_onnx:
+        # 文件都在、后端却不可用 → 只能是 onnxruntime 有问题
+        try:
+            import onnxruntime                              # noqa: F401
+            return ""
+        except Exception as e:                              # noqa: BLE001
+            onnx_err = f"{type(e).__name__}: {str(e)[:80]}"
+    else:
+        onnx_err = "campplus.onnx 不存在（需用 tools/export_campplus_onnx.py 导出）"
+
     if not has_model:
         return ("缺少 CAM++ 声纹权重（约 27 MB）—— "
                 "在「模型管理」里下载「CAM++ 声纹（分声部）」即可。")
+
+    # 权重在、ONNX 不可用 → 看 torch
     try:
         import torch                                        # noqa: F401
     except Exception as e:                                  # noqa: BLE001
-        return ("缺少 PyTorch 运行时（约占磁盘 509 MB，需下载 118 MB）—— "
-                "在「模型管理 → 运行时组件」里点「下载」即可。"
-                f"（原始报错：{type(e).__name__}: {str(e)[:80]}）")
+        return ("缺少可用的推理后端：ONNX（" + onnx_err + "）与 PyTorch 都不可用。\n"
+                "   ① 首选：装 onnxruntime（主安装包已自带）并确认 "
+                "models/campplus/campplus.onnx 存在；\n"
+                "   ② 或到「模型管理 → 运行时组件」下载 PyTorch 运行时。")
+    if not has_src:
+        return ("缺少 CAM++ 网络定义（models/campplus_src）—— "
+                "这是随程序分发的文件，说明安装包不完整，请重新安装。")
     return ""
