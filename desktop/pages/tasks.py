@@ -89,7 +89,7 @@ class TasksPage(Page):
         lay.setContentsMargins(22, 18, 22, 22)
         lay.setSpacing(12)
         lay.addWidget(page_header(self))
-        lay.addWidget(hint("点一行看它的日志。「取消」只会停在**步骤之间**"
+        lay.addWidget(hint("点一行看它的日志。「取消」只会停在「步骤之间」"
                            "（正在跑的识别那一步不会被打断），所以按下去"
                            "状态会先变成「取消中...」。"))
         lay.addWidget(split, 1)

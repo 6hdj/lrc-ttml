@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
     def __init__(self, ctx: Optional[AppContext] = None):
         super().__init__()
         self.ctx = ctx or AppContext()
-        self.setWindowTitle(f"Lyric2TTML — 歌词转逐字 TTML  v{__version__}")
+        self.setWindowTitle(f"Lyric2TTML - 歌词转逐字 TTML  v{__version__}")
         self.resize(1120, 760)
         self.setMinimumSize(900, 620)
 
@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
 
         slay.addStretch(1)
 
-        self.lb_gpu = QLabel("检查中…")
+        self.lb_gpu = QLabel("检查中...")
         self.lb_gpu.setWordWrap(True)
         self.lb_gpu.setStyleSheet(f"color: {C['dim']}; font-size: 11px; padding: 4px 6px;")
         slay.addWidget(self.lb_gpu)
@@ -215,11 +215,11 @@ class MainWindow(QMainWindow):
             self.lb_gpu.setText("")
             return
         if gpu["ok"]:
-            self.lb_gpu.setText("✓ " + str(gpu["detail"])[:60])
+            self.lb_gpu.setText("√ " + str(gpu["detail"])[:60])
             self.lb_gpu.setStyleSheet(
                 f"color: {C['ok']}; font-size: 11px; padding: 4px 6px;")
         else:
-            self.lb_gpu.setText("⚠ " + str(gpu["detail"])[:70])
+            self.lb_gpu.setText("! " + str(gpu["detail"])[:70])
             self.lb_gpu.setStyleSheet(
                 f"color: {C['err']}; font-size: 11px; padding: 4px 6px;")
 
@@ -229,9 +229,12 @@ class MainWindow(QMainWindow):
             ans = QMessageBox.question(
                 self, "还有任务在跑",
                 "现在还有任务没结束（转换或下载）。\n\n"
-                "关掉软件会**中断**它们：\n"
-                "· 转换中断 → 这次不会生成文件，上一次做好的文件不受影响；\n"
-                "· 下载中断 → 已经下好的部分留着，下次接着下。\n\n确定要关吗？",
+                # ⚠️ 别在这里写 Markdown：QMessageBox 是**纯文本**，
+                # 写成 `**中断**` 用户看到的就是字面量 `**中断**`（真踩过）。
+                # 要强调就用「」，和界面其它地方保持一致。
+                "关掉软件会「中断」它们：\n"
+                "• 转换中断 → 这次不会生成文件，上一次做好的文件不受影响；\n"
+                "• 下载中断 → 已经下好的部分留着，下次接着下。\n\n确定要关吗？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if ans != QMessageBox.StandardButton.Yes:

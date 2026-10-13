@@ -256,7 +256,7 @@ class HomePage(Page):
         box = self.card_with(
             h2("⑥ 平台 ID（可选，会写进 TTML 的 amll:meta）"),
             _grid(g),
-            hint("默认**不自动检索**：检索容易搜错歌，填错的 ID 比空着更糟。"
+            hint("默认「不自动检索」：检索容易搜错歌，填错的 ID 比空着更糟。"
                  "需要的话用界面右上角的「各平台搜索」跳过去自己找。"),
         )
         box.setVisible(False)
