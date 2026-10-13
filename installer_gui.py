@@ -1449,14 +1449,36 @@ def e2e(dest: str) -> int:
             # 老的卸载实现会把 `_internal/` 一起删掉（384 → 32 个文件，
             # 连 `encodings` 都没了），而冻结版 exe 必须靠它才能启动 ⇒
             # 用户"再运行一次"只会得到 `Failed to import encodings module`。
-            # 现在改成**当场验证**"还能不能重试"：运行库还在不在。
-            enc = os.path.join(dest, "_internal", "encodings")
-            enc_ok = os.path.isdir(enc)
-            print(f"       `_internal/encodings` 完好={enc_ok}"
-                  f"（True 才说明用户还能再运行一次卸载）")
-            if not enc_ok:
-                print("       ⚠ 运行库被删 ⇒ exe 无法再启动，卸载**无法重试**")
-                un_ok = False
+            #
+            # ⚠️ 判据要分清两种"目录还在"：
+            #   * **延迟清理还没跑完** —— 目录还在，但运行库完好，
+            #     清理助手几秒后会删掉它。这是**正常**，不算失败。
+            #   * **清理失败** —— 目录还在、运行库又坏了，那才是真失败
+            #     （用户想重试都起不来）。
+            # 我第一版写成了"目录还在就检查运行库"，结果**清理成功**时目录
+            # 已经整没了，被判成 `encodings 完好=False` ⇒ 假失败（实测抓到）。
+            if os.path.isdir(dest):
+                # ⚠️ 判据**不能**只看 `_internal/encodings` 目录在不在 ——
+                # PyInstaller 可能把 `encodings` 打进 exe 归档而不是摊成目录，
+                # 那样"目录不存在"并不代表 exe 起不来（实测就是这样：
+                # 目录判定 False，但 exe 其实完全正常）。
+                # 真正的问题是"**用户还能不能再运行一次卸载**"，
+                # 所以判据应该是：`_internal/` 里还有没有运行库文件（.pyd / python*.dll）。
+                n_rt = 0
+                internal = os.path.join(dest, "_internal")
+                if os.path.isdir(internal):
+                    for _r, _d, _fs in os.walk(internal):
+                        for _f in _fs:
+                            low = _f.lower()
+                            if low.endswith(".pyd") or low.startswith("python"):
+                                n_rt += 1
+                print(f"       安装目录仍在（清理助手还在收尾）；"
+                      f"运行库文件 {n_rt} 个")
+                if n_rt == 0:
+                    print("       ⚠ 运行库被删 ⇒ exe 无法再启动，卸载**无法重试**")
+                    un_ok = False
+            else:
+                print("       安装目录已彻底删除（延迟清理已完成）")
             if not un_ok:
                 print((r.stdout or "")[-900:])
                 print((r.stderr or "")[-400:])
