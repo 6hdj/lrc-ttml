@@ -86,19 +86,25 @@ class SettingsPage(Page):
         self.env_log = QPlainTextEdit()
         self.env_log.setReadOnly(True)
         self.env_log.setObjectName("mono")
-        self.env_log.setMaximumHeight(220)
+        self.env_log.setMaximumHeight(160)
         btn_env = button("重新体检（含显卡）", primary=True,
                          on_click=lambda: self._env_check(True))
         btn_env_light = button("快速体检", on_click=lambda: self._env_check(False))
         btn_copy = button("复制诊断信息", on_click=self._copy_diag)
+        btn_help = button("打开「帮助 / 诊断」页",
+                          on_click=lambda: self._goto_help())
 
+        # ⚠️ 完整的体检已经搬到**「帮助 / 诊断」页**（任务书 C 要求那一页）。
+        # 这里只留"改完路径当场看结论"这一小块 + 指路 ——
+        # 两处各做一套完整体检必然漂移（本仓的老教训）。
         diag_box = self.card_with(
             h2("③ 诊断"),
             self.lb_env,
             row(btn_env, btn_env_light, btn_copy, None, stretch_index=None),
             self.env_log,
-            hint("软件出问题时：点「复制诊断信息」，把内容发给开发者。"
-                 "日志文件在「打开日志目录」里（desktop.log / crash.log）。"),
+            hint("更完整的诊断（逐项怎么修、常见问题、一键复制环境信息）"
+                 "在左边「帮助 / 诊断」页。"),
+            row(btn_help, None, stretch_index=None),
         )
 
         # ---------- 关于 ----------
@@ -219,6 +225,20 @@ class SettingsPage(Page):
         self._paint_paths()
 
     # ------------------------------------------------------------ 诊断
+    def _goto_help(self) -> None:
+        """跳到「帮助 / 诊断」页。
+
+        ⚠️ 用主窗口注入的 `_nav_target`（`main_window._page()` 会给每一页挂上），
+        不要 `self.window()` —— 页面在 QStackedWidget 里，
+        `window()` 拿到的类型不确定，调它的方法容易 AttributeError（本仓踩过）。
+        """
+        win = getattr(self, "_nav_target", None)
+        if win and hasattr(win, "show_page"):
+            win.show_page("help")
+        else:
+            self.say("info", "找不到主窗口",
+                     "请点左侧的「帮助 / 诊断」。")
+
     def _copy_diag(self) -> None:
         from desktop.services import log_service
         lines = [

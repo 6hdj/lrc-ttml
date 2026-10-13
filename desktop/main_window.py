@@ -23,13 +23,17 @@ from desktop import __version__
 from desktop.context import AppContext
 from desktop.pages.base import (C, QSS, STATUS_COLOR, STATUS_ICON, dim, label)
 
-# 导航顺序：开始 → 制作 → 任务 → 模型 → 设置
+# 导航顺序：开始 → 制作 → 任务 → 模型 → 设置 → 帮助
+# ⚠️ 「帮助 / 诊断」是任务书 C 明确列的一页，之前**没有**：
+# `--doctor` 的完整输出、日志在哪、装到哪了，用户在界面里都拿不到，
+# 报问题时只能靠开发者手动跑命令。现在补上（放最后，不抢主流程的注意力）。
 NAV = [
     ("welcome", "🏠  开始", "第一次用先看这里：环境、模型、怎么用"),
     ("home", "🎵  制作", "选文件、开始转换、看结果"),
     ("tasks", "📋  任务", "转换与下载的进度、日志"),
     ("models", "🧩  模型", "下载 / 校验 / 清理模型"),
-    ("settings", "⚙  设置", "目录、默认值、诊断"),
+    ("settings", "⚙  设置", "目录、默认值"),
+    ("help", "❓  帮助 / 诊断", "环境行不行、日志在哪、常见问题"),
 ]
 
 
@@ -263,4 +267,7 @@ def _make_page(key: str, ctx: AppContext):
     if key == "settings":
         from desktop.pages.settings import SettingsPage
         return SettingsPage(ctx)
+    if key == "help":
+        from desktop.pages.help import HelpPage
+        return HelpPage(ctx)
     raise KeyError(key)

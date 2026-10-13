@@ -191,11 +191,13 @@ def _run() -> int:
             root = page.ensure_built()
             assert root is not None, f"页面 {key} build() 返回 None"
             assert root.parent() is not None or root.isWindow() or True
-        # 五页都在 stack 里（懒加载过一遍之后）
+        # 所有页都在 stack 里（懒加载过一遍之后）
         assert win.stack.count() == len(NAV), \
             f"stack 里 {win.stack.count()} 页，期望 {len(NAV)}"
 
-    check("五个页面都能构建、切换、显示", t_pages)
+    # ⚠️ 断言文案**不要写死页数**（原来写"五个页面"，加了「帮助 / 诊断」之后
+    # 就变成假描述 —— 测试名和实际不符会让人误判覆盖范围）。直接从 NAV 取。
+    check(f"{len(NAV)} 个页面都能构建、切换、显示", t_pages)
 
     # ---------------------------------------------------- 3 页面契约
     def t_contract():
@@ -251,7 +253,7 @@ def _run() -> int:
             assert len(colors) > 3, \
                 f"页面 {key} 看起来是纯色空白（只有 {len(colors)} 种颜色）"
 
-    check("五个页面真的渲染出内容（非空白）", t_rendered)
+    check(f"{len(NAV)} 个页面真的渲染出内容（非空白）", t_rendered)
 
     # ---------------------------------------------------- 4 深浅色样式
     def t_style():
