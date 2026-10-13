@@ -70,6 +70,28 @@ CYAN = "#22d3ee"        # 强调/进度
 FONT = "Microsoft YaHei UI"
 
 
+def _style_progressbar(root: tk.Tk) -> None:
+    """给 ttk 进度条套上我们的调色板（默认样式是浅灰的，在深色界面上很突兀）。"""
+    try:
+        from tkinter import ttk
+        st = ttk.Style(root)
+        # clam 主题才吃自定义颜色（Windows 原生主题会忽略背景色）
+        try:
+            st.theme_use("clam")
+        except Exception:                                   # noqa: BLE001
+            pass
+        st.configure("L2T.Horizontal.TProgressbar",
+                     troughcolor=PANEL2, background=CYAN,
+                     bordercolor=PANEL2, lightcolor=CYAN, darkcolor=CYAN,
+                     thickness=14)
+        # ⚠️ `thickness` 太小（试过 8）时，进度条看起来就是一条**分隔线**，
+        # 用户根本认不出那是进度条（截图里一眼可见）。14 才像进度条。
+        st.configure("L2T.Horizontal.TProgressbar", borderwidth=0,
+                     relief="flat")
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
 def _font(size: int, bold: bool = False):
     """统一字体：字号与桌面版对齐，中文用同一族。"""
     return (FONT, size, "bold") if bold else (FONT, size)
@@ -216,6 +238,14 @@ def shot_mode() -> bool:
     正常双击会先 `relaunch_elevated()` 弹 UAC，自动化测不了；
     `--e2e` 又是无界面模式。所以专门开一个：开真实窗口、画完整界面、
     **不起任何后台作业**（不下载、不解压、不写注册表），存图即退。
+
+    ⚠️⚠️ **这是"抢屏幕"的操作，只能由人主动调用，绝不能进自动化测试。**
+    实测副作用（真发生过，得如实记下来）：`-topmost` + `focus_force()` 会把
+    前台焦点从用户正在用的窗口抢走 —— 有一次截图恰好把**用户的开始菜单**
+    顶了出来（抓到的图里是开始菜单和桌面图标）。在开发者自己机器上跑一次
+    无所谓，但**别放进 CI、别在别人用电脑时跑**。
+    自动化要验安装器请用 `--e2e`（无界面）或 `tools/test_installer_theme.py`
+    （只读源码比对颜色），那两个都不会抢焦点。
     """
     return "--shot" in sys.argv
 
@@ -257,6 +287,7 @@ class Installer:
 
         self._build()
         root.after(120, self._pump)
+        _style_progressbar(root)
         if not autostart:
             # 预览/截图：停在"准备就绪"这一屏，不碰任何作业
             self.set_sub("准备就绪，点「开始安装」", ACCENT)
@@ -340,12 +371,52 @@ class Installer:
         self.root.bind_all("<MouseWheel>", self._on_wheel)
         self.rows: dict = {}
 
+        # ---------------------------------------------------------------
+        # 安装选项：桌面快捷方式**必须由用户勾**（任务书 E："快捷方式选择"）
+        # ---------------------------------------------------------------
+        # ⚠️ 以前 `win_integration.integrate()` **已经支持** desktop=True/False，
+        # 但界面上**没有任何地方设置 `want_desktop`** ⇒ 用户永远拿不到桌面图标，
+        # 而代码里那句 `getattr(self, "want_desktop", False)` 看着像"已实现"。
+        # 这种"后端能、界面没接"的缺口属性断言查不出来，只有看界面才发现。
+        opts = tk.Frame(self.root, bg=BG)
+        opts.pack(fill="x", padx=28, pady=(2, 6))
+        self.var_desktop = tk.BooleanVar(value=False)
+        self.var_sm = tk.BooleanVar(value=True)
+        for var, text in ((self.var_sm, "在「开始菜单」里创建快捷方式（推荐）"),
+                          (self.var_desktop, "同时创建桌面快捷方式")):
+            tk.Checkbutton(
+                opts, text=text, variable=var, bg=BG, fg=DIM,
+                activebackground=BG, activeforeground=FG, selectcolor=PANEL2,
+                font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
+                anchor="w").pack(side="left", padx=(0, 18))
+        # 桌面默认不勾：任务书要求"避免未经同意创建桌面图标"。
+        self.want_desktop = False
+        self.var_desktop.trace_add("write", self._on_desktop_toggle)
+
         # 日志
-        self.log = tk.Text(self.root, height=7, bg=PANEL2, fg=DIM,
+        self.log = tk.Text(self.root, height=6, bg=PANEL2, fg=DIM,
                            insertbackground=FG, relief="flat", wrap="word",
                            font=("Consolas", 9), padx=10, pady=8)
         self.log.pack(fill="both", expand=True, padx=28)
         self.log.configure(state="disabled")
+
+        # ---------------------------------------------------------------
+        # 进度：**真实进度，不伪造百分比**（任务书 E 明确要求）
+        # ---------------------------------------------------------------
+        # 口径：主程序解压（按字节，PyInstaller 的 onefile 有真实回调）+
+        #      环境检查/补全（按"清单条目完成数"计数）。
+        # 两者都不是"转圈动画"，每一项都能对上日志里的一行。
+        pbar = tk.Frame(self.root, bg=BG)
+        pbar.pack(fill="x", padx=28, pady=(8, 0))
+        self.pb = ttk.Progressbar(pbar, mode="determinate", maximum=100,
+                                  style="L2T.Horizontal.TProgressbar")
+        self.pb.pack(fill="x", side="left", expand=True)
+        self.lb_pct = tk.Label(pbar, text="", bg=BG, fg=DIM, width=12,
+                               anchor="e", font=("Microsoft YaHei UI", 9))
+        self.lb_pct.pack(side="right", padx=(10, 0))
+        self._pb_total = 0        # 本轮共多少项（0 = 未知，不显示百分比）
+        self._pb_done = 0
+        self._pb_mode = ""
 
         # 按钮区
         bar = tk.Frame(self.root, bg=BG)
@@ -357,6 +428,50 @@ class Installer:
         self.btn_go = self._btn(bar, "开始补全", self.start_install,
                                 side="right", primary=True)
         self.btn_go.configure(state="disabled")
+
+    def _on_desktop_toggle(self, *_a) -> None:
+        """勾选桌面快捷方式时，把选择同步给 `win_integration`。"""
+        self.want_desktop = bool(self.var_desktop.get())
+
+    # ------------------------------------------------------------ 真实进度
+    def pb_set(self, done: int, total: int, label: str = "") -> None:
+        """按"完成项 / 总项"更新进度条（**不做假动画**）。
+
+        `total <= 0` 表示"还不知道总量" —— 这时**只显示文字、不显示百分比**，
+        绝不猜一个数字出来（任务书要求真实进度）。
+        """
+        self._pb_done, self._pb_total = done, total
+        if total > 0:
+            pct = max(0, min(100, int(done * 100 / total)))
+            self.pb.configure(mode="determinate", value=pct)
+            self.lb_pct.configure(
+                text=f"{label} {done}/{total}" if label else f"{done}/{total}  {pct}%")
+        else:
+            self.pb.configure(mode="indeterminate", value=0)
+            self.lb_pct.configure(text=label)
+        try:
+            self.root.update_idletasks()
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    def pb_bytes(self, done: int, total: int) -> None:
+        """解压阶段：按**字节**报进度（onefile 解包能拿到真实字节数）。"""
+        if total <= 0:
+            self.pb_set(0, 0, "正在解压…")
+            return
+        pct = max(0, min(100, int(done * 100 / total)))
+        self.pb.configure(mode="determinate", value=pct)
+        self.lb_pct.configure(
+            text=f"解压 {done / 1048576:.0f}/{total / 1048576:.0f} MB")
+        try:
+            self.root.update_idletasks()
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    def pb_reset(self) -> None:
+        self._pb_done = self._pb_total = 0
+        self.pb.configure(mode="determinate", value=0)
+        self.lb_pct.configure(text="")
 
     def _on_wheel(self, event) -> None:
         """鼠标滚轮滚动清单。
