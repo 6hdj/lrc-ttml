@@ -33,12 +33,18 @@ sys.path.insert(0, HERE)
 
 
 def _desktop_palette() -> dict:
-    """从 `desktop/pages/base.py` 里取出 `C = {...}`（不导入 Qt）。"""
+    """从 `desktop/pages/base.py` 里取出**深色主题**的调色板（不导入 Qt）。
+
+    ⚠️ 2026-10-13 起调色板改名了：原来是 `C = {...}`，现在是
+    `DARK = {...}` / `LIGHT = {...}`，`C` 变成"当前生效的那一份"（由
+    `apply_theme()` 原地更新）。安装器的配色是照**深色**做的，
+    所以这里要取 `DARK`。直接找 `C = {` 会报"找不到 C = {...}"（真踩到）。
+    """
     src = io.open(os.path.join(HERE, "desktop", "pages", "base.py"),
                   encoding="utf-8").read()
-    m = re.search(r"^C = \{(.*?)^\}", src, re.S | re.M)
+    m = re.search(r"^DARK = \{(.*?)^\}", src, re.S | re.M)
     if not m:
-        raise SystemExit("在 desktop/pages/base.py 里找不到 C = {...}")
+        raise SystemExit("在 desktop/pages/base.py 里找不到 DARK = {...}")
     out = {}
     for line in m.group(1).split("\n"):
         mm = re.match(r'\s*"([a-z_0-9]+)"\s*:\s*"(#[0-9a-fA-F]{6})"', line)

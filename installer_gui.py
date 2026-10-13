@@ -62,7 +62,9 @@ FAINT = "#6b7480"       # 最弱提示
 OK = "#3ecf8e"
 BAD = "#ef5350"
 WARN = "#e2b53e"
-ACCENT = "#4c9aff"
+ACCENT = "#4785d6"      # 与 desktop/pages/base.py 的 DARK["accent"] 一致
+                        # （`tools/test_installer_theme.py` 会守着这一条；
+                        #  改一边忘了另一边，安装程序和应用就不是一个产品了）
 ACCENT_DIM = "#2b5f9e"
 CYAN = "#22d3ee"        # 强调/进度
 

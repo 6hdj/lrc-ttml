@@ -16,7 +16,15 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 # --------------------------------------------------------------- 配色（唯一来源）
-C = {
+#
+# ⚠️⚠️ **深浅色主题：一个色号都不能少**。
+# 页面代码里到处是 `C["accent"]`、`C["ok"]` 这种写法（**这是好事** ——
+# 全仓只有 `base.py` 有硬编码色号，所以换主题只要改这里）。
+# 但那条规矩只在"**每个键两边都有**"时才成立：
+# 浅色漏掉任何一个键，运行时就是 `KeyError`（一进界面就崩）。
+# `tools/test_theme.py` 就是守着这一条 —— 两个主题的键集必须完全一致，
+# 且对比度要够（浅色主题最容易犯的错是"灰字打在浅灰底上看不见"）。
+DARK = {
     "bg": "#14161a",
     "panel": "#1b1e24",
     "panel2": "#22262e",
@@ -24,138 +32,260 @@ C = {
     "text": "#e8eaee",
     "dim": "#9aa3b0",
     "faint": "#6b7480",
-    "accent": "#4c9aff",
+    # ⚠️ 原来是 `#4c9aff`：白字压在它上面只有 **2.85:1**，连 WCAG 对
+    # 大字号/UI 组件的 3:1 门槛都不到（`tools/test_theme.py` 抓到的）。
+    # 压暗一点点既过门槛，又保住"强调色当链接/文字色用在深底上"（4.82:1）。
+    # 这两头是一对矛盾 —— 想压到白字 4.5:1 就得用到 `#3a76c4` 以下，
+    # 那时当链接色只剩 3.9:1，等于拆东墙补西墙。
+    "accent": "#4785d6",
     "accent_dim": "#2b5f9e",
     "ok": "#3ecf8e",
     "warn": "#e2b53e",
     "err": "#ef5350",
     "cyan": "#22d3ee",
+    # ⚠️ 「压在**强调色**上的字」必须单独一个键：深浅两套主题方向相反。
+    # 旧实现把 `#ffffff` 写死在 QSS 里，于是浅色主题下主按钮
+    # （蓝底白字）**在白底页面上看不清按钮上的字**（截图里"保存""重新体检"
+    # 那两个字几乎全白 —— 真踩到，靠看图才发现）。
+    "on_accent": "#ffffff",
 }
 
-QSS = f"""
-QWidget {{
-    background: {C['bg']};
-    color: {C['text']};
+# 浅色主题：**不是把深色反过来那么简单**，三条要注意的：
+#   * 状态色（ok/warn/err）要**加深**：`#3ecf8e` 这种亮绿在浅底上几乎看不见；
+#   * `accent` 要压暗一点，否则白底上的亮蓝字对比度不够；
+#   * `panel` 要比 `bg` **更亮**（浅色主题里"卡片浮起来"的方向和深色相反 ——
+#     深色是卡片更亮，浅色是卡片更白、底色更灰）。
+LIGHT = {
+    "bg": "#f4f5f7",
+    "panel": "#ffffff",
+    "panel2": "#eef0f3",
+    "line": "#d6dae0",
+    "text": "#1f2329",
+    "dim": "#5c646f",
+    "faint": "#8a929c",
+    "accent": "#1f6feb",
+    "accent_dim": "#9dc1f5",
+    "ok": "#1a7f4b",
+    "warn": "#9a6b00",
+    "err": "#c0392b",
+    "cyan": "#0e7490",
+    # 浅色主题的主按钮：强调色 `#1f6feb` 是**深蓝** → 白字对比度最好
+    # （不能用 `text`：那会让深字压在深蓝上，读不出来）。
+    "on_accent": "#ffffff",
+}
+
+THEMES = {"dark": DARK, "light": LIGHT}
+
+# ⚠️ `C` 是**当前生效**的调色板。页面全部 `from ... import C`，
+# 所以在进程内换主题**不能**只改 `C` 的指向（别的模块早就绑定了旧 dict 对象）
+# —— 见 `apply_theme()` 的做法：**原地清空再填充**，保持同一个 dict 对象。
+C = dict(DARK)
+
+_QSS_TEMPLATE = """
+QWidget {
+    background: {{bg}};
+    color: {{text}};
     font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
     font-size: 13px;
-}}
-QLabel#h1 {{ font-size: 20px; font-weight: 600; }}
-QLabel#h2 {{ font-size: 15px; font-weight: 600; }}
-QLabel#dim {{ color: {C['dim']}; }}
-QLabel#faint {{ color: {C['faint']}; font-size: 12px; }}
-QLabel#mono {{ font-family: Consolas, "Courier New", monospace; font-size: 12px; }}
+}
+QLabel#h1 { font-size: 20px; font-weight: 600; }
+QLabel#h2 { font-size: 15px; font-weight: 600; }
+QLabel#dim { color: {{dim}}; }
+QLabel#faint { color: {{faint}}; font-size: 12px; }
+QLabel#mono { font-family: Consolas, "Courier New", monospace; font-size: 12px; }
 
-QFrame#card {{
-    background: {C['panel']};
-    border: 1px solid {C['line']};
+QFrame#card {
+    background: {{panel}};
+    border: 1px solid {{line}};
     border-radius: 8px;
-}}
-QFrame#cardFlat {{
-    background: {C['panel2']};
-    border: 1px solid {C['line']};
+}
+QFrame#cardFlat {
+    background: {{panel2}};
+    border: 1px solid {{line}};
     border-radius: 6px;
-}}
+}
 
-QPushButton {{
-    background: {C['panel2']};
-    border: 1px solid {C['line']};
+QPushButton {
+    background: {{panel2}};
+    border: 1px solid {{line}};
     border-radius: 6px;
     padding: 6px 14px;
-    color: {C['text']};
-}}
-QPushButton:hover {{ background: #2a3038; border-color: #3a4250; }}
+    color: {{text}};
+}
+QPushButton:hover { background: {{panel2}}; border-color: {{line}}; }
 /* ⚠️ 这几个 `:disabled` 规则必须**显式**写：
    QSS 里 ID 选择器（`#primary`）的优先级高于 `:disabled` 伪类，
    所以不写 `#primary:disabled` 的话，禁用按钮会保留**启用态**的文字色 ——
    实测就是"深蓝底 + 深色字"，按钮上的字几乎看不见（截图里一眼能看到）。 */
-QPushButton:disabled {{ color: {C['faint']}; background: #1e2127; border-color: #262a31; }}
-QPushButton#primary {{
-    background: {C['accent']};
-    border: 1px solid {C['accent']};
+QPushButton:disabled { color: {{dim}}; background: {{panel}}; border-color: {{line}}; }
+QPushButton#primary {
+    background: {{accent}};
+    border: 1px solid {{accent}};
     /* 深色文字压在亮蓝上，对比度够但**中文字形细、11px 下显得糊**
        （截图里"开始制作""下载识别模型"都偏虚）。改成白字更清楚，
        也是这类"主操作按钮"的通行做法。 */
-    color: #ffffff;
+    color: {{on_accent}};
     font-weight: 600;
     padding: 9px 22px;
-}}
-QPushButton#primary:hover {{ background: #63a9ff; color: #ffffff; }}
-QPushButton#primary:disabled {{
-    background: #24313f; border: 1px solid #2c3a4a; color: #93a1b1;
-}}
-QPushButton#nav {{
+}
+QPushButton#primary:hover { background: {{accent}}; color: {{on_accent}}; }
+QPushButton#primary:disabled {
+    background: {{panel2}}; border: 1px solid {{line}}; color: {{dim}};
+}
+QPushButton#nav {
     background: transparent; border: none; border-radius: 6px;
-    padding: 9px 12px; text-align: left; color: {C['dim']};
-}}
-QPushButton#nav:hover {{ background: {C['panel2']}; color: {C['text']}; }}
-QPushButton#nav:checked {{
-    background: {C['panel2']}; color: {C['text']};
-    border-left: 3px solid {C['accent']};
-}}
+    padding: 9px 12px; text-align: left; color: {{dim}};
+}
+QPushButton#nav:hover { background: {{panel2}}; color: {{text}}; }
+QPushButton#nav:checked {
+    background: {{panel2}}; color: {{text}};
+    border-left: 3px solid {{accent}};
+}
 
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit {{
-    background: {C['panel2']};
-    border: 1px solid {C['line']};
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit {
+    background: {{panel2}};
+    border: 1px solid {{line}};
     border-radius: 6px;
     padding: 5px 8px;
-    selection-background-color: {C['accent_dim']};
-}}
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {{
-    border-color: {C['accent']};
-}}
-QComboBox QAbstractItemView {{
-    background: {C['panel2']}; border: 1px solid {C['line']};
-    selection-background-color: {C['accent_dim']};
-}}
-QCheckBox, QRadioButton {{ spacing: 6px; }}
-QCheckBox::indicator, QRadioButton::indicator {{ width: 15px; height: 15px; }}
+    selection-background-color: {{accent_dim}};
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
+    border-color: {{accent}};
+}
+QComboBox QAbstractItemView {
+    background: {{panel2}}; border: 1px solid {{line}};
+    selection-background-color: {{accent_dim}};
+}
+QCheckBox, QRadioButton { spacing: 6px; }
+QCheckBox::indicator, QRadioButton::indicator { width: 15px; height: 15px; }
 
-QProgressBar {{
-    background: {C['panel2']}; border: 1px solid {C['line']};
-    border-radius: 5px; height: 12px; text-align: center; color: {C['text']};
-}}
-QProgressBar::chunk {{ background: {C['accent']}; border-radius: 4px; }}
+QProgressBar {
+    background: {{panel2}}; border: 1px solid {{line}};
+    border-radius: 5px; height: 12px; text-align: center; color: {{text}};
+}
+QProgressBar::chunk { background: {{accent}}; border-radius: 4px; }
 
-QScrollArea {{ border: none; }}
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
-QScrollBar::handle:vertical {{ background: #3a4250; border-radius: 5px; min-height: 30px; }}
-QScrollBar::handle:vertical:hover {{ background: #4a5464; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; }}
-QScrollBar::handle:horizontal {{ background: #3a4250; border-radius: 5px; min-width: 30px; }}
+QScrollArea { border: none; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: {{line}}; border-radius: 5px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: {{line}}; }
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
+QScrollBar:horizontal { background: transparent; height: 10px; }
+QScrollBar::handle:horizontal { background: {{line}}; border-radius: 5px; min-width: 30px; }
 
-QTableWidget, QListWidget {{
-    background: {C['panel']}; border: 1px solid {C['line']};
-    border-radius: 6px; gridline-color: {C['line']};
-}}
-QHeaderView::section {{
-    background: {C['panel2']}; border: none; border-bottom: 1px solid {C['line']};
-    padding: 6px 8px; color: {C['dim']};
-}}
-QSplitter::handle {{ background: {C['line']}; }}
-QStatusBar {{ background: {C['panel']}; border-top: 1px solid {C['line']}; }}
-QToolTip {{
-    background: {C['panel2']}; color: {C['text']};
-    border: 1px solid {C['line']}; padding: 4px 6px;
-}}
+QTableWidget, QListWidget {
+    background: {{panel}}; border: 1px solid {{line}};
+    border-radius: 6px; gridline-color: {{line}};
+}
+QHeaderView::section {
+    background: {{panel2}}; border: none; border-bottom: 1px solid {{line}};
+    padding: 6px 8px; color: {{dim}};
+}
+QSplitter::handle { background: {{line}}; }
+QStatusBar { background: {{panel}}; border-top: 1px solid {{line}}; }
+QToolTip {
+    background: {{panel2}}; color: {{text}};
+    border: 1px solid {{line}}; padding: 4px 6px;
+}
 """
 
+
+def qss(theme: Optional[str] = None) -> str:
+    """按主题生成样式表（默认用当前生效的 `C`）。
+
+    ⚠️⚠️ **不要用 `str.format`**：QSS 自己到处都是花括号（`QWidget {{ ... }}`），
+    和 Python 的 `{{name}}` 混在一起，只要有一处漏了双写，`.format` 就会
+    把它吃掉 —— 生成出来的样式表带着残留的 `{{accent}}`，
+    Qt 只会在 stderr 打一句 `Could not parse application stylesheet`，
+    **界面看着还能用**，但那些控件没吃到样式（真踩到：浅色主题内容区一片空白）。
+
+    现在用 `str.replace`：与 QSS 自己的花括号**完全无关**，
+    少一个键也不会崩（找不到就原样留着，肉眼一看就能发现）。
+    """
+    pal = THEMES.get(theme or "", C)
+    out = _QSS_TEMPLATE
+    for k, v in pal.items():
+        out = out.replace("{{" + k + "}}", str(v))
+    return out
+
+
+def resolve_theme(name: str) -> str:
+    """把配置里的主题名解析成 `dark` / `light`。
+
+    支持 `auto`：跟随 Windows 的"应用模式"（浅色/深色）。
+    ⚠️ 读注册表 `HKCU\\...\\Themes\\Personalize\\AppsUseLightTheme`，
+    **读不到就退回深色**（本程序的默认观感），不要因为读不到就崩。
+    """
+    n = (name or "").strip().lower()
+    if n in ("dark", "light"):
+        return n
+    if n == "auto":
+        try:
+            import winreg
+            k = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+            val, _ = winreg.QueryValueEx(k, "AppsUseLightTheme")
+            winreg.CloseKey(k)
+            return "light" if int(val) == 1 else "dark"
+        except Exception:                               # noqa: BLE001
+            return "dark"
+    return "dark"
+
+
+def apply_theme(name: str) -> str:
+    """切换主题：**原地**更新 `C` 与 `STATUS_COLOR`，返回真正生效的主题名。
+
+    ⚠️⚠️ 必须**原地改**（`C.clear()` + `C.update()`），不能 `C = THEMES[...]`：
+    各页面写的是 `from desktop.pages.base import C`，那绑的是**这个 dict 对象**；
+    重新赋值只会换掉 `base.C` 的指向，页面手里的还是旧的那份 ⇒
+    **界面看起来"没换主题"**（只有样式表变了，代码里直接取色的地方还是旧的）。
+    `STATUS_COLOR` 同理。
+    """
+    t = resolve_theme(name)
+    C.clear()
+    C.update(THEMES[t])
+    STATUS_COLOR.clear()
+    STATUS_COLOR.update(_build_status_maps()[0])
+    return t
+
+
+# ⚠️ **向后兼容的常量**：`QSS` 原来是个字符串，`app.py` / `uicheck.py`
+# 都 `from ... import QSS`。改成函数后会 ImportError（自检直接挂）。
+# 这里保留同名常量（值的来源仍是模板，不会与主题漂移），
+# 新代码请用 `qss()` —— 它能按主题生成。
+QSS = qss("dark")
+
 # 状态 → 颜色（任务 / 模型 / 体检三处共用一套，避免"同一个状态两种颜色"）
-STATUS_COLOR = {
-    "queued": C["dim"],
-    "running": C["accent"],
-    "verifying": C["cyan"],
-    "done": C["ok"],
-    "ready": C["ok"],
-    "ok": C["ok"],
-    "failed": C["err"],
-    "error": C["err"],
-    "cancelled": C["warn"],
-    "warn": C["warn"],
-    "not_installed": C["dim"],
-    "downloading": C["accent"],
-    "info": C["dim"],
-}
+#
+# ⚠️⚠️ 这两张表**必须每次从 `C` 现算**，不能在 import 时定死：
+# 它们在下面定义成了函数 `_status_maps()` 的产物 —— 因为换主题时
+# `apply_theme()` 是**原地改 `C`**，如果这里写成 `"ok": C["ok"]`，
+# 那些字符串在 import 那一刻就被固化了，换主题后状态色**还是旧的**
+# （表现是"浅色主题下状态点还是刺眼的亮绿"，很难查）。
+def _build_status_maps() -> tuple:
+    colors = {
+        "queued": C["dim"],
+        "running": C["accent"],
+        "verifying": C["cyan"],
+        "done": C["ok"],
+        "ready": C["ok"],
+        "ok": C["ok"],
+        "failed": C["err"],
+        "error": C["err"],
+        "cancelled": C["warn"],
+        "warn": C["warn"],
+        "not_installed": C["dim"],
+        "downloading": C["accent"],
+        "info": C["dim"],
+    }
+    icons = {
+        "queued": "...", "running": "▶", "verifying": "⟳", "done": "√",
+        "ready": "√", "failed": "✗", "error": "✗", "cancelled": "⊘",
+        "not_installed": "•", "warn": "!", "ok": "√", "info": "•",
+        "downloading": "↓",
+    }
+    return colors, icons
 
 # ⚠️⚠️ 状态图标只能用**确认有字形**的字符（截图为证，见 `.tmp/exp_symbol_candidates.py`）。
 #
@@ -168,12 +298,21 @@ STATUS_COLOR = {
 #   不能用：✓  ✔  ⚠  …  ·  —（方框）   」→ 怪字符
 #
 # ⇒ 加新图标前**先渲染看一眼**，别照抄别处的符号。
-STATUS_ICON = {
-    "queued": "...", "running": "▶", "verifying": "⟳", "done": "√",
-    "ready": "√", "failed": "✗", "error": "✗", "cancelled": "⊘",
-    "not_installed": "•", "warn": "!", "ok": "√", "info": "•",
-    "downloading": "↓",
-}
+
+# 图标与颜色分开导出：图标是**常量**（不受主题影响），颜色要跟着主题走。
+STATUS_ICON = _build_status_maps()[1]
+
+
+def current_status_color() -> dict:
+    """当前主题下的"状态 → 颜色"表（**每次现算**，见上面的说明）。"""
+    return _build_status_maps()[0]
+
+
+# ⚠️ 兼容旧调用：`STATUS_COLOR` 是模块级 dict，而页面里写的是
+# `STATUS_COLOR.get(...)` —— 所以这里**不能**只导出函数。
+# 做法：导出一个**共享的 dict 对象**，`apply_theme()` 会原地把它更新成新主题的值
+# （原地更新才能让已经 `from ... import STATUS_COLOR` 的模块也看到新颜色）。
+STATUS_COLOR = current_status_color()
 
 
 def card(*, flat: bool = False) -> QFrame:

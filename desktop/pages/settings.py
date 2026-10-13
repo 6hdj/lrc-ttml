@@ -71,7 +71,11 @@ class SettingsPage(Page):
         form.addRow(dim("默认分声部"), _wrap(self.cb_singer))
         form.addRow(dim("默认时间格式"), _wrap(self.cb_timefmt))
 
-        self.cb_theme = _combo([("深色（默认）", "dark"), ("浅色（还没做）", "light")])
+        # 主题：下拉里原来写着"浅色（还没做）"—— 现在是**真的**了。
+        # ⚠️ 换主题必须**当场生效**（不用重启），所以这里接了 currentIndexChanged。
+        self.cb_theme = _combo([("跟随系统", "auto"), ("深色", "dark"),
+                                ("浅色", "light")])
+        self.cb_theme.currentIndexChanged.connect(self._on_theme_changed)
         form.addRow(dim("主题"), _wrap(self.cb_theme))
 
         self.cb_port = _combo([("8765", 8765), ("8770", 8770), ("8899", 8899)])
@@ -137,7 +141,18 @@ class SettingsPage(Page):
         _select(self.cb_lang, c.get("language", "auto"))
         _select(self.cb_singer, str(c.get("singer_mode", "off")))
         _select(self.cb_timefmt, c.get("time_format", "clock"))
-        _select(self.cb_theme, c.get("theme", "dark"))
+        # ⚠️⚠️ 主题下拉**必须在屏蔽信号的情况下**回填：
+        # `cb_theme` 接了 `currentIndexChanged → _on_theme_changed`，
+        # 而 `_select()` 内部会 `setCurrentIndex()` ⇒ **触发一次真实的主题切换**。
+        # 后果（真踩到）：进程启动时已经按配置/环境变量设好主题了，
+        # 一进设置页就被下拉框的"回填"覆盖回**存盘里的旧值** ——
+        # 表现是"启动时选的主题被悄悄改掉"（我用 `L2T_THEME` 截图时就是这么被坑的：
+        # 明明设了浅色，截出来还是深色）。
+        _blocked = self.cb_theme.blockSignals(True)
+        try:
+            _select(self.cb_theme, c.get("theme", "dark"))
+        finally:
+            self.cb_theme.blockSignals(_blocked)
         _select(self.cb_port, int(c.get("web_port") or 8765))
         self._paint_paths()
 
@@ -225,6 +240,41 @@ class SettingsPage(Page):
         self._paint_paths()
 
     # ------------------------------------------------------------ 诊断
+    def _on_theme_changed(self, *_a) -> None:
+        """主题**立即生效**（不重启）。
+
+        三步缺一不可：
+          1. `apply_theme()` 原地更新 `C` / `STATUS_COLOR`（页面里直接取色的地方）；
+          2. 重新生成 QSS 挂到 `QApplication` 上（按钮/卡片/输入框的样式）；
+          3. **重新 polish 现有控件** —— Qt 的样式表只在控件"重新 polish"时
+             才重新匹配选择器（本仓在 `models.py::_restyle` 里已经踩过这个坑，
+             那里有同样的处理）。
+        ⚠️ 顺序不能反：先换色再设样式表，否则新样式表用的是旧颜色。
+        """
+        from PySide6.QtWidgets import QApplication
+        from desktop.pages.base import apply_theme, qss
+        name = self.cb_theme.currentData()
+        real = apply_theme(str(name or "dark"))
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(qss(real))
+            for w in app.allWidgets():
+                try:
+                    w.style().unpolish(w)
+                    w.style().polish(w)
+                    w.update()
+                except Exception:                       # noqa: BLE001
+                    pass
+        try:
+            self.ctx.config.set("theme", str(name))
+            self.ctx.config.save()
+        except Exception as e:                          # noqa: BLE001
+            # ⚠️ `log_service` 在本模块是**局部导入**（见 `_copy_diag` 附近），
+            # 顶层没有导入它 —— 直接写 `log_service.get()` 会 NameError。
+            from desktop.services import log_service as _ls
+            _ls.get().warning("保存主题失败：%s", e)
+        self._paint_paths()
+
     def _goto_help(self) -> None:
         """跳到「帮助 / 诊断」页。
 

@@ -113,7 +113,7 @@ def run_gui(argv: Optional[List[str]] = None) -> int:
 
     from desktop import APP_NAME, ORG_NAME
     from desktop.main_window import MainWindow
-    from desktop.pages.base import QSS
+    from desktop.pages.base import apply_theme, qss
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
@@ -121,10 +121,33 @@ def run_gui(argv: Optional[List[str]] = None) -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
     app.setApplicationVersion(__version__)
+
+    # ---- 主题：**必须在建窗口之前**定下来 ----
+    # 配置里的 `theme` 一直存在（dark/light/auto），但**从来没人读过** ——
+    # 一个"设了没用"的死字段。现在真正接上。
+    _theme_name = "dark"
+    # 优先级：环境变量 > 配置文件。环境变量这条路是为了
+    # ① 截图/自检能稳定指定主题（否则会被存盘里的旧值盖掉）；
+    # ② 技术支持让人临时换个主题排查（不用改配置）。
+    _env_theme = (os.environ.get("L2T_THEME") or "").strip()
+    if _env_theme:
+        _theme_name = _env_theme
+    else:
+        try:
+            # ⚠️ 用 `config.current()`（进程内单例），不要 `Config()` ——
+            # 后者会重新读一遍磁盘、和上下文里的那份**不是同一个对象**，
+            # 用户在设置页改了主题，这里读到的可能还是旧值。
+            from desktop import config as _config_mod
+            _theme_name = str(_config_mod.current().get("theme") or "dark")
+        except Exception:                               # noqa: BLE001
+            pass
+    _theme = apply_theme(_theme_name)
+    print(f"[theme] {_theme_name} -> {_theme}", flush=True)
+
     # ⚠️ **样式表必须在 QApplication 上设**，不能设在窗口上：
     # 设在窗口上时，弹出的顶层控件（菜单、工具提示、对话框）拿不到样式，
     # 会出现"深色界面里弹出一个白框"。
-    app.setStyleSheet(QSS)
+    app.setStyleSheet(qss(_theme))
     icon = _app_icon()
     if icon is not None:
         app.setWindowIcon(icon)
