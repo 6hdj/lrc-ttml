@@ -39,13 +39,40 @@ BASE = os.path.dirname(os.path.abspath(sys.executable)) if FROZEN else HERE
 import envcheck  # noqa: E402
 import install as core  # noqa: E402
 
-BG = "#0f1117"
-FG = "#e8e8f0"
-DIM = "#8b95ad"
-OK = "#3ddc84"
-BAD = "#ff6b6b"
-WARN = "#ffc857"
-ACCENT = "#4aa8ff"
+# ==========================================================================
+#  视觉：与桌面版**同一套调色板**（这是本轮改的重点）
+# ==========================================================================
+# ⚠️⚠️ 以前这里是另抄的一份颜色，和 `desktop/pages/base.py` 的 `C` **几乎每个色
+# 都不一样**（BG #0f1117 vs #14161a、DIM #8b95ad vs #9aa3b0、
+# OK #3ddc84 vs #3ecf8e、BAD #ff6b6b vs #ef5350、WARN #ffc857 vs #e2b53e…）。
+# 后果：**安装程序和应用看起来是两个不相干的产品** —— 用户装完打开应用会觉得
+# "这不是我刚装的那个东西"。截图一比就看出来了（`.tmp/inst_before.png`）。
+#
+# 现在**直接对齐** base.py 的取值（不再各写一份）。理想做法是 import 它，
+# 但安装器是**独立打包**的、且要在没装 Qt 的环境里跑，所以只能复制常量；
+# 复制就**必须有测试守着**（`tools/test_installer_theme.py` 会比对两边是否一致），
+# 否则迟早又漂移。
+BG = "#14161a"          # 与 desktop/pages/base.py C['bg'] 一致
+PANEL = "#1b1e24"       # 卡片/面板底色
+PANEL2 = "#22262e"      # 输入框/更深一层的底色
+LINE = "#2c323c"        # 描边、分隔线
+FG = "#e8eaee"          # 正文
+DIM = "#9aa3b0"         # 次要文字
+FAINT = "#6b7480"       # 最弱提示
+OK = "#3ecf8e"
+BAD = "#ef5350"
+WARN = "#e2b53e"
+ACCENT = "#4c9aff"
+ACCENT_DIM = "#2b5f9e"
+CYAN = "#22d3ee"        # 强调/进度
+
+# 与桌面版一致的字体栈（Qt 的 QSS 和 tkinter 都要写同一串）
+FONT = "Microsoft YaHei UI"
+
+
+def _font(size: int, bold: bool = False):
+    """统一字体：字号与桌面版对齐，中文用同一族。"""
+    return (FONT, size, "bold") if bold else (FONT, size)
 
 
 def ask_app_report(base: str) -> dict:
@@ -182,9 +209,33 @@ def ensure_dir(path: str) -> bool:
     return False
 
 
+def shot_mode() -> bool:
+    """`--shot <png>`：只画界面、**不干活**，截图后自动退出。
+
+    为什么需要它：安装器是本项目唯一"改界面必须看真图"又**最难看**的地方 ——
+    正常双击会先 `relaunch_elevated()` 弹 UAC，自动化测不了；
+    `--e2e` 又是无界面模式。所以专门开一个：开真实窗口、画完整界面、
+    **不起任何后台作业**（不下载、不解压、不写注册表），存图即退。
+    """
+    return "--shot" in sys.argv
+
+
+def view_mode() -> bool:
+    """`--view`：只开界面看一眼（不截图、不干活、不提权），手动关掉即退。"""
+    return "--view" in sys.argv
+
+
+def _shot_path() -> str:
+    i = sys.argv.index("--shot")
+    return sys.argv[i + 1] if len(sys.argv) > i + 1 else os.path.join(
+        BASE, "installer_shot.png")
+
+
 class Installer:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, autostart: bool = True):
+        """`autostart=False`：**只画界面**，不自动开始检查/解压（截图与预览用）。"""
         self.root = root
+        self.autostart = autostart
         self.q: queue.Queue = queue.Queue()
         self.items: list = []          # [(键, 名称, 补全函数)]
         self.busy = False
@@ -206,6 +257,14 @@ class Installer:
 
         self._build()
         root.after(120, self._pump)
+        if not autostart:
+            # 预览/截图：停在"准备就绪"这一屏，不碰任何作业
+            self.set_sub("准备就绪，点「开始安装」", ACCENT)
+            self.btn_go.configure(text="开始安装",
+                                  command=self.start_install_app,
+                                  state="normal")
+            self.log_line("安装位置：" + self.install_dir)
+            return
         if self._app_ready:
             # 绿色版：旁边就有主程序，直接开始检查
             self.btn_go.configure(command=self.start_check)
@@ -240,13 +299,13 @@ class Installer:
                  font=("Microsoft YaHei UI", 10)).pack(side="left")
         self.path_var = tk.StringVar(value=self.install_dir)
         self.path_entry = tk.Entry(
-            self.pathbar, textvariable=self.path_var, bg="#0b0e14", fg=FG,
+            self.pathbar, textvariable=self.path_var, bg=PANEL2, fg=FG,
             insertbackground=FG, relief="flat", font=("Microsoft YaHei UI", 10))
         self.path_entry.pack(side="left", fill="x", expand=True, padx=(2, 8),
                              ipady=5)
         self.btn_browse = tk.Button(
             self.pathbar, text="浏览…", command=self.choose_dir, relief="flat",
-            bg="#252b3a", fg=FG, activebackground="#303848",
+            bg=PANEL2, fg=FG, activebackground=LINE,
             activeforeground=FG, font=("Microsoft YaHei UI", 9),
             padx=12, pady=4, cursor="hand2", bd=0)
         self.btn_browse.pack(side="left")
@@ -258,14 +317,14 @@ class Installer:
         # 日志区用 expand=True 吃掉剩余空间，窗口拉大时也自适应。
         wrap = tk.Frame(self.root, bg=BG)
         wrap.pack(fill="x", padx=28, pady=(4, 10))
-        self.canvas = tk.Canvas(wrap, bg="#161a24", highlightthickness=1,
-                                highlightbackground="#252b3a", height=250, bd=0)
+        self.canvas = tk.Canvas(wrap, bg=PANEL, highlightthickness=1,
+                                highlightbackground=PANEL2, height=250, bd=0)
         self.canvas.pack(side="left", fill="x", expand=True)
         sb = ttk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
         sb.pack(side="right", fill="y")
         self.canvas.configure(yscrollcommand=sb.set)
 
-        self.rows_box = tk.Frame(self.canvas, bg="#161a24")
+        self.rows_box = tk.Frame(self.canvas, bg=PANEL)
         self._rows_win = self.canvas.create_window((0, 0), window=self.rows_box,
                                                    anchor="nw")
         # 内容变高 → 更新可滚动范围；Canvas 变宽 → 内层跟着变宽
@@ -282,7 +341,7 @@ class Installer:
         self.rows: dict = {}
 
         # 日志
-        self.log = tk.Text(self.root, height=7, bg="#0b0e14", fg="#c8d2e0",
+        self.log = tk.Text(self.root, height=7, bg=PANEL2, fg=DIM,
                            insertbackground=FG, relief="flat", wrap="word",
                            font=("Consolas", 9), padx=10, pady=8)
         self.log.pack(fill="both", expand=True, padx=28)
@@ -327,10 +386,10 @@ class Installer:
 
     def _btn(self, parent, text, cmd, side="right", primary=False):
         b = tk.Button(parent, text=text, command=cmd, relief="flat",
-                      bg=ACCENT if primary else "#252b3a",
-                      fg="#08111c" if primary else FG,
-                      activebackground="#6cb8ff" if primary else "#303848",
-                      activeforeground="#08111c" if primary else FG,
+                      bg=ACCENT if primary else PANEL2,
+                      fg=PANEL if primary else FG,
+                      activebackground=CYAN if primary else LINE,
+                      activeforeground=PANEL if primary else FG,
                       font=("Microsoft YaHei UI", 10, "bold" if primary else "normal"),
                       padx=20, pady=8, cursor="hand2", bd=0)
         b.pack(side=side, padx=(10, 0))
@@ -380,19 +439,19 @@ class Installer:
                     # 行是检查完才建的 —— 检查项有 20+ 个，固定几行装不下，
                     # 而且"要检查什么"应该由 envcheck 说了算，不该在界面里硬编码。
                     _, key, name, why, level = m
-                    r = tk.Frame(self.rows_box, bg="#161a24")
+                    r = tk.Frame(self.rows_box, bg=PANEL)
                     r.pack(fill="x", padx=14, pady=4)
-                    icon = tk.Label(r, text="•", bg="#161a24", fg=DIM, width=3,
+                    icon = tk.Label(r, text="•", bg=PANEL, fg=DIM, width=3,
                                     font=("Segoe UI Symbol", 13))
                     icon.pack(side="left")
                     tag = {"crit": "必需", "opt": "可选", "info": ""}[level]
-                    tk.Label(r, text=name, bg="#161a24", fg=FG, width=22,
+                    tk.Label(r, text=name, bg=PANEL, fg=FG, width=22,
                              anchor="w", font=("Microsoft YaHei UI", 10)
                              ).pack(side="left")
-                    tk.Label(r, text=(f"[{tag}]" if tag else ""), bg="#161a24",
+                    tk.Label(r, text=(f"[{tag}]" if tag else ""), bg=PANEL,
                              fg=WARN, width=6, anchor="w",
                              font=("Microsoft YaHei UI", 8)).pack(side="left")
-                    det = tk.Label(r, text=why, bg="#161a24", fg=DIM, anchor="w",
+                    det = tk.Label(r, text=why, bg=PANEL, fg=DIM, anchor="w",
                                    font=("Microsoft YaHei UI", 9))
                     det.pack(side="left", fill="x", expand=True)
                     self.rows[key] = (icon, det)
@@ -1264,6 +1323,50 @@ def main() -> int:
         i = sys.argv.index("--e2e")
         dest = sys.argv[i + 1] if len(sys.argv) > i + 1 else r"E:\Lyric2TTML"
         return e2e(dest)
+
+    # ---- 截图 / 只看一眼：**不提权、不干活** ----
+    # ⚠️ 必须在 `relaunch_elevated()` 之前 —— 否则截图也会弹 UAC（自动化挂死）。
+    if shot_mode() or view_mode():
+        root = tk.Tk()
+        try:
+            root.tk.call("tk", "scaling", 1.25)
+        except Exception:
+            pass
+        inst = Installer(root, autostart=False)
+
+        if shot_mode():
+            out = _shot_path()
+
+            def _prepare() -> None:
+                root.lift()
+                root.attributes("-topmost", True)
+                root.focus_force()
+                root.update()
+
+            def _grab() -> None:
+                try:
+                    from PIL import ImageGrab
+                    # ⚠️ 截图抓的是**屏幕像素**，窗口被别的窗口盖住就会抓到别人的画面
+                    # （第一次真抓到了桌面：图里是用户头像和"欢迎"字样）。
+                    # 所以抓之前必须**提到最前 + 置顶 + 激活**。
+                    _prepare()
+                    x = root.winfo_rootx()
+                    y = root.winfo_rooty()
+                    w, h = root.winfo_width(), root.winfo_height()
+                    ImageGrab.grab(bbox=(x, y, x + w, y + h)).save(out)
+                    print(f"  已截图：{out}（{w}x{h}）")
+                except Exception as e:                  # noqa: BLE001
+                    print(f"  截图失败：{type(e).__name__}: {e}")
+                root.destroy()
+
+            root.update()
+            # ⚠️ 也不能过早抓：窗口有淡入/重绘过程，抓早了会拍到**半透明**的中间态
+            # （第二次抓到的是界面与桌面的混合图，能看见底下的头像）。
+            # 先抬到最前，等合成器画完再抓。
+            root.after(150, _prepare)
+            root.after(2500, _grab)
+        root.mainloop()
+        return 0
 
     # 正常双击 → 不是管理员就提权重启
     if os.name == "nt" and not _is_elevated():
