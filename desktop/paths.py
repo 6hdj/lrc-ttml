@@ -271,6 +271,21 @@ def apply_runtime_path() -> list:
             d = os.path.join(root, name)
             if not os.path.isdir(d):
                 continue
+            # ⚠️⚠️ **崩过的运行时目录绝不加进 sys.path**。
+            # 冻结版里 `import torch` 实测会让进程 `0xC0000005` 崩掉；
+            # 一旦这样的目录进了 `sys.path`，**任何**一次 `import torch`
+            # （包括 `speaker_campplus.available()` 里那句探测）都会崩，
+            # 用户看到的是"一开软件就闪退"。
+            # `runtime_service` 会在尝试 import 之前留一个
+            # `.l2t-import-crashed` 记号；这里据此跳过它，
+            # 让程序**优雅降级**（单声部照常可用）。
+            if os.path.isfile(os.path.join(d, ".l2t-import-crashed")):
+                try:
+                    from desktop.services import runtime_service as _rs
+                    if _rs._crashed_before(d):
+                        continue
+                except Exception:                       # noqa: BLE001
+                    continue
             # ⚠️ 兼容"包名目录"这种布局：有的解包会解出 `<id>/<id>/…`
             # （wheel 里已经是 `torch/` 顶层，再套一层就变成
             # `<id>/torch/`）。这时要加的是**里面那一层**，

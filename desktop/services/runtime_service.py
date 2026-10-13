@@ -524,6 +524,21 @@ def _state_file(site: str) -> str:
     return os.path.join(site, ".l2t-installed.json")
 
 
+def _crash_marker(site: str) -> str:
+    """记录"在这个环境里，import 这个运行时会让进程崩"。
+
+    ⚠️⚠️ 为什么需要它（真踩过，而且是**致命**的那种）：
+    冻结版里主进程 `import torch` 会以 `0xC0000005`（访问冲突）**崩掉整个程序**。
+    崩在 `_verify_loaded()` 里面时**连记录都来不及写** ——
+    于是下一次启动还会再崩一次，用户看到的是"一开软件就闪退"。
+
+    所以留一个**跨进程**的记号：再遇到时不再尝试 import，
+    直接把状态标成失败 + 给出可执行提示，让**基础功能照常可用**
+    （单声部 / 编辑 / 导出都不需要 torch）。
+    """
+    return os.path.join(site, ".l2t-import-crashed")
+
+
 def _write_state(site: str, spec: dict, why: str) -> None:
     """记下"这一次安装已经真的加载验证过"。
 
@@ -554,8 +569,27 @@ def _write_state(site: str, spec: dict, why: str) -> None:
             "files": cur.get("files") or 0,
             "bytes": _dir_size(site),
         })
-        with open(_state_file(site), "w", encoding="utf-8") as fh:
+        # ⚠️ **原子写 + 立刻落盘**：冻结版可能在写完记录之后**立刻崩**
+        # （退出阶段的原生崩溃）。如果只是 `json.dump` 到文件对象，
+        # 数据还在缓冲区里，进程一崩就丢了 —— 实测就是这样：
+        # `[完成] …（真实加载通过）` 打印了，但 `.l2t-installed.json` **不存在**，
+        # 于是下一次启动判定为 failed（用户看到"装了没用"）。
+        # 先写 `.tmp` 再 `os.replace`，并且 `flush + fsync` 强制落盘。
+        tmp = _state_file(site) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(cur, fh, ensure_ascii=False, indent=1)
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+        atomic_replace(tmp, _state_file(site))
+        # 记录写完就清掉"上次崩过"的记号：这次的加载是成功的
+        try:
+            if os.path.isfile(_crash_marker(site)):
+                os.remove(_crash_marker(site))
+        except OSError:
+            pass
     except OSError:
         pass
 
@@ -573,6 +607,16 @@ def _verify_installed(spec: dict, site: str) -> tuple:
     """
     sf = _state_file(site)
     if not os.path.isfile(sf):
+        # 有"上次 import 崩过"的记号、又没有成功记录 → 说清是怎么回事，
+        # 而不是让用户看到一句没头没脑的"缺少安装记录"。
+        if _crashed_before(site):
+            return False, (
+                "文件已解包，但在这个环境里**加载 PyTorch 会让进程崩溃**"
+                "（上次尝试时崩了，记录已保留）。\n"
+                "   受影响的只有「对唱分声部」；单声部歌词制作、"
+                "TTML 编辑与导出都不受影响。\n"
+                "   可以点「重试」再试一次；若反复崩溃请到"
+                "「帮助与诊断」导出日志反馈。")
         return False, "目录在但缺少安装记录（可能是手工拷贝的）—— 建议重新下载"
     try:
         with open(sf, encoding="utf-8") as fh:
@@ -620,9 +664,16 @@ def _verify_loaded(spec: dict, site: str) -> tuple:
         return True, "已安装"
     module = v.get("module") or "torch"
     want_prefix = str(v.get("expected_version_prefix") or "")
+    site_abs = os.path.abspath(site)
+
+    # ⚠️⚠️ **先立"正在尝试"的记号，再 import** —— 顺序不能反。
+    # 因为这次 import 可能把整个进程崩掉（冻结版实测 0xC0000005），
+    # 崩了就没有机会写任何东西；标记必须**已经在磁盘上**，
+    # 下一个进程才能看到"上次在这个环境里 import 崩过"，
+    # 从而不再尝试、改成优雅降级（基础功能照常可用）。
+    _mark_attempt(site)
 
     import importlib
-    site_abs = os.path.abspath(site)
     saved_path = list(sys.path)
     try:
         sys.path.insert(0, site_abs)
@@ -644,6 +695,36 @@ def _verify_loaded(spec: dict, site: str) -> tuple:
         return True, f"{module} {got}（真实加载通过）"
     finally:
         sys.path[:] = saved_path
+
+
+def _mark_attempt(site: str) -> None:
+    """在 `_verify_loaded()` 动 import 之前，把"尝试"写到磁盘上（含 fsync）。"""
+    try:
+        marker = _crash_marker(site)
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write(_now())
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def _crashed_before(site: str) -> bool:
+    """这个环境里上次 import 是不是崩过（且之后没有成功记录）。"""
+    try:
+        if not os.path.isfile(_crash_marker(site)):
+            return False
+        sf = _state_file(site)
+        if os.path.isfile(sf):
+            with open(sf, encoding="utf-8") as fh:
+                if json.load(fh).get("verified"):
+                    return False        # 后来成功过 → 不是问题
+        return True
+    except OSError:
+        return False
 
 
 def _cli(argv=None) -> int:
