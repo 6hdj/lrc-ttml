@@ -407,6 +407,13 @@ if not os.path.isfile(_ICON):
 else:
     print(f'[icon] 使用 {_ICON}（{os.path.getsize(_ICON)} 字节）')
 
+# 版本资源文件（产品名/版本号/公司名）。缺失不致命，但用户会在
+# 「属性 → 详细信息」里看到一片空白。
+_VERSION_FILE = os.path.join('build', 'version_info.txt')
+if not os.path.isfile(_VERSION_FILE):
+    print(f'[version] ⚠️ 没有 {_VERSION_FILE} —— 属性里产品名/版本号会是空的'
+          f'（先跑 `python tools/make_version_info.py`）')
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -425,6 +432,10 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=_ICON if os.path.isfile(_ICON) else None,
+    # ⚠️ 版本资源：没有它，资源管理器「属性 → 详细信息」与任务管理器里
+    # **产品名/版本号全是空白**（实测过）。文件由 `tools/make_version_info.py`
+    # 生成，版本号取自 `desktop/__init__.py` 的 `__version__`（唯一真源）。
+    version=_VERSION_FILE if os.path.isfile(_VERSION_FILE) else None,
 )
 coll = COLLECT(
     exe,
