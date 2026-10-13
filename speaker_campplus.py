@@ -302,14 +302,17 @@ def available() -> bool:
       所以"没装 PyTorch"不再是"分声部不可用"。
 
     两种后端的文件要求不同，不能混着判：
-      * ONNX 后端：需要 `campplus.onnx` + onnxruntime + 权重（权重用于校验存在性）；
-      * torch 后端：需要权重 + `campplus_src/model.py` + torch。
+      * **ONNX 后端**：只需要 `campplus.onnx` + onnxruntime。
+        ⚠️ **不需要 `.bin`** —— ONNX 图是**自包含**的（结构与权重都在里面，
+        由 `tools/export_campplus_onnx.py` 从同一份 `.bin` 导出并做过数值校验）。
+        第一版这里写成"还要 `.bin` 存在"，结果打包版（只带 ONNX）里
+        `available()` 返回 False、分声部**静默退回按歌词标记** ——
+        实测：产物里 v1 32 行 / v2 0 行，等于分声部没生效。真踩过。
+      * **torch 后端**：需要 `.bin` + `campplus_src/model.py` + torch。
     """
     be = backend()
     if be == "onnx":
-        # ONNX 图是自包含的（结构+权重都在里面），但权重文件仍必须存在 ——
-        # 它同时是"用户确实下过模型"的证据，也让两种后端可切换。
-        return os.path.exists(_ONNX) and os.path.exists(_MODEL)
+        return os.path.exists(_ONNX)
     if be == "torch":
         return (os.path.exists(_MODEL)
                 and os.path.exists(os.path.join(_SRC, "model.py")))
@@ -327,35 +330,22 @@ def missing_reason() -> str:
     be = backend()
 
     if be == "onnx":
-        if not has_model and not has_onnx:
-            return ("缺少 CAM++ 声纹模型（约 27 MB）—— "
+        # 能走到这里说明 backend() 已经确认 ONNX 文件在 + onnxruntime 可用
+        return ""
+    if be == "torch":
+        if not has_model:
+            return ("缺少 CAM++ 声纹权重（约 27 MB）—— "
                     "在「模型管理」里下载「CAM++ 声纹（分声部）」即可。")
+        if not has_src:
+            return ("缺少 CAM++ 网络定义（models/campplus_src）—— "
+                    "这是随程序分发的文件，说明安装包不完整，请重新安装。")
         return ""
 
-    # 走到这里：ONNX 用不了
-    if has_model and has_onnx:
-        # 文件都在、后端却不可用 → 只能是 onnxruntime 有问题
-        try:
-            import onnxruntime                              # noqa: F401
-            return ""
-        except Exception as e:                              # noqa: BLE001
-            onnx_err = f"{type(e).__name__}: {str(e)[:80]}"
-    else:
-        onnx_err = "campplus.onnx 不存在（需用 tools/export_campplus_onnx.py 导出）"
-
-    if not has_model:
-        return ("缺少 CAM++ 声纹权重（约 27 MB）—— "
-                "在「模型管理」里下载「CAM++ 声纹（分声部）」即可。")
-
-    # 权重在、ONNX 不可用 → 看 torch
-    try:
-        import torch                                        # noqa: F401
-    except Exception as e:                                  # noqa: BLE001
-        return ("缺少可用的推理后端：ONNX（" + onnx_err + "）与 PyTorch 都不可用。\n"
-                "   ① 首选：装 onnxruntime（主安装包已自带）并确认 "
-                "models/campplus/campplus.onnx 存在；\n"
-                "   ② 或到「模型管理 → 运行时组件」下载 PyTorch 运行时。")
-    if not has_src:
-        return ("缺少 CAM++ 网络定义（models/campplus_src）—— "
-                "这是随程序分发的文件，说明安装包不完整，请重新安装。")
-    return ""
+    # 两个后端都不可用：把两边的原因都讲清楚，别让用户猜
+    onnx_why = ("campplus.onnx 不存在（可用 tools/export_campplus_onnx.py 生成）"
+                if not has_onnx else "onnxruntime 不可用")
+    return ("缺少可用的 CAM++ 推理后端：ONNX（" + onnx_why + "）与 PyTorch 都不可用。\n"
+            "   ① 首选：确认 models/campplus/campplus.onnx 存在，"
+            "且 onnxruntime 已安装（主安装包自带）；\n"
+            "   ② 或到「模型管理 → 运行时组件」下载 PyTorch 运行时，"
+            "并下载 CAM++ 声纹权重。")

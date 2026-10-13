@@ -36,10 +36,28 @@ CAMPP_THRESHOLD = 0.31  # 模型官方"是否同一人"阈值，仅作参考
 
 try:
     import speaker_campplus as _spk
-    _HAS_MODEL = _spk.available()
 except Exception:                                     # pragma: no cover
     _spk = None
-    _HAS_MODEL = False
+
+
+def _has_model() -> bool:
+    """**每次都问一遍**，不再在 import 时定死。
+
+    ⚠️⚠️ 原来这里是个模块级常量 `_HAS_MODEL = _spk.available()`，在
+    **import 那一刻**算一次。2026-10-13 起 CAM++ 有了 ONNX 后端、而且
+    后端是**动态选**的（要按"文件在不在 + onnxruntime/torch 能不能用"判断），
+    定死就会出两种错：
+      * 打包版里 ONNX 图打了进来，常量却还是 False → 分声部**静默退回按标记**
+        （实测产物 v1 32 行 / v2 0 行，等于没生效）；
+      * 用户在界面里下载完权重/运行时组件后，进程内也不会变 True。
+    改成一个函数调用，代价可以忽略（就是几个 `os.path.exists`）。
+    """
+    if _spk is None:
+        return False
+    try:
+        return bool(_spk.available())
+    except Exception:                                 # noqa: BLE001
+        return False
 
 
 # --------------------------------------------------------------------------
@@ -81,7 +99,7 @@ def line_embedding(audio: np.ndarray, begin: float, end: float, sr: int = SR,
     另外旧实现还会"丢掉低能量窗口"——用的若是**原始混音**，
     留下的恰恰是**伴奏最响**的窗口，等于专门挑最不像人声的片段去提声纹。
     """
-    if not _HAS_MODEL:
+    if not _has_model():
         return None
     total = len(audio) / sr
     end = min(end, begin + max_sec, total)
@@ -204,7 +222,7 @@ def diarize(audio: np.ndarray, spans: Sequence[Tuple[float, float]],
     if n == 1:
         return DiarizeResult(labels=[0], n_singers=1, reason="只有一行")
 
-    if not _HAS_MODEL:
+    if not _has_model():
         return _diarize_acoustic(audio, spans, n_singers, sr)
 
     embs: List[Optional[np.ndarray]] = [line_embedding(audio, b, e, sr) for b, e in spans]
@@ -553,5 +571,5 @@ def _diarize_acoustic(audio: np.ndarray, spans, n_singers: int, sr: int) -> Diar
 
 
 def available() -> bool:
-    """是否可以用 CAM++ 声纹模型"""
-    return _HAS_MODEL
+    """是否可以用 CAM++ 声纹模型（**动态判断**，别缓存成常量）"""
+    return _has_model()
