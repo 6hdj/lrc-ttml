@@ -269,6 +269,7 @@ class Installer:
         self.q: queue.Queue = queue.Queue()
         self.items: list = []          # [(键, 名称, 补全函数)]
         self.busy = False
+        self._cancelled = False        # 用户在安装过程中点了「退出」
         self.model = "large-v3"        # 补全时要下的 Whisper 模型（跟 exe 默认一致）
         # 安装在哪儿：旁边已有主程序就用那个目录（绿色版），
         # 否则用"安装包自带载荷解压"的方式装到用户目录。
@@ -424,7 +425,7 @@ class Installer:
         self.hint = tk.Label(bar, text="", bg=BG, fg=DIM,
                              font=("Microsoft YaHei UI", 9))
         self.hint.pack(side="left")
-        self.btn_quit = self._btn(bar, "退出", self.root.destroy, side="right")
+        self.btn_quit = self._btn(bar, "退出", self._quit, side="right")
         self.btn_go = self._btn(bar, "开始补全", self.start_install,
                                 side="right", primary=True)
         self.btn_go.configure(state="disabled")
@@ -472,6 +473,23 @@ class Installer:
         self._pb_done = self._pb_total = 0
         self.pb.configure(mode="determinate", value=0)
         self.lb_pct.configure(text="")
+
+    def _quit(self) -> None:
+        """「退出」按钮。
+
+        ⚠️ 改前是直接 `self.root.destroy()` —— 安装正在解压 650MB 时点退出，
+        进程会**在写文件的中途消失**，留下半个目录，用户下次启动就是"程序坏了"。
+        现在：忙的时候只**置取消标志**并给出反馈，让解压循环走到检查点后自己停，
+        停在哪儿、留下了什么、怎么补救，都写在日志里（见 `_extract`）。
+        """
+        if self.busy:
+            self._cancelled = True
+            self.btn_quit.configure(state="disabled", text="正在停止…")
+            self.say("")
+            self.say("[取消] 收到退出请求，正在安全停止（不会写坏已装好的文件）…")
+            self.set_sub("正在停止…", WARN)
+            return
+        self.root.destroy()
 
     def _on_wheel(self, event) -> None:
         """鼠标滚轮滚动清单。
@@ -596,9 +614,13 @@ class Installer:
                     m[1]()
                 elif kind == "sub":
                     self.sub.configure(text=m[1], fg=m[2])
+                elif kind == "progress":
+                    # worker 线程报进度 → **主线程**更新控件（见 `_extract` 的说明）
+                    self.pb_set(m[1], m[2], "解压")
                 elif kind == "done":
                     self.busy = False
-                    self.btn_quit.configure(state="normal")
+                    # 复位「退出」按钮（`_quit` 忙时把它改成了"正在停止…"）
+                    self.btn_quit.configure(state="normal", text="退出")
                     self.btn_go.configure(state=m[1], text=m[2])
                     # 全部就绪时，主按钮变成「启动软件」——用户就不用再去找 启动.bat
                     if len(m) > 3 and m[3] == "launch":
@@ -720,21 +742,55 @@ class Installer:
                                 os.chmod(target, _stat.S_IWRITE)
                             except Exception:
                                 pass
+                        # ⚠️⚠️ **必须先写临时文件，再原子替换**（真踩到的数据损坏 bug）：
+                        # 原实现是 `open(target, "wb")` 直写 —— 而 `"wb"` 会**先把
+                        # 目标截断成 0 字节**，然后才去拷内容。文件被占用时拷贝失败，
+                        # 于是旧文件**已经被清空了**：用户升级一次，原本好好的文件
+                        # 变成空文件（实测 `locked.txt` 内容从 '旧' 变成 ''）。
+                        # 这是"升级把用户装坏"里最恶劣的一种 —— 静默丢数据。
+                        # 现在：写 `<name>.l2t-new` → 成功才 `os.replace()` 上位；
+                        # 失败就把临时文件删掉，**原文件一个字节都不动**。
+                        # （`os.replace` 在 Windows 上是原子的。）
+                        tmp = target + ".l2t-new"
                         last = None
                         for attempt in range(3):
                             try:
-                                with zf.open(n) as src, open(target, "wb") as out:
+                                with zf.open(n) as src, open(tmp, "wb") as out:
                                     shutil.copyfileobj(src, out)
+                                os.replace(tmp, target)
                                 last = None
                                 break
-                            except PermissionError as e:
+                            except (PermissionError, OSError) as e:
                                 last = e
+                                try:
+                                    if os.path.exists(tmp):
+                                        os.remove(tmp)
+                                except OSError:
+                                    pass
                                 time.sleep(0.4)
                         if last is not None:
                             # 单个文件写不进去 → 记下来继续，**不要**让整次安装失败
                             locked.append(rel)
                     if total and (i % 200 == 0 or i == total):
                         self.set_sub(f"正在安装… {i * 100 // total}%")
+                    # ⚠️ 取消支持：解压 650MB / 上万个文件要几十秒，
+                    # 这中间用户点「退出」不该毫无反应（任务书 E 要求"取消处理"）。
+                    # 每 64 个文件让出一次事件循环并检查取消标志 ——
+                    # 既能刷新界面，又不会因为太频繁而拖慢解压。
+                    if self._cancelled:
+                        self.say("")
+                        self.say(f"[取消] 已在第 {i}/{total} 个文件处停下。")
+                        self.say("       已经解压的文件留在目标目录里，程序可能不完整；")
+                        self.say("       想装完就再运行一次安装程序（会接着覆盖补齐）。")
+                        return False
+                    # ⚠️⚠️ **绝对不能在 worker 线程里调 `root.update()`** ——
+                    # 它不是"只刷新画面"，而是会**派发输入事件**：主线程如果正在
+                    # 一个回调里，重入会造成 `QObject`/Tk 那种"跨线程碰 UI"级别的
+                    # 崩溃。`_extract` 跑在 `threading.Thread` 里（见
+                    # `start_install_app`），所以刷新一律**走队列交给主线程**：
+                    # `_pump`（主线程 `after` 循环）会消费这些消息。
+                    if i % 64 == 0:
+                        self.q.put(("progress", i, total))
             self.say(f"[完成] 已解压 {len(names)} 个文件")
             if locked:
                 self.say("")
@@ -743,7 +799,6 @@ class Installer:
                     self.say(f"    {x}")
                 self.say("  多半是**程序还开着**。关掉程序（黑框窗口）和浏览器页面后，")
                 self.say("  重新运行本安装程序即可补上；这些文件不影响核心功能。")
-            self.say(f"[完成] 已解压 {len(names)} 个文件")
         except Exception as e:
             self.say(f"[错误] 解压失败：{type(e).__name__}: {e}")
             return False
