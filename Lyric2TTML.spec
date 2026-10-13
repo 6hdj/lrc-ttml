@@ -23,7 +23,25 @@ from PyInstaller.utils.hooks import copy_metadata
 
 WITH_QT = os.environ.get("L2T_WITH_QT") == "1"
 
-datas = [('index.html', '.'), ('.venvpack/Lib/site-packages/nvidia', 'nvidia'), ('models', 'models')]
+datas = [('index.html', '.'), ('.venvpack/Lib/site-packages/nvidia', 'nvidia')]
+# ⚠️⚠️ **不要**把 `models/` 整个打进去。
+#
+# 需求原文（体积目标章节）："模型权重应从主安装包中分离。安装包不应包含
+# 大型模型权重……模型通过软件内部的模型管理中心下载"。
+#
+# 而实测 `models/` 有 **307 MB**，其中：
+#   * `demucs/hub/checkpoints/*.th`  80MB —— Demucs 权重，模型管理器按需下
+#   * `singer_identity/**/model.ts` 5×37MB —— **已冻结、被否决的实验**
+#     （`singer_ssl.py`，自检第 24 组禁止生产模块引用它）—— 绝对不该进包
+#   * `campplus/campplus_cn_common.bin` 27MB —— CAM++ 权重，模型管理器按需下
+#   * `campplus_src/*.py` —— **网络定义**，几十 KB，这个**必须**进包
+#     （少了它 `speaker_campplus.available()` 返回 False，
+#      开了「强制双声部」会静默退回单人 —— 历史上真踩过）
+#
+# 所以只打 `campplus_src`（网络定义），权重一律走模型管理器。
+if os.path.isdir(os.path.join('models', 'campplus_src')):
+    datas += [('models/campplus_src', 'models/campplus_src')]
+    print('[models] 只打网络定义 models/campplus_src（权重由模型管理器下载）')
 # 桌面版：模型清单必须随包带上（第一次启动就要按它检查模型）
 datas += [('desktop/resources/model_manifest.json', 'desktop/resources')]
 binaries = []
@@ -100,6 +118,128 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+
+# =====================================================================
+#  体积裁剪（prune）
+# =====================================================================
+# 为什么要在 spec 里做这件事，而不是调 collect_all 的参数：
+# `collect_all('torch')` / `collect_all('PySide6')` 会把**整个发行包**，
+# 包括构建期产物（.lib / .h）、测试套件、示例、命令行小工具一起收进来。
+# 这些文件对运行时**一点用都没有**，但白占几百 MB（实测 torch 的
+# include 38MB + .lib 42MB、PySide6 的 opengl32sw 20MB …）。
+#
+# ⚠️ 三条纪律（需求原文要求"不能仅凭文件名判断 DLL 无用"）：
+#   1. 只删**能说清为什么不需要**的东西：构建产物、测试、示例、文档、
+#      命令行工具、以及**我们明确不用的 Qt 子系统**；
+#   2. **绝不删** .dll / .pyd / .so / 数据文件 —— 那些可能是运行时真的会
+#      加载的（Qt 插件尤其如此）；
+#   3. 每轮裁剪之后都要跑一次**冻结版验收**
+#      （`python tools/accept_frozen.py <exe>`），证明功能没坏。
+#
+# 想关掉裁剪看基线：设 `L2T_NO_PRUNE=1`。
+import os as _os
+
+_PRUNE = _os.environ.get("L2T_NO_PRUNE") != "1"
+
+# (匹配前缀, 说明) —— 大小写不敏感，匹配的是归档内的相对路径
+_PRUNE_RULES = [
+    # ---- torch：构建期产物与测试 ----
+    ("torch/include", "C++ 头文件（编译 torch 扩展才需要）"),
+    ("torch/bin", "protoc.exe 等命令行工具"),
+    ("torch/test", "torch 自带测试"),
+    ("torch/testing", "torch.testing 测试工具"),
+    # ---- Qt：我们明确不用的子系统 ----
+    # 桌面窗口是**纯 QtWidgets**；编辑台走系统浏览器（不引入 WebEngine）。
+    # ⚠️ 注意这里**只删 Qt6 的 DLL**，不删 PySide6 的 .pyd：
+    # 那些是 Python 绑定，删错会 ImportError。
+    ("PySide6/opengl32sw.dll", "Qt 的软件 OpenGL 兜底（20MB，只有无 GPU 驱动才用）"),
+    ("PySide6/d3dcompiler_47.dll", "Qt 的 D3D 着色器编译器（ANGLE 用，Qt6 不再需要）"),
+    ("PySide6/translations", "Qt 自带界面翻译（我们的界面是中文自绘，不用 Qt 内置文案）"),
+    ("PySide6/qml", "QML 运行时资源（我们用 Widgets，不用 QML）"),
+    ("PySide6/typesystems", "Qt for Python 的 .typesystem 源文件（生成绑定用）"),
+    ("PySide6/include", "Qt for Python 头文件"),
+    ("PySide6/scripts", "pyside6-deploy 等命令行工具"),
+    ("PySide6/support", "生成 .pyi 的辅助脚本"),
+    ("PySide6/doc", "文档"),
+    ("shiboken6/include", "shiboken 头文件"),
+    ("shiboken6/scripts", "shiboken 命令行工具"),
+    # ---- 通用：文档/示例/测试 ----
+    ("**/tests/", "第三方包的测试目录"),
+    ("**/examples/", "第三方包的示例目录"),
+    ("**/__pycache__", "字节码缓存（PyInstaller 自己会编译）"),
+]
+
+# Qt6 里我们**不用**的模块（桌面窗口只 import QtCore / QtGui / QtWidgets）。
+# ⚠️ 只列**确定不用**的：Qt6Network / Qt6Svg / Qt6PrintSupport 这些
+# 会被 QtWidgets 或插件间接用到，**不删**。
+_QT_UNUSED_DLLS = [
+    "Qt6Quick", "Qt6Qml", "Qt6QmlMeta", "Qt6QmlModels", "Qt6QmlWorkerScript",
+    "Qt6QmlCore", "Qt6QmlLocalStorage", "Qt6QmlXmlListModel", "Qt6QmlNetwork",
+    "Qt6Designer", "Qt6DesignerComponents", "Qt6UiTools",
+    "Qt6WebEngine", "Qt6WebView", "Qt6WebChannel",
+    "Qt6Multimedia", "Qt6Charts", "Qt6DataVisualization", "Qt6Graphs",
+    "Qt6Sql", "Qt6Test", "Qt6Bluetooth", "Qt6Nfc", "Qt6Positioning",
+    "Qt6Location", "Qt6SerialPort", "Qt6SerialBus", "Qt6Sensors",
+    "Qt6SpatialAudio", "Qt6TextToSpeech", "Qt6Scxml", "Qt6StateMachine",
+    "Qt6RemoteObjects", "Qt6NetworkAuth", "Qt6HttpServer", "Qt6Lottie",
+    "Qt6Pdf", "Qt6VirtualKeyboard", "Qt63D", "Qt6ShaderTools", "Qt6Canvas",
+]
+for _m in _QT_UNUSED_DLLS:
+    _PRUNE_RULES.append((f"PySide6/{_m}", f"Qt 未使用模块 {_m}"))
+
+
+def _norm(toc):
+    """把 TOC 统一成 (dest, src, typecode) 三段（PyInstaller 4/5/6 通用）。"""
+    out = []
+    for e in (toc or []):
+        if len(e) >= 3 and isinstance(e[1], str):
+            out.append((e[0], e[1], e[2]))
+        elif len(e) >= 2:
+            out.append((e[0], e[1], "DATA"))
+    return out
+
+
+def _match(dest, rule):
+    d = dest.replace("\\", "/").lower()
+    r = rule.lower()
+    if r.startswith("**/") and r.endswith("/"):
+        return f"/{r[3:]}" in d or d.startswith(r[3:])
+    return d.startswith(r)
+
+
+def _prune(toc, label):
+    """按规则裁掉 TOC 里的条目，并打印**真的删了多少**。"""
+    if not _PRUNE:
+        print(f"[prune] {label}: 已禁用（L2T_NO_PRUNE=1），保留全部 {len(toc)} 项")
+        return toc
+    kept, dropped = [], []
+    for item in toc:
+        dest = item[0] if isinstance(item[0], str) else str(item[0])
+        hit = None
+        for rule, why in _PRUNE_RULES:
+            if _match(dest, rule):
+                hit = why
+                break
+        if hit:
+            dropped.append((dest, hit))
+        else:
+            kept.append(item)
+    print(f"[prune] {label}: 裁掉 {len(dropped)} 项，保留 {len(kept)} 项")
+    seen = {}
+    for dest, why in dropped:
+        key = why.split("（")[0]
+        seen[key] = seen.get(key, 0) + 1
+    for why, n in sorted(seen.items(), key=lambda x: -x[1])[:12]:
+        print(f"        - {why}: {n} 项")
+    return kept
+
+
+a.binaries = _prune(_norm(a.binaries), "binaries")
+a.datas = _prune(_norm(a.datas), "datas")
+a.zipfiles = _norm(a.zipfiles)
+
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
