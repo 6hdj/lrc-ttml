@@ -291,6 +291,9 @@ class Installer:
         self._build()
         root.after(120, self._pump)
         _style_progressbar(root)
+        # 起始阶段：路径 + 勾选项（第 1 步）。
+        # ⚠️ 必须在 `_build()` 之后调 —— 它要 pack/forget 控件。
+        self.set_stage("choose")
         if not autostart:
             # 预览/截图：停在"准备就绪"这一屏，不碰任何作业
             self.set_sub("准备就绪，点「开始安装」", ACCENT)
@@ -325,6 +328,22 @@ class Installer:
                             font=("Microsoft YaHei UI", 11, "bold"))
         self.sub.pack(anchor="w", padx=28, pady=(14, 4))
 
+        # ---------------------------------------------------------------
+        # 步骤条：让用户知道"现在在哪一步、还要几步"（任务书 E：现代化向导）
+        # ---------------------------------------------------------------
+        # ⚠️ 之前是一个**单屏表单**：路径、勾选项、清单、日志、按钮全堆在一起，
+        # 用户看不出"现在该做什么、后面还有几步"。加一条步骤条是最小改动，
+        # 又确实解决"不知道进行到哪"的问题。
+        self.steps = {}
+        stepbar = tk.Frame(self.root, bg=BG)
+        stepbar.pack(anchor="w", padx=28, pady=(6, 2))
+        for _k, _label in (("choose", "1 选择位置"), ("install", "2 安装"),
+                           ("done", "3 完成")):
+            _lb = tk.Label(stepbar, text=_label, bg=BG, fg=FAINT,
+                           font=("Microsoft YaHei UI", 10, "bold"))
+            _lb.pack(side="left", padx=(0, 18))
+            self.steps[_k] = _lb
+
         # 安装位置：**必须让用户能改**。默认装到用户目录（不需要管理员权限，
         # 也不会有 Program Files 的写权限问题），但想装哪儿应该由用户说了算。
         self.pathbar = tk.Frame(self.root, bg=BG)
@@ -349,12 +368,12 @@ class Installer:
         # （真踩过：用户截图里清单只显示到一半，按钮根本看不见）。
         # 所以套一层 Canvas + Scrollbar，并给它一个固定高度上限；
         # 日志区用 expand=True 吃掉剩余空间，窗口拉大时也自适应。
-        wrap = tk.Frame(self.root, bg=BG)
-        wrap.pack(fill="x", padx=28, pady=(4, 10))
-        self.canvas = tk.Canvas(wrap, bg=PANEL, highlightthickness=1,
+        self.wrap = tk.Frame(self.root, bg=BG)
+        self.wrap.pack(fill="x", padx=28, pady=(4, 10))
+        self.canvas = tk.Canvas(self.wrap, bg=PANEL, highlightthickness=1,
                                 highlightbackground=PANEL2, height=250, bd=0)
         self.canvas.pack(side="left", fill="x", expand=True)
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
+        sb = ttk.Scrollbar(self.wrap, orient="vertical", command=self.canvas.yview)
         sb.pack(side="right", fill="y")
         self.canvas.configure(yscrollcommand=sb.set)
 
@@ -381,14 +400,14 @@ class Installer:
         # 但界面上**没有任何地方设置 `want_desktop`** ⇒ 用户永远拿不到桌面图标，
         # 而代码里那句 `getattr(self, "want_desktop", False)` 看着像"已实现"。
         # 这种"后端能、界面没接"的缺口属性断言查不出来，只有看界面才发现。
-        opts = tk.Frame(self.root, bg=BG)
-        opts.pack(fill="x", padx=28, pady=(2, 6))
+        self._opts = tk.Frame(self.root, bg=BG)
+        self._opts.pack(fill="x", padx=28, pady=(2, 6))
         self.var_desktop = tk.BooleanVar(value=False)
         self.var_sm = tk.BooleanVar(value=True)
         for var, text in ((self.var_sm, "在「开始菜单」里创建快捷方式（推荐）"),
                           (self.var_desktop, "同时创建桌面快捷方式")):
             tk.Checkbutton(
-                opts, text=text, variable=var, bg=BG, fg=DIM,
+                self._opts, text=text, variable=var, bg=BG, fg=DIM,
                 activebackground=BG, activeforeground=FG, selectcolor=PANEL2,
                 font=("Microsoft YaHei UI", 9), bd=0, highlightthickness=0,
                 anchor="w").pack(side="left", padx=(0, 18))
@@ -409,12 +428,12 @@ class Installer:
         # 口径：主程序解压（按字节，PyInstaller 的 onefile 有真实回调）+
         #      环境检查/补全（按"清单条目完成数"计数）。
         # 两者都不是"转圈动画"，每一项都能对上日志里的一行。
-        pbar = tk.Frame(self.root, bg=BG)
-        pbar.pack(fill="x", padx=28, pady=(8, 0))
-        self.pb = ttk.Progressbar(pbar, mode="determinate", maximum=100,
+        self._pbar = tk.Frame(self.root, bg=BG)
+        self._pbar.pack(fill="x", padx=28, pady=(10, 0))
+        self.pb = ttk.Progressbar(self._pbar, mode="determinate", maximum=100,
                                   style="L2T.Horizontal.TProgressbar")
         self.pb.pack(fill="x", side="left", expand=True)
-        self.lb_pct = tk.Label(pbar, text="", bg=BG, fg=DIM, width=12,
+        self.lb_pct = tk.Label(self._pbar, text="", bg=BG, fg=DIM, width=12,
                                anchor="e", font=("Microsoft YaHei UI", 9))
         self.lb_pct.pack(side="right", padx=(10, 0))
         self._pb_total = 0        # 本轮共多少项（0 = 未知，不显示百分比）
@@ -422,13 +441,13 @@ class Installer:
         self._pb_mode = ""
 
         # 按钮区
-        bar = tk.Frame(self.root, bg=BG)
-        bar.pack(fill="x", padx=28, pady=16)
-        self.hint = tk.Label(bar, text="", bg=BG, fg=DIM,
+        self._bar = tk.Frame(self.root, bg=BG)
+        self._bar.pack(fill="x", padx=28, pady=16)
+        self.hint = tk.Label(self._bar, text="", bg=BG, fg=DIM,
                              font=("Microsoft YaHei UI", 9))
         self.hint.pack(side="left")
-        self.btn_quit = self._btn(bar, "退出", self._quit, side="right")
-        self.btn_go = self._btn(bar, "开始补全", self.start_install,
+        self.btn_quit = self._btn(self._bar, "退出", self._quit, side="right")
+        self.btn_go = self._btn(self._bar, "开始补全", self.start_install,
                                 side="right", primary=True)
         self.btn_go.configure(state="disabled")
 
@@ -540,6 +559,74 @@ class Installer:
     def set_sub(self, text: str, color: str = ACCENT) -> None:
         self.q.put(("sub", text, color))
 
+    def set_stage(self, stage: str) -> None:
+        """切换向导阶段：`choose` / `install` / `done`。
+
+        做两件事：
+          1. **高亮步骤条**上对应的那一步（已完成的用 OK 色，当前用强调色）；
+          2. **按阶段显示/隐藏区块** —— 这样用户一眼能看出"现在该做什么"，
+             而不是面对一屏同时出现的路径框、清单、日志、按钮发懵。
+
+        阶段与可见性（都是本类自己的控件，不涉及别处）：
+          * `choose`  ：只看路径 + 勾选项（清单/日志先收起来）
+          * `install` ：看清单 + 进度 + 日志
+          * `done`    ：看结果（清单/日志保留，失败时要能翻）
+        """
+        self._stage = stage
+        order = ["choose", "install", "done"]
+        try:
+            idx = order.index(stage)
+        except ValueError:
+            idx = 0
+        for i, k in enumerate(order):
+            lb = self.steps.get(k)
+            if lb is None:
+                continue
+            if i < idx:
+                lb.configure(fg=OK)                  # 已经走过的
+            elif i == idx:
+                lb.configure(fg=ACCENT)              # 当前
+            else:
+                lb.configure(fg=FAINT)               # 还没到
+        # 按阶段收起/展开区块
+        show_opts = (stage == "choose")
+        try:
+            if show_opts:
+                # 第 1 步只留"路径 + 勾选项"，其余全收起来 ——
+                # 否则中间会留一大片空白（截图里能看到），看着像没画完。
+                self._pbar.pack_forget()
+                self.pathbar.pack(fill="x", padx=28, pady=(10, 6))
+                self._opts.pack(fill="x", padx=28, pady=(2, 6))
+                self.wrap.pack_forget()
+                self.log.pack_forget()
+            else:
+                self.pathbar.pack_forget()
+                self._opts.pack_forget()
+                # 进度条重新出现（pack 到按钮条之前，也就是它原来在的位置）
+                self._pbar.pack(fill="x", padx=28, pady=(10, 0),
+                                before=self._bar)
+                self.wrap.pack(fill="both", expand=True, padx=28, pady=(4, 0))
+                self.log.pack(fill="both", expand=True, padx=28)
+        except Exception as _e:                          # noqa: BLE001
+            # 阶段切换只是视觉优化，**绝不能因为它弄崩安装流程**。
+            # ⚠️ 但也不能**静默**吞掉：第一版就是 `pass`，结果"区块没收起来"
+            # 完全看不出来（截图里清单和日志还在），查了半天才发现是这里抛了异常。
+            # 留一行 stderr，出问题时一眼能看到。
+            import sys as _sys
+            print(f"[wizard] 切换阶段 {stage} 时出错（不影响安装）："
+                  f"{type(_e).__name__}: {_e}", file=_sys.stderr)
+
+    def _mark_done(self, ok: bool, msg: str) -> None:
+        """完成页：一句话结果 + 主按钮变成「启动软件」。"""
+        self.set_stage("done")
+        if ok:
+            self.set_sub("安装完成，可以使用了", OK)
+            self.say("")
+            self.say("=" * 46)
+            self.say("  ✅ 安装完成！点下面的「▶ 启动软件」开始使用。")
+        else:
+            self.set_sub("安装没完成，可以重试", BAD)
+
     def log_line(self, msg: str) -> None:
         """直接往日志框写一行（主线程用；后台线程请用 self.say）"""
         self.log.configure(state="normal")
@@ -626,6 +713,11 @@ class Installer:
                     self.btn_go.configure(state=m[1], text=m[2])
                     # 全部就绪时，主按钮变成「启动软件」——用户就不用再去找 启动.bat
                     if len(m) > 3 and m[3] == "launch":
+                        # 走到「启动软件」= 向导的第 3 步（完成）。
+                        # 在**这里**统一切阶段，而不是去改三处 `q.put(...)` ——
+                        # 那三处分别在"全部就绪/核心可用/缺可选"分支里，
+                        # 改漏一个就会出现"按钮变了但步骤条还停在第 2 步"。
+                        self.set_stage("done")
                         self.btn_go.configure(command=self.launch_app,
                                               text="▶ 启动软件（完成）")
                     elif len(m) > 3 and m[3] == "install_app":
@@ -1032,6 +1124,7 @@ class Installer:
         if self.busy:
             return
         self.busy = True
+        self.set_stage("install")          # 步骤条：进入第 2 步
         self.btn_go.configure(state="disabled")
 
         def work():
@@ -1051,6 +1144,9 @@ class Installer:
                 self.q.put(("run", self.start_check))
             else:
                 self.q.put(("setbtn", "重试", self.start_install_app, "normal"))
+                # ⚠️ 失败时也要把步骤条退回第 2 步（而不是停在"完成"），
+                # 否则用户看到"3 完成"却是红的，会以为装好了但其实没有。
+                self.q.put(("run", lambda: self.set_stage("install")))
 
         threading.Thread(target=work, daemon=True).start()
 
