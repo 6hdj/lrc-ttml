@@ -38,6 +38,27 @@ def _rehome() -> str:
     """把"数据/资源目录"从包内部改到 exe 旁边。返回该目录。"""
     base = _base_dir()
     os.chdir(base)
+
+    # ⚠️⚠️ **运行时组件（PyTorch 等）的 sys.path 必须在这里插**，而且
+    # **不分冻结 / 源码**：
+    # 从 2026-10-13 起 PyTorch 不进主安装包，改成"用户按需下载到数据目录"的
+    # 运行时组件。`speaker_campplus` 里是**延迟** `import torch`，所以只要在
+    # 任何一次 `import torch` 之前把目录加进 `sys.path` 就可以。
+    #
+    # 只放在 `desktop/app.py` 里是不够的 —— 那条路只在**开窗口**时走，
+    # 而 `launcher.py --audio ... ` 这种**命令行转换**根本不经过它，
+    # 结果就是"装了运行时却仍然报缺 torch"（真踩过：必须两条路都覆盖）。
+    try:
+        sys.path.insert(0, base)
+        try:
+            from desktop import paths as _paths
+            _paths.apply_runtime_path()
+        finally:
+            if base in sys.path:
+                sys.path.remove(base)
+    except Exception:                                   # noqa: BLE001
+        pass
+
     if not _frozen():
         return base
 
@@ -181,10 +202,23 @@ def main() -> int:
         pass
 
     # 环境体检 / 安装补全 / 下载模型：这些是"安装期"命令，直接转发，不走 argparse
+    #
+    # ⚠️⚠️ 顺序有讲究：`--runtime-cli` / `--model-cli` 这类**子命令入口**必须先匹配。
+    # 它们自己的参数里也可能出现裸词（比如 `--install torch`），
+    # 而下面的 `install` 判断会先命中、把整串转给 install.py ——
+    # 实测报 `install.py: error: unrecognized arguments: --runtime-cli torch`。
+    # 所以下面判断裸词时要把"子命令入口"排除掉。
+    _SUBCOMMAND_FLAGS = ("--runtime-cli", "--model-cli")
     if any(a in ("--doctor", "-doctor", "doctor") for a in argv):
         import doctor
         return doctor.main()
-    if any(a in ("--install", "-install", "install") for a in argv):
+    if "--runtime-cli" in argv:
+        from desktop.services import runtime_service
+        return int(runtime_service._cli(
+            [a for a in argv if a != "--runtime-cli"]))
+    _bare_install = any(a in ("--install", "-install", "install") for a in argv) \
+        and not any(a in _SUBCOMMAND_FLAGS for a in argv)
+    if _bare_install:
         import install
         rest = [a for a in argv if a not in ("--install", "-install", "install")]
         sys.argv = ["install.py"] + rest
@@ -206,6 +240,15 @@ def main() -> int:
         rest = [a for a in argv if a not in ("--download-model", "download-model")]
         sys.argv = ["download_model.py"] + rest
         return download_model.main()
+    # 运行时组件（PyTorch 等）：`--runtime-cli --status/--install/--remove`
+    # ⚠️ 光把它加进下面的 `_UI_FLAGS` **不够** —— 那只是"别转发给 main.py"，
+    # 没有任何地方真正处理它，于是会掉进 `cli_like` 被当成普通参数
+    # （实测报 `install.py: error: unrecognized arguments: --runtime-cli`）。
+    # 需求第 10 条要求"在冻结版 EXE 中验证运行时下载"，所以要真的路由。
+    if "--runtime-cli" in argv:
+        from desktop.services import runtime_service
+        return int(runtime_service._cli(
+            [a for a in argv if a != "--runtime-cli"]))
 
     # 走命令行：有参数、且不是界面/桌面版专用的那些参数
     #
@@ -215,7 +258,8 @@ def main() -> int:
     # 退出码 2（验收脚本就抓到过：打包版跑 `--uicheck` 直接失败，
     # 而它的作用是**验证 Qt 平台插件在不在**，最容易坏的就是它）。
     _UI_FLAGS = ("--web", "--gui", "--server", "--uicheck", "-uicheck",
-                 "--selftest", "-selftest", "--model-cli",
+                 "--selftest", "-selftest", "--model-cli", "--runtime-cli",
+                 "--uninstall", "-uninstall",
                  "--version", "-V")
     cli_like = bool(argv) and not any(a in _UI_FLAGS for a in argv)
     if cli_like:

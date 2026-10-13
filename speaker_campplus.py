@@ -211,4 +211,46 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def available() -> bool:
-    return os.path.exists(_MODEL) and os.path.exists(os.path.join(_SRC, "model.py"))
+    """权重 + 网络定义**都有**，才算可用。
+
+    ⚠️⚠️ 以前这里**只看文件在不在**，不看 torch 能不能 import。
+    2026-10-13 起 PyTorch 被移出主安装包、改成**按需下载的运行时组件**
+    （体积原因，省 425 MiB），于是 "文件在" 不再等于 "能用"：
+    用户没下运行时组件时，`available()` 若还返回 True，
+    `diarize` 会在 `import torch` 那里直接抛 ImportError ——
+    界面上看到的是"分声部崩了"，而不是"需要先准备运行时"。
+
+    所以这里把 torch 也算进"可用"的判据：
+      * 权重在 + 网络定义在 + **torch 能 import** → True；
+      * 少任何一样 → False（调用方据此给出**对应的**提示，两者不能混）。
+    """
+    if not (os.path.exists(_MODEL) and os.path.exists(os.path.join(_SRC, "model.py"))):
+        return False
+    # 运行时组件（PyTorch）没装 → 也不算可用
+    try:
+        import torch                                        # noqa: F401
+    except Exception:                                       # noqa: BLE001
+        return False
+    return True
+
+
+def missing_reason() -> str:
+    """说清**到底缺什么**（需求第 9 条：不得把运行时缺失误报成权重缺失）。
+
+    返回空串 = 什么都不缺。调用方把这段文案直接给用户看。
+    """
+    has_model = os.path.exists(_MODEL)
+    has_src = os.path.exists(os.path.join(_SRC, "model.py"))
+    if not has_src:
+        return ("缺少 CAM++ 网络定义（models/campplus_src）—— "
+                "这是随程序分发的文件，说明安装包不完整，请重新安装。")
+    if not has_model:
+        return ("缺少 CAM++ 声纹权重（约 27 MB）—— "
+                "在「模型管理」里下载「CAM++ 声纹（分声部）」即可。")
+    try:
+        import torch                                        # noqa: F401
+    except Exception as e:                                  # noqa: BLE001
+        return ("缺少 PyTorch 运行时（约占磁盘 509 MB，需下载 118 MB）—— "
+                "在「模型管理 → 运行时组件」里点「下载」即可。"
+                f"（原始报错：{type(e).__name__}: {str(e)[:80]}）")
+    return ""

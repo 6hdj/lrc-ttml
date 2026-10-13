@@ -82,8 +82,13 @@ if os.path.isdir(_NV):
 if os.path.isdir(os.path.join('models', 'campplus_src')):
     datas += [('models/campplus_src', 'models/campplus_src')]
     print('[models] 只打网络定义 models/campplus_src（权重由模型管理器下载）')
-# 桌面版：模型清单必须随包带上（第一次启动就要按它检查模型）
-datas += [('desktop/resources/model_manifest.json', 'desktop/resources')]
+# 桌面版的两份清单都必须随包带上（第一次启动就要按它们检查状态）：
+#   * model_manifest.json    —— 模型权重（CAM++/Whisper/Demucs）
+#   * runtime_manifest.json  —— 运行时组件（PyTorch，按需下载）
+# ⚠️ 两份**不能混**：模型在 `models/`，运行时在 `<数据目录>/runtime/`，
+# 状态机独立、提示文案独立（需求第 9 条：不得互相误报）。
+datas += [('desktop/resources/model_manifest.json', 'desktop/resources'),
+          ('desktop/resources/runtime_manifest.json', 'desktop/resources')]
 binaries = []
 hiddenimports = ['doctor', 'envcheck', 'install', 'download_model',
                  # 卸载逻辑在 uninstall_core（**故意不放在 installer_gui**：
@@ -113,8 +118,38 @@ datas += copy_metadata('onnxruntime')
 binaries += collect_dynamic_libs('ctranslate2')
 binaries += collect_dynamic_libs('onnxruntime')
 hiddenimports += collect_submodules('huggingface_hub')
-tmp_ret = collect_all('torch')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# =====================================================================
+#  PyTorch：**不进主安装包**，改成按需下载的运行时组件
+# =====================================================================
+# 需求原文 §七-B 明确允许："将部分可独立部署的 GPU 运行组件作为独立运行时组件，
+# 在安装或首次启动时按需安装"。
+#
+# 为什么可以拆（这不是"为了体积乱删"，是**依赖边界清楚 + 已实测**）：
+#   * torch 只服务 **CAM++ 声纹**（对唱分声部）与 Demucs 人声分离；
+#     基础歌词制作、单声部处理、TTML 编辑与导出**完全不需要**它
+#     （`grep` 全仓：生产代码 import torch 的只有 `speaker_campplus.py`、
+#      `separate.py`、以及 `asr/_detect_device` 与 `doctor/envcheck` 里的探测）。
+#   * 权重与网络定义本来就走模型管理器下载，所以"要用再下"这个模式
+#     在本项目里**已经跑了很久**，不是新发明。
+#
+# ⚠️ 生效前提（缺一个就会静默降级，真踩过）：
+#   1. `paths.apply_env()` 必须在**任何 import torch 之前**把运行时目录插进
+#      `sys.path` —— `desktop/app.py` 的启动顺序已保证；
+#   2. `speaker_campplus.available()` 必须把"torch 能不能 import"算进判据，
+#      否则会报成"权重缺失"（需求第 9 条明令禁止）；
+#   3. 运行时装在**用户可写的数据目录**（`<data>/runtime/torch`），
+#      不能进程序目录（升级会替换）也不能进 `_internal`（临时解包区）。
+#
+# 想打"全功能单包"（含 torch）时：设 `L2T_WITH_TORCH=1`。
+WITH_TORCH = os.environ.get("L2T_WITH_TORCH") == "1"
+if WITH_TORCH:
+    tmp_ret = collect_all('torch')
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+    print('[torch] L2T_WITH_TORCH=1 → 打进主包（全功能单包构建）')
+else:
+    print('[torch] 不进主包 —— 由运行时组件按需下载'
+          '（`python -m desktop.services.runtime_service --install torch`）')
 
 # ⚠️ PySide6 不能只写 hiddenimports：Qt 的**插件**（platforms/qwindows.dll、
 # styles、imageformats）不会自动带上，缺了会直接报
@@ -184,7 +219,18 @@ _PRUNE = _os.environ.get("L2T_NO_PRUNE") != "1"
 
 # (匹配前缀, 说明) —— 大小写不敏感，匹配的是归档内的相对路径
 _PRUNE_RULES = [
-    # ---- torch：构建期产物与测试 ----
+    # ---- torch ----
+    # ⚠️⚠️ 只在**不打包 torch** 时才整棵剪掉。
+    # 为什么需要这条：`excludes=['torch', ...]` **只阻止 Python 模块被 import**，
+    # 而 `collect_all('torch')` 收进来的 **datas/binaries 照样会进包** ——
+    # 实测：注释掉 collect_all 之后 `_internal/torch` 还有 352 MiB
+    # （torch_cpu.dll 291 MiB 等），包体积一点没降。
+    # 这类"改了配置但体积没变"最容易骗人，所以这里用**显式 prune**兜底。
+    ("torch/", "PyTorch 运行时（改为按需下载的运行时组件）"),
+    ("torchgen", "torch 代码生成器（运行时不需要）"),
+    ("torch-", "torch 的 dist-info 元数据"),
+    ("functorch", "torch 附属模块"),
+    # ---- torch：构建期产物与测试（打包 torch 时仍要剪这些）----
     ("torch/include", "C++ 头文件（编译 torch 扩展才需要）"),
     ("torch/bin", "protoc.exe 等命令行工具"),
     ("torch/test", "torch 自带测试"),
@@ -227,6 +273,13 @@ _QT_UNUSED_DLLS = [
 ]
 for _m in _QT_UNUSED_DLLS:
     _PRUNE_RULES.append((f"PySide6/{_m}", f"Qt 未使用模块 {_m}"))
+
+# ⚠️ 反向条件：如果要打"全功能单包"（L2T_WITH_TORCH=1），就得把 torch 的裁剪撤掉，
+# 否则会打出一个"装着 torch 文件但不完整"的包 —— 那种包最难查。
+if WITH_TORCH:
+    _PRUNE_RULES = [(r, w) for (r, w) in _PRUNE_RULES
+                    if not (r.startswith("torch") or r.startswith("functorch"))]
+    print('[torch] 已撤销 torch 相关的 prune 规则（全功能单包构建）')
 
 
 def _norm(toc):

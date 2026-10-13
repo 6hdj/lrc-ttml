@@ -128,9 +128,25 @@ def main(argv=None) -> int:
             FAIL.append("doctor-json")
 
     print("=== 4. --uicheck（Qt 平台插件）===")
+    # ⚠️⚠️ **必须把模型缓存指到已有的 `.hf_cache`**，否则这一轮会去
+    # **重新下载 3 GB 的 whisper 模型**：`L2T_DATA_DIR` 一改，模型缓存
+    # 目录也跟着变（默认在数据目录下），本地那 3 GB 就"看不见"了。
+    #
+    # 这个坑很隐蔽：表现是"真转换要 573 秒"，看起来像 **CPU 静默慢跑**，
+    # 于是会去查 CUDA —— 其实是在下载模型（真踩过，白查了一轮）。
+    # 所以：有现成的 `.hf_cache` 就显式传 `L2T_HF_CACHE`。
     env = {"QT_QPA_PLATFORM": "offscreen", "L2T_ALLOW_MULTI": "1",
            "L2T_HEADLESS": "1",
            "L2T_DATA_DIR": os.path.join(base, ".accept-data")}
+    _repo_hf = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), ".hf_cache")
+    if os.path.isdir(os.path.join(
+            _repo_hf, "models--Systran--faster-whisper-large-v3")):
+        env["L2T_HF_CACHE"] = _repo_hf
+        print(f"    （复用已有模型缓存：{_repo_hf}）")
+    else:
+        print("    ⚠️ 仓库里没有 .hf_cache —— 这一轮会**真的下载 3 GB 模型**，"
+              "因此耗时里包含下载时间（不代表转换慢）")
     res = _run(exe, base, "--uicheck", ["--uicheck"], timeout=600,
                env_extra=env, expect=None)
     if res:
@@ -153,7 +169,9 @@ def main(argv=None) -> int:
             res = _run(exe, base, "convert",
                        ["--audio", audio, "--lyrics", lyrics,
                         "--language", "auto", "-o", ttml],
-                       timeout=args.timeout, expect=None)
+                       timeout=args.timeout, expect=None,
+                       env_extra={"L2T_HF_CACHE": env["L2T_HF_CACHE"]}
+                       if env.get("L2T_HF_CACHE") else None)
             if res and res[2] == 0 and os.path.isfile(ttml):
                 print(f"    产物：{os.path.getsize(ttml)} 字节")
                 print("=== 6. 严格校验产物（打包版 + 仓库校验器各一遍）===")

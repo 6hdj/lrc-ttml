@@ -212,15 +212,97 @@ def model_dir(name: str) -> str:
     return ensure_dir(os.path.join(models_dir(), name))
 
 
+def runtime_root() -> str:
+    """**按需下载的运行时组件**装在哪儿（PyTorch 这类大依赖）。
+
+    ⚠️ 必须在**用户可写**目录里，而且**不能**放在程序目录：
+    * 程序目录可能是 `Program Files`（不可写）；
+    * 升级/重装会整个替换程序目录 —— 用户下的 400 MB 就白下了；
+    * PyInstaller 的 `_internal` 更不行（那是临时解包区）。
+    """
+    explicit = os.environ.get("L2T_RUNTIME_DIR")
+    if explicit:
+        return ensure_dir(explicit)
+    return ensure_dir(os.path.join(data_dir(), "runtime"))
+
+
 def apply_env() -> str:
     """把模型缓存目录写进环境变量，**必须在 import asr / huggingface_hub 之前调用**。
 
     返回最终使用的缓存目录。
+
+    ⚠️ 这里**顺便**把已装好的运行时组件目录（PyTorch 等）插进 `sys.path`。
+    原因是启动顺序：`apply_env()` 在 `desktop/app.py` 里排在所有
+    `import torch` 之前（`speaker_campplus` 是延迟 import 的），
+    所以只要在这儿插一次，后面 `import torch` 就能命中运行时组件。
+    **放到别处都会晚**（torch 一旦被 import 过就再也换不掉了）。
     """
     hub = hf_cache_dir()
     # 用 setdefault 之外的写法：桌面版要能覆盖安装器/launcher 设的旧值
     os.environ["HUGGINGFACE_HUB_CACHE"] = hub
+    apply_runtime_path()
     return hub
+
+
+def apply_runtime_path() -> list:
+    """把已就绪的运行时组件目录加到 `sys.path`，返回加进去的目录。
+
+    允许失败：运行时组件没装是**正常状态**（基础功能不需要它），
+    绝不能因此让启动失败。
+
+    ⚠️⚠️ **还要把 `<runtime>/<id>/lib` 注册进 DLL 搜索路径**（踩出来的）：
+    在**冻结版**里 `import torch` 曾以 `0xC0000005`（访问冲突）**崩掉整个进程**，
+    而源码模式用同一份 torch 没事。原因是原生 DLL 的解析顺序 ——
+    冻结进程已经把 PyInstaller 自带的一批运行库（`libiomp5md.dll`、
+    MSVC 运行库等）放进了 `_internal`，torch 的 `lib/` 下那几个 DLL 又要求
+    **自己那一套**，两边混用时崩在原生层。
+    在 `import torch` **之前**把 `<runtime>/torch/lib` 插到搜索路径最前面，
+    让它优先拿到自己那份。
+    """
+    import sys
+    added = []
+    try:
+        root = runtime_root()
+        if not os.path.isdir(root):
+            return added
+        for name in sorted(os.listdir(root)):
+            if name.startswith("."):
+                continue
+            d = os.path.join(root, name)
+            if not os.path.isdir(d):
+                continue
+            # ⚠️ 兼容"包名目录"这种布局：有的解包会解出 `<id>/<id>/…`
+            # （wheel 里已经是 `torch/` 顶层，再套一层就变成
+            # `<id>/torch/`）。这时要加的是**里面那一层**，
+            # 否则 `import torch` 找不到（而且 `torch/lib` 也不对）。
+            # ⚠️ 但那只解决 `import torch`，**子模块**（`torch._C` 之类）
+            # 仍会因为路径多一层而报 `ModuleNotFoundError` ——
+            # 所以真正的修法是 `runtime_service._flatten_site()` 在安装时摊平。
+            import_dir = d
+            inner = os.path.join(d, name)
+            if os.path.isdir(inner) and (
+                    os.path.isfile(os.path.join(inner, "__init__.py"))
+                    or os.path.isfile(os.path.join(inner, "version.py"))):
+                import_dir = inner
+            if import_dir not in sys.path:
+                sys.path.insert(0, import_dir)
+            added.append(import_dir)
+            # 原生库目录：`lib`（torch 用这个）/ `Lib` / `bin` / 顶层
+            for sub in ("lib", "Lib", "bin", ""):
+                libdir = os.path.join(import_dir, sub) if sub else d
+                if not os.path.isdir(libdir):
+                    continue
+                try:
+                    if hasattr(os, "add_dll_directory"):
+                        os.add_dll_directory(libdir)
+                except OSError:
+                    pass
+                old = os.environ.get("PATH", "")
+                if libdir not in old.split(os.pathsep):
+                    os.environ["PATH"] = libdir + os.pathsep + old
+    except Exception:                                   # noqa: BLE001
+        pass
+    return added
 
 
 def resource_roots() -> list:

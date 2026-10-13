@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "_comment": [
+    "运行时组件清单（**不是模型**）。模型权重见 model_manifest.json。",
+    "owner: desktop/services/runtime_service.py",
+    "",
+    "为什么要有这一层：PyTorch 只服务 CAM++ 声纹（对唱分声部）与 Demucs 人声分离，",
+    "而它占 425 MiB —— 是主安装包体积的第二大头。把它做成**按需下载的运行时组件**，",
+    "主安装包就能从 0.78 GB 降到 0.5 GB 左右（需求原文 §七-B 明确允许这种做法）。",
+    "",
+    "⚠️ 版本必须钉死（需求第 5 条）：不得随意升级/降级。",
+    "   torch 2.14.1：与仓库里 `.venvpack` 实测在用的版本一致（2.14.1+cpu，",
+    "   同一份 CPython 3.14 / win-amd64 ABI）。CAM++ 只用 torch 的基础张量/卷积，",
+    "   不需要 CUDA 版（模型很小，CPU 前端向就够）。",
+    "   实测：PyPI 上 `torch-2.14.1-cp314-cp314-win_amd64.whl` 的 Requires-Dist 里，",
+    "   所有 nvidia-* 依赖都带 `platform_system == \"Linux\"` 条件 ——",
+    "   **Windows 上不会拉任何 CUDA 包**，正好是我们要的纯本地推理件。"
+  ],
+  "runtimes": [
+    {
+      "id": "torch",
+      "name": "PyTorch 运行时（声纹分声部）",
+      "purpose": "CAM++ 声纹模型的前向推理；「对唱分声部」和「人声分离」需要它",
+      "required_for": ["singer_split"],
+      "default": false,
+      "download_policy": "on_demand",
+      "approx_size": 124110781,
+      "installed_size": 534000000,
+      "license": "BSD-3-Clause（PyTorch）",
+      "note": "只有用到「强制 1/2/3 声部」时才需要。基础歌词制作、单声部处理、TTML 编辑与导出都不需要它。",
+      "python": {
+        "requires": ">=3.14,<3.15",
+        "wheel_tag": "cp314-cp314-win_amd64"
+      },
+      "verify_load": {
+        "kind": "import_and_version",
+        "module": "torch",
+        "expected_version_prefix": "2.14.1"
+      },
+      "wheels": [
+        {
+          "filename": "torch-2.14.1-cp314-cp314-win_amd64.whl",
+          "size": 124110781,
+          "sha256": "d02a4c48a2ca5fb7654e36e71f710f74494d83f1f10aaff8e059dd554adca956",
+          "urls": [
+            "https://files.pythonhosted.org/packages/d9/dc/a36a4431ab5e3ad168a75f341e24677a4bbbf0c5dda59c97a7079262bb94/torch-2.14.1-cp314-cp314-win_amd64.whl",
+            "https://mirrors.aliyun.com/pypi/packages/d9/dc/a36a4431ab5e3ad168a75f341e24677a4bbbf0c5dda59c97a7079262bb94/torch-2.14.1-cp314-cp314-win_amd64.whl"
+          ]
+        }
+      ],
+      "deps": [
+        { "name": "filelock", "note": "torch 运行时依赖（通常已随主程序提供）" },
+        { "name": "typing-extensions", "note": "同上" },
+        { "name": "sympy", "note": "torch 运行时依赖；主程序刻意没有打包它（体积）" },
+        { "name": "networkx", "note": "同上" },
+        { "name": "jinja2", "note": "同上（huggingface_hub 也需要它）" },
+        { "name": "fsspec", "note": "同上" },
+        { "name": "mpmath", "note": "sympy 的依赖" },
+        { "name": "MarkupSafe", "note": "jinja2 的依赖" }
+      ]
+    }
+  ]
+}

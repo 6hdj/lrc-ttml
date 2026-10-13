@@ -194,6 +194,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         from desktop.services import model_manager
         rest = [a for a in argv if a != "--model-cli"]
         return int(model_manager._cli(rest))
+    # 运行时组件（PyTorch 等）的 CLI：`--runtime-cli --status/--install/--remove`
+    # 需求第 10 条要求"在冻结版 EXE 中实际验证……运行时下载"，
+    # 这就是那个可自动化的入口（`tools/verify_frozen_runtime.py` 用它）。
+    if any(a in ("--runtime-cli",) for a in argv):
+        _early_env()
+        from desktop.services import runtime_service
+        rest = [a for a in argv if a != "--runtime-cli"]
+        return int(runtime_service._cli(rest))
     if any(a in ("--version", "-V") for a in argv):
         print(f"Lyric2TTML 桌面版 {__version__}")
         return 0
