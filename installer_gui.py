@@ -873,11 +873,11 @@ class Installer:
             size_kb = total // 1024
         except OSError:
             pass
-        try:
-            from desktop import __version__ as _v
-            version = str(_v)
-        except Exception:                               # noqa: BLE001
-            version = "1.1.0"
+        # ⚠️ 版本号**只有一处真源**：`win_integration.app_version()` →
+        # `desktop/__init__.py` 的 `__version__`。
+        # 这里原来写成"取不到就用 `"1.1.0"`" —— 那是**把版本号抄了一遍**，
+        # 下次升版本必然漂移：注册表里显示旧版本，用户以为没升级成功。
+        version = win_integration.app_version()
         res = win_integration.integrate(
             self.install_dir, version,
             desktop=desktop or getattr(self, "want_desktop", False),
@@ -1445,6 +1445,7 @@ def e2e(dest: str) -> int:
 
 
 def _is_elevated() -> bool:
+    """当前进程是不是管理员（只用于**提示文案**，不再用来强制提权）。"""
     try:
         import ctypes
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -1453,28 +1454,33 @@ def _is_elevated() -> bool:
 
 
 def relaunch_elevated() -> bool:
-    """需要管理员权限时，自己弹 UAC 重启自己。
+    """**已停用（保留函数只是为了兼容旧调用点）** —— 永远返回 False。
 
-    ⚠️ **不用 PyInstaller 的 `--uac-admin` 清单**，改成运行时自提权。原因：
-    带清单的 exe **必须有 UAC 同意才能启动**，于是自动化测试（`--e2e`）永远挂住
-    —— 没人点那个弹窗。运行时自提权的好处是 `--e2e` 能跳过这一步，正常双击
-    仍然会弹 UAC（用户要的就是这个）。
+    ⚠️⚠️ **为什么停用**（2026-10-13，用户明确要求方案①）：
 
-    安装程序确实需要管理员：要往用户选的任意目录写（含盘根下新建目录）、
-    建桌面快捷方式。普通权限会 `WinError 5 拒绝访问`。
+    这里原来在启动时无条件自提权：只要不是管理员就 `ShellExecuteW "runas"`
+    重启自己 —— 也就是**双击必弹 UAC**。它当年的理由是"安装程序确实需要管理员：
+    要往用户选的任意目录写（含盘根下新建目录）、建桌面快捷方式"。
+    但那个理由**站不住**：
+
+    * **默认安装位置是 `%LOCALAPPDATA%\\Lyric2TTML`**（用户目录）——
+      写它根本不需要管理员；
+    * 开始菜单/桌面快捷方式走 `win_integration`，用的是 **HKCU + 用户自己的
+      「开始菜单/程序」目录**，也不需要管理员；
+    * 卸载注册表项同样写 **HKCU**；
+    * 真正需要管理员只有一种情况：**用户主动选**了 `Program Files` 之类的
+      机器级目录。那时该由**用户自己**右键「以管理员身份运行」，
+      而不是安装程序擅自弹一个用户没预期的 UAC。
+
+    代价（改前）：普通用户被强制弹 UAC，拒绝就装不了；而且**我无法在本机
+    自动化验收正式发行的那个 exe**（带 UAC 的进程起不来）。
+    改后：普通用户双击直接开始安装；`--e2e` 也能跑**正式发行的那一个文件**。
+
+    权限不足时怎么处理：不再提前提权，而是**在真正要写的时候**判断
+    （`ensure_dir()` 先试写、失败给人话 + 推荐位置 + 告诉用户可以用
+    管理员身份运行）。失败要**可解释**，不要一开始就拦着所有人。
     """
-    try:
-        import ctypes
-        if ctypes.windll.shell32.IsUserAnAdmin():
-            return False
-        # ShellExecuteW 的 "runas" 动词 = 触发 UAC
-        params = " ".join(f'"{a}"' if " " in a else a for a in sys.argv[1:])
-        rc = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", sys.executable, params, os.getcwd(), 1)
-        # >32 表示启动成功；<32 是错误码（用户点了"否"就是 5）
-        return int(rc) > 32
-    except Exception:
-        return False
+    return False
 
 
 def main() -> int:
@@ -1538,11 +1544,13 @@ def main() -> int:
         root.mainloop()
         return 0
 
-    # 正常双击 → 不是管理员就提权重启
-    if os.name == "nt" and not _is_elevated():
-        if relaunch_elevated():
-            return 0          # 已经把活交给提权后的自己
-        # 用户拒绝了 UAC：继续跑，但把后果说清楚
+    # ---- 正常双击：**不提权**，直接装到用户目录 ----
+    # ⚠️ 这里原来是 `if not _is_elevated(): relaunch_elevated()` —— 即"双击必弹
+    # UAC"。已按用户要求（方案①：per-user 安装）去掉。理由见
+    # `relaunch_elevated()` 的说明：默认位置是 `%LOCALAPPDATA%`，
+    # 快捷方式与卸载注册表项都走 HKCU，**没有任何一步真的需要管理员**。
+    # 用户主动选机器级目录（如 Program Files）时，让他自己右键「以管理员身份运行」，
+    # 权限不足由 `ensure_dir()` 在真正写入时给出可解释的失败提示。
     root = tk.Tk()
     try:
         root.tk.call("tk", "scaling", 1.25)

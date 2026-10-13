@@ -160,14 +160,65 @@ def _reg(args: list) -> tuple:
         return False, f"{type(e).__name__}: {e}"
 
 
+def app_version() -> str:
+    """**唯一**的版本号来源。
+
+    ⚠️⚠️ 版本号只有一处真源：`desktop/__init__.py` 的 `__version__`。
+    真踩过两个坑：
+
+    1. `installer_gui` 里写成"取不到就用 `"1.1.0"`" —— 那是**把版本号抄了一遍**，
+       下次升版本必然漂移（注册表里显示旧版本，用户以为没升级成功）；
+    2. `win_integration` 命令行默认写 `"0.0.0"`，于是本机测出来的
+       `DisplayVersion` 就是 `0.0.0`（"设置 → 已安装的应用"里显示 0.0.0，
+       看起来像坏掉的软件）。
+
+    ⇒ 这里集中解析一次：先问 `desktop.__version__`（冻结版也能 import），
+    再退回读包元数据；**都取不到就返回空串**，由调用方决定怎么处理
+    （`register_uninstall` 会拒绝写空版本，而不是编一个 0.0.0 出来）。
+    """
+    try:
+        import sys as _sys
+        # ⚠️ 本模块**没有** `_HERE` 常量（我第一版想当然用了它，NameError 被
+        # 下面的 `except` 吞掉 ⇒ `app_version()` 静默返回空串，
+        # 注册表里就不写版本号了）。这里自己算，别依赖不存在的名字。
+        _here = os.path.dirname(os.path.abspath(__file__))
+        if _here not in _sys.path:
+            _sys.path.insert(0, _here)
+        from desktop import __version__ as _v
+        v = str(_v).strip()
+        if v:
+            return v
+    except Exception as _e:                             # noqa: BLE001
+        # ⚠️ 别把异常吞得无声无息：版本号解析失败是**要查的问题**，
+        # 不是可以忽略的噪声。留一条线索给排查（但不是致命错误）。
+        print(f"  [提示] 版本号解析失败（{type(_e).__name__}: {_e}）")
+    try:
+        import importlib.metadata as _md
+        for name in ("lyric2ttml", "Lyric2TTML", "lrc-ttml"):
+            try:
+                return str(_md.version(name)).strip()
+            except Exception:                           # noqa: BLE001
+                continue
+    except Exception:                                   # noqa: BLE001
+        pass
+    return ""
+
+
 def register_uninstall(install_dir: str, version: str, publisher: str = "",
                        size_kb: int = 0, display_icon: str = "",
-                       uninstall_string: str = "") -> bool:
-    """写"已安装的应用"条目（HKCU，不需要管理员）。
+                       uninstall_string: str = "", log=print) -> bool:
+    """写「已安装的应用」条目（HKCU，不需要管理员）。
 
     ⚠️ 用 `reg add /f` 是**幂等**的：重复安装不会叠加条目，
     也不会留下"同名多个条目"。
+
+    ⚠️ `version` 为空或 `"0.0.0"` 时**不写 DisplayVersion**：
+    宁可空白，也不要写一个假版本号骗用户（真踩过：命令行直接调用时
+    写进去的是 `0.0.0`，在「设置 → 已安装的应用」里看着像坏软件）。
     """
+    if not version or version == "0.0.0":
+        log("  [提示] 没解析到版本号，注册表里不写 DisplayVersion（避免显示 0.0.0）")
+        version = ""
     exe = os.path.join(install_dir, EXE_NAME)
     items = [
         ("DisplayName", f"{APP_NAME}（歌词转 TTML）"),
@@ -310,7 +361,7 @@ def _cli(argv=None) -> int:
             print(f"    {k} = {v}")
         return 0
     if a.install:
-        r = integrate(a.install, a.version or "0.0.0", desktop=a.desktop,
+        r = integrate(a.install, a.version or app_version(), desktop=a.desktop,
                       programs=a.programs, desk=a.desk)
         return 0 if not r["errors"] else 1
     if a.remove:
