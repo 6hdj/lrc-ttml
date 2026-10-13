@@ -95,6 +95,10 @@ hiddenimports = ['doctor', 'envcheck', 'install', 'download_model',
                  # 后者开头 import tkinter，而主程序的构建排除了 tkinter）。
                  # launcher 里是延迟导入，静态分析看不到。
                  'uninstall_core', 'installer_gui',
+                 # 正式分发要用：控制台附加（双击无黑窗）+ 外壳集成
+                 # （开始菜单/桌面快捷方式、卸载注册表项）。
+                 # 都是延迟导入，静态分析看不到。
+                 'win_console', 'win_integration',
                  'desktop.selftest', 'desktop.uicheck',
                  # 桌面壳（launcher 里是**延迟导入**，PyInstaller 静态分析看不到）
                  'desktop', 'desktop.app', 'desktop.main_window', 'desktop.context',
@@ -335,6 +339,27 @@ a.zipfiles = _norm(a.zipfiles)
 
 pyz = PYZ(a.pure)
 
+# ⚠️⚠️ **双击不弹黑窗，但命令行/脚本照常可用** —— 用
+# `console=True` + `hide_console='hide-early'`（PyInstaller ≥6.0）。
+#
+# 为什么**不能**用 `console=False`（第一版就是这么写的，被实测否掉了）：
+# GUI 子系统进程**不继承父进程的标准句柄**，于是
+#   `Lyric2TTML.exe --doctor --json > out.txt`  写出来的文件是 **0 字节**，
+#   PowerShell 的 `2>&1 | ...` 也抓不到任何东西。
+# 那样会把**脚本、CI、验收工具**（`tools/accept_frozen.py` 就靠捕获输出来判定）
+# 全部搞坏 —— 而"命令行可用"是本项目明确要保留的能力。
+#
+# `hide_console` 是两全的做法：exe 仍是**控制台子系统**（句柄照常继承、
+# 重定向照常工作），但**窗口在启动早期就被隐藏**（双击/快捷方式启动时不再有黑窗）。
+# 四个可选值里选 `hide-early`：它是"尽早隐藏"，双击场景最干净；
+# `minimize-*` 会先闪一下再最小化，仍有观感问题。
+#
+# ⚠️ 想临时看到控制台（排查启动阶段问题）：
+#   设 `L2T_WITH_CONSOLE=1` 重新打包 —— 这时会显示窗口且不隐藏。
+_WITH_CONSOLE = os.environ.get("L2T_WITH_CONSOLE") == "1"
+print(f"[console] console=True, hide_console="
+      f"{'None（调试：显示黑窗）' if _WITH_CONSOLE else 'hide-early（双击无黑窗）'}")
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -346,6 +371,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=True,
+    hide_console=None if _WITH_CONSOLE else 'hide-early',
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

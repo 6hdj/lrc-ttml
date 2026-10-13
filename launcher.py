@@ -182,6 +182,16 @@ def _qt_available() -> bool:
 
 def main() -> int:
     argv = sys.argv[1:]
+    # ⚠️⚠️ **先把控制台接上（如果是从命令行启动的）**，再打印任何东西。
+    # 打包版是 `console=False`（双击时不出黑窗），于是从 cmd/PowerShell 跑
+    # `--doctor` / `--version` 时**默认什么都看不到**；这里附加到父控制台并重绑
+    # sys.stdout。双击启动时没有父控制台可附加 —— 正是我们要的（没有黑窗）。
+    # ⚠️ 必须在 `_rehome()` 之前：`_rehome()` 里可能已经要打印提示了。
+    try:
+        import win_console
+        win_console.ensure_console_if_cli(argv)
+    except Exception:                                   # noqa: BLE001
+        pass
     base = _rehome()
 
     # 以管理员运行会带来一连串麻烦（浏览器权限冲突、文件属主变成管理员导致
