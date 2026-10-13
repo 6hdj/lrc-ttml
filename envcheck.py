@@ -59,10 +59,22 @@ PKGS = [
 ]
 
 # CUDA 12 运行库。**逐个列**，缺哪个说哪个。
+#
+# ⚠️⚠️ **cuDNN 不在必装清单里**（2026-10-13 实测改了）。
+# 本项目的 GPU 推理走 CTranslate2，实测**只需要 cuBLAS**：
+# 在真 RTX 4060 上跑真音频，30 秒片段
+#   cuBLAS + cuDNN + nvrtc → GPU 1.43~1.50s
+#   只有 cuBLAS（去掉 cuDNN 1095 MiB、nvrtc 178 MiB）→ GPU 1.43~1.59s
+# 同环境 CPU 要 9.4s，所以 GPU 确实在工作，cuDNN 只是白占 1 GB 体积。
+# ⇒ 主安装包**只带 cuBLAS**（安装包 3.0 GiB → 1.4 GiB）。
+#
+# 因此 cuDNN 是 **OPT（可选）**：装了它不会错（保留手放 `cuda\` 的用法），
+# 但**缺了不能报错**，否则用户会以为"环境没配好"。
+# 有效性自证见 `tools/size_report.py` 与 `.tmp/exp_cuda_quick.py`。
 CUDA_DLLS = [
-    ("cublas64_12.dll", "cuBLAS（矩阵运算）"),
-    ("cublasLt64_12.dll", "cuBLAS Lt（大矩阵）"),
-    ("cudnn64_9.dll", "cuDNN（卷积加速）"),
+    ("cublas64_12.dll", "cuBLAS（矩阵运算）", CRIT),
+    ("cublasLt64_12.dll", "cuBLAS Lt（大矩阵）", CRIT),
+    ("cudnn64_9.dll", "cuDNN（卷积加速，可选）", OPT),
 ]
 
 
@@ -192,19 +204,44 @@ def check_gpu() -> list:
 
 
 def _cuda_search_dirs() -> list:
-    """所有可能放 CUDA DLL 的地方（**一个都不能漏**，否则会误报"缺"）"""
+    """所有可能放 CUDA DLL 的地方（**一个都不能漏**，否则会误报"缺"）。
+
+    ⚠️ 三类布局都要覆盖（真踩过"体检说缺、其实东西就在包里"）：
+    ① **打包版**：`<exe 同级>/_internal/nvidia/<lib>/bin`（PyInstaller datas）；
+    ② **源码/便携版**：`<仓库>/.venvpack/Lib/site-packages/nvidia/<lib>/bin`
+       —— 打包用的 venv 就叫 `.venvpack`，`.venv` 里没有 CUDA 包；
+    ③ 系统装的 CUDA Toolkit / 手工放进 `cuda\\` 的。
+    只扫 `sys.path` 是不够的：`.venvpack` 不在 `sys.path` 上（它不是当前环境），
+    而打包版把资源放在 `_internal`（`sys.path` 里有没有它取决于打包模式）。
+    """
     dirs = []
+    meipass = getattr(sys, "_MEIPASS", "")
     if getattr(sys, "frozen", False):
         base = os.path.dirname(os.path.abspath(sys.executable))
     else:
         base = os.path.dirname(os.path.abspath(__file__))
-    dirs += [os.path.join(base, "cuda"),
-             os.path.join(base, "cuda", "bin")]
+    roots = [base, meipass, os.path.join(base, "_internal"),
+             os.path.join(meipass, "_internal") if meipass else ""]
+    for r in roots:
+        if not r or not os.path.isdir(r):
+            continue
+        dirs += [os.path.join(r, "cuda"), os.path.join(r, "cuda", "bin")]
+        nv = os.path.join(r, "nvidia")
+        if os.path.isdir(nv):
+            dirs.append(nv)
+            for lib in os.listdir(nv):
+                dirs.append(os.path.join(nv, lib, "bin"))
     # pip 装的 nvidia-*-cu12：site-packages/nvidia/<lib>/bin
     for p in list(sys.path):
         nv = os.path.join(p or "", "nvidia")
         if os.path.isdir(nv):
             dirs.append(nv)
+            for lib in os.listdir(nv):
+                dirs.append(os.path.join(nv, lib, "bin"))
+    # 打包用的 venv（源码模式下体检要如实报告"包里那套在哪"）
+    for venv in (".venvpack", ".venv"):
+        nv = os.path.join(base, venv, "Lib", "site-packages", "nvidia")
+        if os.path.isdir(nv):
             for lib in os.listdir(nv):
                 dirs.append(os.path.join(nv, lib, "bin"))
     # 系统里已装 CUDA Toolkit 的情况
@@ -215,7 +252,12 @@ def _cuda_search_dirs() -> list:
     dirs += glob.glob(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin")
     # PATH 里的目录也搜（有人手工加过）
     dirs += [d for d in os.environ.get("PATH", "").split(os.pathsep) if d]
-    return [d for d in dirs if os.path.isdir(d)]
+    seen, out = set(), []
+    for d in dirs:
+        if d and os.path.isdir(d) and d not in seen:
+            seen.add(d)
+            out.append(d)
+    return out
 
 
 def check_cuda_runtime() -> list:
@@ -226,7 +268,9 @@ def check_cuda_runtime() -> list:
     """
     out = []
     dirs = _cuda_search_dirs()
-    for dll, why in CUDA_DLLS:
+    # ⚠️ 现在是三元组（名称, 说明, 级别）：cuDNN 是 OPT ——
+    # 缺了只能"提示"，不能报成 crit，否则用户以为环境没配好（见 CUDA_DLLS 的说明）。
+    for dll, why, level in CUDA_DLLS:
         found_at, load_err = "", ""
         for d in dirs:
             cand = os.path.join(d, dll)
@@ -240,10 +284,10 @@ def check_cuda_runtime() -> list:
             except OSError as e:
                 load_err = f"{type(e).__name__}: {str(e)[:90]}"
         if found_at and not load_err:
-            out.append(Item("cuda_" + dll, dll, why, CRIT, True,
+            out.append(Item("cuda_" + dll, dll, why, level, True,
                             os.path.dirname(found_at)))
         else:
-            out.append(Item("cuda_" + dll, dll, why, CRIT, False,
+            out.append(Item("cuda_" + dll, dll, why, level, False,
                             ("找到了但加载失败：" + load_err) if found_at
                             else "未找到",
                             "点「开始补全」自动装（从 PyPI 取 wheel 解出 DLL，"

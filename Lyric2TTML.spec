@@ -23,7 +23,45 @@ from PyInstaller.utils.hooks import copy_metadata
 
 WITH_QT = os.environ.get("L2T_WITH_QT") == "1"
 
-datas = [('index.html', '.'), ('.venvpack/Lib/site-packages/nvidia', 'nvidia')]
+datas = [('index.html', '.')]
+
+# =====================================================================
+#  CUDA 运行库：**只带 cuBLAS**（实测结论，不是猜的）
+# =====================================================================
+# 原来是把整个 `nvidia/` 目录打进去 = 2010 MiB（占整个包 64.6%）。
+# 实测（`.tmp/exp_cuda_quick.py`，在真 GPU 上跑真音频）：
+#
+#   cuDNN 1095 MiB + nvrtc 178 MiB + cuBLAS 736 MiB：
+#       GPU int8_float16 gen=2.60s   GPU float16 gen=1.50s   引 CPU gen=9.39s
+#   不要 cuDNN（省 1095 MiB）：
+#       GPU int8_float16 gen=1.65s   GPU float16 gen=1.48s
+#   只要 cuBLAS（再省 nvrtc 178 MiB）：
+#       GPU int8_float16 gen=1.59s   GPU float16 gen=1.43s
+#
+# ⇒ **cuDNN 与 nvrtc 对这条链路都不是必需的**，去掉以后还**更快**
+#   （CTranslate2 在 Windows 上走 cuBLAS + 自带内核）。GPU 仍在工作，
+#   证据是同环境的 CPU 转写要 9.4s、GPU 只要 1.4~1.6s，差 6 倍以上。
+#
+# ⚠️ 有效性自证（这一步不能省）：把 cublas 整个拿掉时，`device="cuda"`
+#    直接失败（CUDA 用不了）—— 说明这个实验真的能测出"坏"。
+#    没有这个对照，前面"删了也能跑"的结论一文不值（这是踩过三次的坑：
+#    第三版实验里 7 轮全部"成功"，包括故意留空的阴性对照，因为那 7 轮
+#    全都静默走了 CPU）。
+#
+# 运行时仍然按 `nvidia/<lib>/bin` 的布局找 DLL（`asr._register_cuda_dlls`
+# 与 `gpu_probe.cuda_dirs` 都认这个布局），所以这里做的是**选择性复制**：
+# 只把 cublas 的 bin 放进包里，目录结构保持不变。
+_NV = os.path.join('.venvpack', 'Lib', 'site-packages', 'nvidia')
+_CUDA_KEEP = ['cublas']          # 只留 cuBLAS；加回 cudnn/nvrtc 前请先实测
+
+if os.path.isdir(_NV):
+    for _lib in _CUDA_KEEP:
+        _src = os.path.join(_NV, _lib, 'bin')
+        if os.path.isdir(_src):
+            datas.append((_src, os.path.join('nvidia', _lib, 'bin')))
+            _n = len([f for f in os.listdir(_src) if f.lower().endswith('.dll')])
+            print(f'[cuda] 打入 {_lib}/bin（{_n} 个 DLL）')
+
 # ⚠️⚠️ **不要**把 `models/` 整个打进去。
 #
 # 需求原文（体积目标章节）："模型权重应从主安装包中分离。安装包不应包含
@@ -39,6 +77,8 @@ datas = [('index.html', '.'), ('.venvpack/Lib/site-packages/nvidia', 'nvidia')]
 #      开了「强制双声部」会静默退回单人 —— 历史上真踩过）
 #
 # 所以只打 `campplus_src`（网络定义），权重一律走模型管理器。
+# 安全性的证据：`.tmp/verify_campplus_dl.py` 在空目录里真下载过 CAM++
+# （28036335 字节、SHA256 一致、check() 判 READY）。
 if os.path.isdir(os.path.join('models', 'campplus_src')):
     datas += [('models/campplus_src', 'models/campplus_src')]
     print('[models] 只打网络定义 models/campplus_src（权重由模型管理器下载）')

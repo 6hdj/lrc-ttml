@@ -47,23 +47,32 @@ def app_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _source_dir() -> str:
-    """**只读资源**目录。
+def source_dir() -> str:
+    """**只读资源**目录（以前叫 `_source_dir`，现在公开）。
 
     冻结时 = ``sys._MEIPASS``（= PyInstaller 的 ``_internal``）—— 那里放着
     ``index.html``、``models/``、``desktop/`` 这些**随包分发、不需要写**的东西。
     未冻结时 = 仓库根目录。
 
     ⚠️ 和 ``app_dir()`` 的区别很重要，别混用：
-    * ``app_dir()``   = 用户能看到、能改的目录（exe 旁边）；
+    * ``app_dir()``    = 用户能看到、能改的目录（exe 旁边）；
       转换产物、用户自己放的模型、``portable.txt`` 都在这里。
-    * ``_source_dir()`` = 包内部，**只读**，升级会整体替换。
+    * ``source_dir()`` = 包内部，**只读**，升级会整体替换。
       PyInstaller 把 datas 都放这儿。
+
+    ⚠️ 为什么要公开（真踩过）：它本来是私有的 `_source_dir()`，于是
+    `gpu_probe` 需要"包内部"路径时只能自己再推一遍，推出个**不一致的版本**
+    —— 打包版因此找不到 `_internal/nvidia/<lib>/bin` 里的 CUDA DLL。
+    需要包内部资源的地方**统一调这个函数**，不要再各推一遍。
     """
     if frozen():
         return getattr(sys, "_MEIPASS",
                        os.path.dirname(os.path.abspath(sys.executable)))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+# 兼容旧名字（原来叫 `_source_dir`）。新代码请用 `source_dir()`。
+_source_dir = source_dir
 
 
 def _local_appdata() -> str:

@@ -28,7 +28,19 @@ except ImportError:                                   # 单文件直接跑
 
 
 def cuda_dirs() -> List[str]:
-    """所有可能放着 CUDA DLL 的目录（顺序 = 优先级）。"""
+    """所有可能放着 CUDA DLL 的目录（顺序 = 优先级）。
+
+    ⚠️⚠️ **必须同时覆盖"源码模式"和"打包模式"两种布局**（真踩过）：
+    本函数原来只找 `<app>/cuda`、`<app>/.venvpack/.../nvidia/*/bin`、
+    `CUDA_PATH`、`Program Files` —— **一个都不覆盖 PyInstaller 的产物**。
+    打包版把 CUDA DLL 放在 `<app>/_internal/nvidia/<lib>/bin`，
+    于是注册结果是"一个目录都没注册"，
+    而 `asr._register_cuda_dlls()` 又靠 `sys.path` 里的 `_internal` 兜住了 ——
+    **两个函数口径不一致**，表现为"体检说没问题、一跑就报
+    `Library cublas64_12.dll is not found or cannot be loaded`"。
+
+    现在两边都走这里，并且显式包含 `_internal`。
+    """
     out: List[str] = []
     app = paths.app_dir()
 
@@ -36,14 +48,26 @@ def cuda_dirs() -> List[str]:
         if p and os.path.isdir(p) and p not in out:
             out.append(p)
 
-    add(os.path.join(app, "cuda"))                     # 安装包自带的（首选）
-    # nvidia-*-cu12 以 Python 包形式安装时的位置
-    for base in (os.path.join(app, ".venvpack", "Lib", "site-packages"),
-                 os.path.join(app, ".venv", "Lib", "site-packages")):
+    def add_nvidia(base: str) -> None:
+        """把 `<base>/nvidia/<lib>/bin` 全加进来（PYPI wheel 的布局）。"""
         nv = os.path.join(base, "nvidia")
         if os.path.isdir(nv):
-            for sub in os.listdir(nv):
+            for sub in sorted(os.listdir(nv)):
                 add(os.path.join(nv, sub, "bin"))
+
+    add(os.path.join(app, "cuda"))                     # 手工放置（首选）
+    add(os.path.join(app, "cuda", "bin"))
+    # ① PyInstaller 打包版：资源在 `_internal`（= sys._MEIPASS）
+    add_nvidia(paths.source_dir())
+    # ② 源码 / 便携版：venv 里的 nvidia-*-cu12
+    for base in (os.path.join(app, ".venvpack", "Lib", "site-packages"),
+                 os.path.join(app, ".venv", "Lib", "site-packages")):
+        add_nvidia(base)
+    # ③ 任何在 sys.path 上的 nvidia 包（冻结时 `_internal` 也在 sys.path 上）
+    for base in list(sys.path):
+        if base and os.path.isdir(base):
+            add_nvidia(base)
+    # ④ 系统装的 CUDA Toolkit（可选）
     add(os.environ.get("CUDA_PATH", ""))
     for v in ("v12.8", "v12.6", "v12.4", "v12.1", "v12.0"):
         add(os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),

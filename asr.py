@@ -179,6 +179,41 @@ class WhisperASR:
                     pass
                 os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
                 added.append(d)
+
+        # ⚠️⚠️ **打包版必须显式加 `_MEIPASS` 这一支**（真踩过，症状极具误导性）：
+        #
+        # PyInstaller 把 CUDA DLL 放在 `<exe 同级>/_internal/nvidia/<lib>/bin`。
+        # 上面那段靠 `sys.path` 能不能命中，取决于打包方式有没有把 `_internal`
+        # 放进 `sys.path` —— **一旦没命中，这里就一个目录都没注册**，于是：
+        #   `WhisperModel(device="cuda")` 抛
+        #   `Library cublas64_12.dll is not found or cannot be loaded`
+        # → `ensure_loaded()` 把它当成"显卡不可用"退到 CPU
+        # → **用户看到的是"转换慢得离谱"（几分钟 vs 十几秒），而不是报错。**
+        #
+        # 所以不要赌 `sys.path`：`_MEIPASS`（包内部）和 exe 同级目录都直接扫。
+        # 空目录（比如裁剪后没打 cudnn）会被 `os.path.isdir` 过滤掉，
+        # 不会注册无效路径。
+        _meipass = getattr(_sys, "_MEIPASS", "")
+        _extra_bases = [b for b in (_meipass, app_dir,
+                                    os.path.join(app_dir, "_internal"))
+                        if b and os.path.isdir(b)]
+        for base in _extra_bases:
+            for pat in (os.path.join(base, "nvidia", "*", "bin"),
+                        os.path.join(base, "_internal", "nvidia", "*", "bin"),
+                        os.path.join(base, "cuda"),
+                        os.path.join(base, "cuda", "bin")):
+                for d in glob.glob(pat):
+                    if not os.path.isdir(d) or d in seen:
+                        continue
+                    seen.add(d)
+                    try:
+                        if hasattr(os, "add_dll_directory"):
+                            os.add_dll_directory(d)
+                    except Exception:
+                        pass
+                    os.environ["PATH"] = d + os.pathsep + os.environ.get(
+                        "PATH", "")
+                    added.append(d)
         return added
 
     def resolve_model_path(self) -> str:
