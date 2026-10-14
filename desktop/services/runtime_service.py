@@ -184,7 +184,8 @@ class RuntimeManager:
             note=spec.get("note", ""),
             location=self.dir_for(rid),
             download_bytes=sum(int(w.get("size") or 0)
-                               for w in (spec.get("wheels") or [])),
+                               for w in ((spec.get("wheels") or [])
+                                         + (spec.get("archives") or []))),
             installed_bytes=int(spec.get("installed_size") or 0),
             spec=spec,
         )
@@ -201,8 +202,10 @@ class RuntimeManager:
             return st
 
         # 没有装：看有没有 .part 可以续传
+        # ⚠️ `archives` 也要看：CUDA 走的是 zip，不看的话
+        # "下载中断后还想续传"会被判成"从未开始"（真踩到：detail 显示 0B）。
         partial = []
-        for w in (spec.get("wheels") or []):
+        for w in ((spec.get("wheels") or []) + (spec.get("archives") or [])):
             p = os.path.join(self.wheel_cache(), w["filename"] + ".part")
             if os.path.isfile(p):
                 partial.append((p, os.path.getsize(p), int(w.get("size") or 0)))

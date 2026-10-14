@@ -7,7 +7,9 @@
       "category": "asr",
       "name": "Whisper large-v3（语音识别）",
       "purpose": "把音频里的演唱转成带时间戳的字，是对齐的输入",
-      "required_for": ["lyrics_alignment"],
+      "required_for": [
+        "lyrics_alignment"
+      ],
       "default": true,
       "download_policy": "first_run",
       "recommended": true,
@@ -35,7 +37,9 @@
       "category": "asr",
       "name": "Whisper medium（语音识别·中）",
       "purpose": "比 large-v3 小，速度快、准确度略降",
-      "required_for": ["lyrics_alignment"],
+      "required_for": [
+        "lyrics_alignment"
+      ],
       "default": false,
       "download_policy": "on_demand",
       "approx_size": 1600000000,
@@ -45,14 +49,22 @@
         "repository": "Systran/faster-whisper-medium",
         "cache_key": "models--Systran--faster-whisper-medium"
       },
-      "verify": { "kind": "hf_presence", "must_have": ["model.bin", "config.json"] }
+      "verify": {
+        "kind": "hf_presence",
+        "must_have": [
+          "model.bin",
+          "config.json"
+        ]
+      }
     },
     {
       "id": "whisper-small",
       "category": "asr",
       "name": "Whisper small（语音识别·小）",
       "purpose": "体积最小，先跑通流程 / 显存紧张时用",
-      "required_for": ["lyrics_alignment"],
+      "required_for": [
+        "lyrics_alignment"
+      ],
       "default": false,
       "download_policy": "on_demand",
       "approx_size": 500000000,
@@ -62,24 +74,37 @@
         "repository": "Systran/faster-whisper-small",
         "cache_key": "models--Systran--faster-whisper-small"
       },
-      "verify": { "kind": "hf_presence", "must_have": ["model.bin", "config.json"] }
+      "verify": {
+        "kind": "hf_presence",
+        "must_have": [
+          "model.bin",
+          "config.json"
+        ]
+      }
     },
     {
       "id": "campplus-onnx",
       "category": "diarization",
       "name": "CAM++ ONNX 图（分声部·免 PyTorch）",
-      "purpose": "CAM++ 的 ONNX 版本，结构与权重自包含；有了它分声部只依赖 onnxruntime，**不需要 PyTorch**",
-      "required_for": ["singer_split"],
+      "purpose": "CAM++ 的 ONNX 版本，结构与权重自包含；有了它分声部只依赖 onnxruntime，不需要 PyTorch",
+      "required_for": [
+        "singer_split"
+      ],
       "default": true,
       "download_policy": "bundled",
       "approx_size": 28836000,
       "license": "Apache-2.0（ModelScope 3D-Speaker；图由本仓库从同一份权重导出）",
       "note": "随安装包提供，由 tools/export_campplus_onnx.py 生成。数值一致性有实测：真实音频归一化后 max|Δ|=5.5e-04、cos=0.999995；同一套评估脚本跑出 85.0%，与历史基线逐首一致。",
-      "source": { "kind": "bundled", "path": "models/campplus/campplus.onnx" },
+      "source": {
+        "kind": "bundled",
+        "path": "models/campplus/campplus.onnx"
+      },
       "verify": {
         "kind": "files_exist",
         "target": "models/campplus",
-        "must_have": ["campplus.onnx"]
+        "must_have": [
+          "campplus.onnx"
+        ]
       }
     },
     {
@@ -87,7 +112,9 @@
       "category": "diarization",
       "name": "CAM++ 声纹权重（分声部）",
       "purpose": "判断每句是 v1/v2/v3 里谁唱的（对唱左右分栏靠它）",
-      "required_for": ["singer_split"],
+      "required_for": [
+        "singer_split"
+      ],
       "default": true,
       "download_policy": "on_demand",
       "approx_size": 28036335,
@@ -114,17 +141,27 @@
       "category": "diarization",
       "name": "CAM++ 模型代码",
       "purpose": "CAM++ 的网络定义，随安装包提供",
-      "required_for": ["singer_split"],
+      "required_for": [
+        "singer_split"
+      ],
       "default": true,
       "download_policy": "bundled",
       "approx_size": 45000,
       "license": "Apache-2.0",
       "note": "这是随程序分发的源码，不需要下载。",
-      "source": { "kind": "bundled", "path": "models/campplus_src" },
+      "source": {
+        "kind": "bundled",
+        "path": "models/campplus_src"
+      },
       "verify": {
         "kind": "files_exist",
         "target": "models/campplus_src",
-        "must_have": ["model.py", "components.py", "amp.py", "utils.py"]
+        "must_have": [
+          "model.py",
+          "components.py",
+          "amp.py",
+          "utils.py"
+        ]
       }
     },
     {
@@ -132,7 +169,9 @@
       "category": "separation",
       "name": "Demucs 人声分离",
       "purpose": "先把伴奏去掉再识别，嘈杂混音里更准（可选）",
-      "required_for": ["vocal_separation"],
+      "required_for": [
+        "vocal_separation"
+      ],
       "default": false,
       "download_policy": "on_demand",
       "approx_size": 84141911,
@@ -144,7 +183,12 @@
         "cache_key": "hub/checkpoints",
         "hub_dir": "models/demucs"
       },
-      "verify": { "kind": "hf_presence", "must_have": ["955717e8-8726e21a.th"] }
+      "verify": {
+        "kind": "hf_presence",
+        "must_have": [
+          "955717e8-8726e21a.th"
+        ]
+      }
     }
   ]
 }

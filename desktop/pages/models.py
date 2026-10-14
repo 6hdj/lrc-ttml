@@ -65,16 +65,42 @@ class ModelsPage(Page):
         self.body_lay.setContentsMargins(0, 0, 0, 0)
         self.body_lay.setSpacing(10)
 
+        # ---------------------------------------------------------------
+        # 运行组件（按需下载）：GPU(CUDA) / PyTorch
+        # ---------------------------------------------------------------
+        # ⚠️⚠️ 为什么必须有这块（否则方案 D 是**死路**）：
+        # 第 18 轮起 CUDA 运行时从主包移出（主包 717.7 MB → 189.9 MB），
+        # 但**没有任何界面能把它装回来** —— `runtime_service` 之前只有 CLI
+        # 消费者（launcher / app.py），页面上一个字都没有。
+        # 那样用户会遇到：装完软件 → 做歌词 → `asr.py` 报
+        # 「CUDA 运行库未就位」→ **无处可点**。等于把一个必需组件做成了死路。
+        self._rt_rows: Dict[str, Dict[str, Any]] = {}
+        self.lb_rt = hint("正在读取运行组件状态…")
+        self._rt_body = QWidget()
+        self._rt_lay = QVBoxLayout(self._rt_body)
+        self._rt_lay.setContentsMargins(0, 0, 0, 0)
+        self._rt_lay.setSpacing(8)
+        rt_card = self.card_with(
+            h2("运行组件（按需下载）"),
+            self.lb_rt,
+            self._rt_body,
+            hint("这些是「程序本身的功能件」，不是模型权重。GPU 运行时是"
+                 "「语音识别」跑起来的必需品；PyTorch 只有「对唱分声部」"
+                 "和「人声分离」才需要。"),
+        )
+
         inner = QWidget()
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(22, 18, 22, 22)
         lay.setSpacing(14)
         lay.addWidget(page_header(self))
         lay.addWidget(head)
+        lay.addWidget(rt_card)
         lay.addWidget(self.body)
         lay.addStretch(1)
 
         self._build_rows()
+        self._build_rt_rows()
         # 第一眼就要是真实状态，不能停在 build() 里写的那句占位文字
         try:
             self.refresh()
@@ -83,7 +109,98 @@ class ModelsPage(Page):
             log_service.get().exception("模型页首次刷新失败")
         return self.scrolled(inner)
 
-    # ------------------------------------------------------------ 构建
+    # ------------------------------------------------- 运行组件（按需下载）
+    def _build_rt_rows(self) -> None:
+        """把 `runtime_manifest.json` 里的组件画成一行行。
+
+        ⚠️ 清单是**唯一来源**：以后加运行时组件只要改清单，这里不用动。
+        """
+        while self._rt_lay.count():
+            item = self._rt_lay.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._rt_rows.clear()
+        try:
+            from desktop.services import runtime_service
+            specs = runtime_service.load_manifest().get("runtimes", [])
+        except Exception as e:                            # noqa: BLE001
+            self.lb_rt.setText(f"读取运行组件清单失败：{type(e).__name__}: {e}")
+            return
+        for spec in specs:
+            self._rt_lay.addWidget(self._make_rt_row(spec))
+
+    def _make_rt_row(self, spec: dict) -> QWidget:
+        rid = spec.get("id", "")
+        name = spec.get("name", rid)
+        size = int(spec.get("approx_size") or 0)
+        lb_state = QLabel("…")
+        lb_state.setObjectName("dim")
+        lb_detail = QLabel(f"约 {size / 1048576:.0f} MB")
+        lb_detail.setObjectName("faint")
+
+        btn = button("下载并安装", on_click=lambda _=False, i=rid: self._download_rt(i))
+        btn_remove = button("删除", on_click=lambda _=False, i=rid: self._remove_rt(i))
+        box = QWidget()
+        row_lay = QVBoxLayout(box)
+        row_lay.setContentsMargins(0, 2, 0, 2)
+        top = QWidget()
+        tl = QHBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(lb_state)
+        tl.addWidget(lb_detail)
+        tl.addStretch(1)
+        tl.addWidget(btn)
+        tl.addWidget(btn_remove)
+        row_lay.addWidget(top)
+        row_lay.addWidget(hint(spec.get("purpose", "")))
+        self._rt_rows[rid] = {"state": lb_state, "detail": lb_detail,
+                              "btn": btn, "remove": btn_remove, "name": name}
+        return box
+
+    def _refresh_rt(self) -> None:
+        try:
+            from desktop.services import runtime_service
+            mgr = runtime_service.RuntimeManager()
+            states = mgr.check_all()
+        except Exception as e:                            # noqa: BLE001
+            self.lb_rt.setText(f"读取运行组件状态失败：{type(e).__name__}: {e}")
+            return
+        ready = 0
+        for st in states:
+            r = self._rt_rows.get(st.id)
+            if not r:
+                continue
+            # 状态色统一走 STATUS_COLOR（深浅主题都能看）
+            from desktop.pages.base import STATUS_COLOR
+            color = STATUS_COLOR.get(st.status, C["dim"])
+            label = {"ready": "已安装", "not_installed": "未安装",
+                     "failed": "损坏"}.get(st.status, st.status)
+            r["state"].setText(f"{st.name}：{label}")
+            r["state"].setStyleSheet(f"color: {color}; font-weight: 600;")
+            # ⚠️ 字段来自 `RuntimeState`：是 `download_bytes` / `installed_bytes`，
+            # **没有** `approx_size`（那是 model spec 的字段名）。
+            # 我第一版写成了 `st.approx_size` —— 属性不存在会在刷新里抛异常，
+            # 表现为"卡片一直停在「正在读取运行组件状态…」"（真踩到）。
+            _dl = int(getattr(st, "download_bytes", 0) or 0)
+            _in = int(getattr(st, "installed_bytes", 0) or 0)
+            size_txt = (f"需下载 {_dl / 1048576:.0f} MB"
+                        + (f"　装后约 {_in / 1048576:.0f} MB" if _in else ""))
+            # ⚠️ `check()` 生成的 detail 本身就是"需要下载 xxx"，
+            # 再拼上去会变成"需下载 118 MB … 需要下载 118.4MB"（截图里抓到过，
+            # 同一句话说了两遍）。只在 detail **不是**这类重复时才附上。
+            _d = (st.detail or "").strip()
+            _dup = _d.startswith("需要下载") or _d.startswith("已下载")
+            r["detail"].setText(size_txt + (f"　{_d}" if _d and not _dup else ""))
+            r["btn"].setEnabled(st.status != "ready")
+            r["btn"].setVisible(st.status != "ready")
+            r["remove"].setVisible(st.status == "ready")
+            if st.status == "ready":
+                ready += 1
+        n = len(states)
+        self.lb_rt.setText(f"{ready}/{n} 个运行组件已就绪"
+                          if n else "清单里没有运行组件")
+
     def _build_rows(self) -> None:
         while self.body_lay.count():
             item = self.body_lay.takeAt(0)
@@ -186,6 +303,37 @@ class ModelsPage(Page):
             + ("" if rep["asr_ready"]
                else "　! 语音识别模型还没装，现在不能做歌词"))
         self.lb_cache.setText(f"缓存目录：{rep['hf_cache']}")
+        # 运行组件也一起刷（失败不能影响模型部分的显示）
+        try:
+            self._refresh_rt()
+        except Exception:                                 # noqa: BLE001
+            from desktop.services import log_service
+            log_service.get().exception("运行组件状态刷新失败")
+
+    def _download_rt(self, rid: str) -> None:
+        """下载并安装一个运行组件（走任务中心，可取消、可续传）。"""
+        tid = self.ctx.workers.start_runtime_download(rid)
+        r = self._rt_rows.get(rid)
+        if r:
+            r["detail"].setText("正在下载…（可在「任务」页看进度/取消）")
+            r["btn"].setEnabled(False)
+        self._watch(tid, [])
+
+    def _remove_rt(self, rid: str) -> None:
+        r = self._rt_rows.get(rid) or {}
+        if not self.ask("删除运行组件",
+                        f"确定删除「{r.get('name', rid)}」吗？\n"
+                        f"删掉后对应功能会不可用，需要时可以重新下载。"):
+            return
+        try:
+            from desktop.services import runtime_service
+            runtime_service.RuntimeManager().remove(rid,
+                                                    log=lambda m: None)
+        except Exception as e:                            # noqa: BLE001
+            self.say(f"删除失败：{type(e).__name__}: {e}", ok=False)
+            return
+        self.say(f"已删除运行组件 {rid}")
+        self.refresh()
 
     def on_show(self) -> None:
         # ⚠️ 必须**先刷一次**：``build()`` 里已经把行建出来了（那时显示的是

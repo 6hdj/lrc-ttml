@@ -64,6 +64,44 @@ class Workers:
 
         return self.tasks.submit("convert", name, _job)
 
+    # ------------------------------------------------------------ 运行时组件
+    def start_runtime_download(self, rid: str) -> str:
+        """下载并安装一个**运行组件**（GPU/CUDA、PyTorch）。
+
+        ⚠️ 与 `start_model_download` 分开，不要图省事复用：
+        两者虽然都是"下载 + 校验 + 落盘"，但
+          * 清单不同（`runtime_manifest.json` vs `model_manifest.json`）；
+          * 校验方式不同（CUDA 是几个 DLL，**没有模块可 import**，
+            所以走文件校验；torch 走 import + 版本前缀）；
+          * 安装位置不同（`<data_dir>/runtime/<id>` vs 模型缓存）。
+        复用会逼出一个满屏 if 的函数。
+
+        这里同样遵循"**认不出的 id 不抛异常**"：要变成失败的任务，
+        界面照常显示原因，而不是崩在按钮回调里。
+        """
+        try:
+            from desktop.services import runtime_service
+            spec = runtime_service.RuntimeManager().spec(rid)
+            name = f"下载 {spec.get('name', rid)}"
+        except Exception as e:                            # noqa: BLE001
+            def _bad(h: TaskHandle):
+                raise RuntimeError(str(e))
+            return self.tasks.submit("runtime_download", f"下载 {rid}", _bad)
+
+        def _job(h: TaskHandle):
+            from desktop.services import runtime_service
+            h.progress(None, "准备中")
+            st = runtime_service.RuntimeManager().download(
+                rid,
+                log=h.log,
+                progress=lambda pct, msg: h.progress(pct, msg),
+                cancel=lambda: h.cancelled,
+            )
+            h.set_result(runtime_id=rid, status=st.status, detail=st.detail)
+            return {"runtime_id": rid, "status": st.status}
+
+        return self.tasks.submit("runtime_download", name, _job)
+
     # ------------------------------------------------------------ 模型下载
     def start_model_download(self, model_id: str) -> str:
         # ⚠️ 认不出来的 id **不能在这里抛异常**：那样调用方（界面）会直接崩在

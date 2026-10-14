@@ -88,7 +88,7 @@
     {
       "id": "cuda",
       "name": "CUDA 运行时（显卡加速）",
-      "purpose": "faster-whisper/CTranslate2 的 GPU 推理需要 cuBLAS；没有它**语音识别根本跑不了**",
+      "purpose": "faster-whisper/CTranslate2 的 GPU 推理需要 cuBLAS；没有它语音识别根本跑不了",
       "required_for": [
         "asr"
       ],
