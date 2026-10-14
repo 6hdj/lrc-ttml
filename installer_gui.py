@@ -263,6 +263,19 @@ def _shot_path() -> str:
         BASE, "installer_shot.png")
 
 
+def _stage_arg() -> str:
+    """`--stage install|done|choose`：预览/截图时直接跳到某个向导阶段。
+
+    ⚠️ 只在 `--shot` / `--view` 下有意义 —— 真安装流程的阶段由流程本身推进，
+    不会被这个参数影响（`_preview_stage` 只在 `not autostart` 时调用）。
+    """
+    if "--stage" not in sys.argv:
+        return ""
+    i = sys.argv.index("--stage")
+    val = sys.argv[i + 1] if len(sys.argv) > i + 1 else ""
+    return val if val in ("choose", "install", "done") else ""
+
+
 class Installer:
     def __init__(self, root: tk.Tk, autostart: bool = True):
         """`autostart=False`：**只画界面**，不自动开始检查/解压（截图与预览用）。"""
@@ -294,6 +307,15 @@ class Installer:
         # 起始阶段：路径 + 勾选项（第 1 步）。
         # ⚠️ 必须在 `_build()` 之后调 —— 它要 pack/forget 控件。
         self.set_stage("choose")
+        # ⚠️ `--stage install|done`：**只为截图/预览**设一个阶段，并填上假数据。
+        # 为什么需要（第 23 轮补）：向导做了三个步骤，
+        # 但之前只截得到第 1 步 —— 第 2/3 步「做过但从来没人看过」。
+        # 界面代码"存在且测试通过"不等于"画出来是对的"（本项目已多次靠看图
+        # 才发现"字看不见""区块没收起来"）。所以给预览模式一个能直达任意阶段的口子。
+        _stage = _stage_arg()
+        if _stage and not autostart:
+            self._preview_stage(_stage)
+            return
         if not autostart:
             # 预览/截图：停在"准备就绪"这一屏，不碰任何作业
             self.set_sub("准备就绪，点「开始安装」", ACCENT)
@@ -314,6 +336,53 @@ class Installer:
             self.log_line("安装位置：" + self.install_dir)
             self.log_line("点「开始安装」，程序会自动解压到上面这个文件夹，")
             self.log_line("然后检查运行环境、把你缺的东西补上。")
+
+    # ------------------------------------------------------------ 预览
+    def _preview_stage(self, stage: str) -> None:
+        """把界面切到指定阶段并填**假数据**（只在 `--shot`/`--view` 预览时用）。
+
+        假数据刻意做得像真的：进度条 62% 且带字节数、日志有几行、
+        清单里既有已装项也有缺失项 —— 这样截图才能看出
+        "进度条会不会太窄""日志区会不会被挤没""按钮在不在视野里"。
+        """
+        from desktop.pages.base import (DARK, LIGHT)  # noqa: F401  (仅为对称)
+        self.set_stage(stage)
+        if stage == "install":
+            self.set_sub("正在检查你的电脑…（首次可能要一两分钟，请勿关闭）", ACCENT)
+            self.log_line("安装位置：" + self.install_dir)
+            self.log_line("[1/4] 解压主程序…")
+            self.log_line("      已解压 387 个文件（1078 MB）")
+            self.log_line("[2/4] 检查运行环境…")
+            self.log_line("      ✓ 语音识别引擎   ✓ 音频解码")
+            self.log_line("      ! GPU 运行时未安装（约 529 MB）")
+            # 真实进度：百分比 + 字节数（不编数字，这里只是预览用的样例值）
+            self.pb.configure(value=62)
+            self._pb_mode = "bytes"
+            self._pb_total = 554472678
+            self._pb_done = 343773059
+            self.lb_pct.configure(text="62%  328/529MB")
+            self.hint.configure(text="正在下载 GPU 运行时…")
+            self.btn_go.configure(text="开始补全", state="normal",
+                                  command=self.start_install_app)
+            self.btn_quit.configure(state="normal")
+        elif stage == "done":
+            self.set_sub("安装完成，可以使用了", OK)
+            self.log_line("")
+            self.log_line("安装位置：" + self.install_dir)
+            self.log_line("已创建开始菜单快捷方式")
+            self.log_line("")
+            self.log_line("安装完成！点上面的「▶ 启动软件」开始使用。")
+            self.pb.configure(value=100)
+            self.lb_pct.configure(text="100%  完成")
+            self.hint.configure(text="")
+            self.btn_go.configure(text="▶ 启动软件（完成）", state="normal",
+                                  command=self.launch_app)
+            self.btn_quit.configure(state="normal")
+        else:
+            self.set_sub("准备就绪，点「开始安装」", ACCENT)
+            self.btn_go.configure(text="开始安装",
+                                  command=self.start_install_app,
+                                  state="normal")
 
     # ------------------------------------------------------------ 界面
     def _build(self) -> None:
@@ -1682,23 +1751,66 @@ def main() -> int:
             out = _shot_path()
 
             def _prepare() -> None:
+                # ⚠️⚠️ **必须把窗口摆到"完全落在屏幕内"的位置**（真踩到，第 23 轮）。
+                # 之前是"提到最前 + 置顶后抓 (rootx, rooty, w, h)"，而
+                # `ImageGrab.grab(bbox=…)` **抓的是屏幕像素** ——
+                # 窗口只要有一部分越出屏幕（或系统把它摆到负坐标 / 贴右边缘），
+                # 那部分就**抓不到**，图里右边和下面被整齐地切掉。
+                # 我照着这种图判断"按钮不见了"，完全是假的。
+                # 所以：先按屏幕尺寸算出能完整放下的坐标，再摆过去。
+                root.update_idletasks()
+                sw = root.winfo_screenwidth()
+                sh = root.winfo_screenheight()
+                w, h = 860, 700
+                x = max(0, min(40, sw - w - 8)) if sw > w else 0
+                y = max(0, min(40, sh - h - 48)) if sh > h else 0
+                root.geometry(f"{w}x{h}+{x}+{y}")
+                root.update_idletasks()
                 root.lift()
                 root.attributes("-topmost", True)
                 root.focus_force()
+                root.update()
+                time.sleep(0.3)          # 给窗口管理器时间真正落位
                 root.update()
 
             def _grab() -> None:
                 try:
                     from PIL import ImageGrab
-                    # ⚠️ 截图抓的是**屏幕像素**，窗口被别的窗口盖住就会抓到别人的画面
-                    # （第一次真抓到了桌面：图里是用户头像和"欢迎"字样）。
-                    # 所以抓之前必须**提到最前 + 置顶 + 激活**。
                     _prepare()
+                    root.update()
                     x = root.winfo_rootx()
                     y = root.winfo_rooty()
                     w, h = root.winfo_width(), root.winfo_height()
-                    ImageGrab.grab(bbox=(x, y, x + w, y + h)).save(out)
-                    print(f"  已截图：{out}（{w}x{h}）")
+                    sw = root.winfo_screenwidth()
+                    sh = root.winfo_screenheight()
+                    # ⚠️⚠️ **必须按 DPI 缩放换算**（真踩到，第 23 轮，查了四轮）。
+                    # `winfo_rootx/width` 是 **Tk 逻辑像素**，而 `ImageGrab` 抓的是
+                    # **物理屏幕像素**。两者不一致时（本机实测：Tk 报屏幕
+                    # 1536x864，整屏抓图却是 1920x1080 ⇒ 缩放 1.25），
+                    # 抓 `(x, y, x+w, y+h)` 只覆盖窗口的左上 1/1.25，
+                    # 图里右边和下面**被整齐切掉** ——
+                    # 我照着这种图判断"按钮不见了""区块没显示"，全是假的。
+                    #
+                    # ⚠️ **不要用 `GetDpiForSystem()`**：本进程实测返回 96，
+                    # 而真实缩放是 1.25（Tk 在 DPI-aware / 非 aware 之间口径不同）。
+                    # 用"整屏抓图尺寸 ÷ Tk 报的屏幕尺寸"这个**可观测量**最稳：
+                    # 它就是 ImageGrab 的像素与 Tk 坐标之间的换算比。
+                    scale = 1.0
+                    try:
+                        sw_tk = max(1, root.winfo_screenwidth())
+                        probe = ImageGrab.grab()
+                        scale = probe.size[0] / sw_tk
+                    except Exception:                   # noqa: BLE001
+                        scale = 1.0
+                    X, Y = int(round(x * scale)), int(round(y * scale))
+                    W, H = int(round(w * scale)), int(round(h * scale))
+                    img = ImageGrab.grab(bbox=(X, Y, X + W, Y + H))
+                    if abs(scale - 1.0) > 0.01:
+                        print(f"  （缩放 {scale:.3f}：逻辑 {w}x{h} → 物理 {W}x{H}）")
+                    if X < 0 or Y < 0:
+                        print(f"  ⚠️ 窗口未完整落在屏幕内：({X},{Y}) —— 截图可能被切")
+                    img.save(out)
+                    print(f"  已截图：{out}（{W}x{H} @ {X},{Y}）")
                 except Exception as e:                  # noqa: BLE001
                     print(f"  截图失败：{type(e).__name__}: {e}")
                 root.destroy()
