@@ -143,6 +143,11 @@ class MainWindow(QMainWindow):
                       activated=lambda _=False, k=key: self.show_page(k))
         # Esc：当前页有"取消"就触发取消，否则切回「开始」页（有处可退）。
         QShortcut(QKeySequence("Esc"), self, activated=self._on_escape)
+        # Enter：当前页有"主操作"（开始制作/保存等）就触发。
+        # ⚠️ 只在"焦点不在按钮上"时兜底 —— 焦点已经在某按钮上时 Qt 会
+        # 自己触发那个按钮，重复触发会连点两次。
+        QShortcut(QKeySequence("Return"), self, activated=self._on_enter,
+                  context=Qt.ShortcutContext.WidgetWithChildrenShortcut)
 
         self.show_page("welcome" if not self.ctx.config.get("first_run_done")
                        else "home")
@@ -204,6 +209,18 @@ class MainWindow(QMainWindow):
         if callable(cancel) and cancel():
             return
         self.show_page("welcome")
+
+    def _on_enter(self) -> None:
+        """Enter：触发当前页的主操作（若有）。"""
+        page = self.current_page()
+        submit = getattr(page, "submit_current", None)
+        if callable(submit):
+            try:
+                submit()
+            except Exception:                           # noqa: BLE001
+                from desktop.services import log_service
+                log_service.get().exception("页面 %s 的 submit_current 出错",
+                                           getattr(page, "TITLE", "?"))
 
     # ------------------------------------------------------------ 任务通知
     def _tick(self) -> None:

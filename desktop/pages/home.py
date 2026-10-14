@@ -540,6 +540,11 @@ class HomePage(Page):
             return True
         return False
 
+    def submit_current(self) -> bool:
+        """Enter 快捷键的挂钩：触发「开始制作」（主操作）。"""
+        self._start()
+        return True
+
     # ------------------------------------------------------------ 结果
     def _open_result(self) -> None:
         if self._last_ttml:
