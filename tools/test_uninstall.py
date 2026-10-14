@@ -82,20 +82,69 @@ def _run(install, desk, keep=True, yes=True):
     return r.returncode, (r.stdout or b"").decode("utf-8", "replace")
 
 
-def _scheduled_cleanup() -> bool:
+def _scheduled_cleanup(install: str = "") -> bool:
     """卸载是否**安排了退出后运行的清理助手**（延迟清理）。
 
     卸载进程自己住在安装目录里，Windows 不允许它删掉自己正在用的文件，
-    所以最后一步交给 TEMP 下的 `l2t-cleanup-*.bat`（退出后执行）。
-    测试里用"TEMP 下有没有这个脚本"当判据。
+    所以最后一步交给一个**退出后执行**的 `l2t-cleanup-*.bat`。
+
+    ⚠️⚠️ **判据不能只看 TEMP**（2026-10-14 改，真踩到）：
+    清理脚本的落点是 `uninstall_core._pick_writable_dir()` —— 它会**逐个真写探针**
+    挑一个可写目录。这台机器上 `TEMP`/`TMP` 指向
+    `C:\\Users\\<u>\\AppData\\Local\\Temp`，`os.access` 说可写、
+    **真写就 PermissionError**（Windows 上 `os.access` 对 ACL 不可靠），
+    于是脚本落到"安装目录的上一级"。旧判据只 `listdir(TEMP)` →
+    **明明安排好了却报"没有安排清理助手"**（假失败，我为此查了三轮）。
+    现在：TEMP / TMP / **安装目录的上一级** 都查。
     """
-    # ⚠️ 卸载跑在**子进程**里、且 `_run` 没有改 TEMP，所以脚本会写进
-    # 当前进程的 TEMP —— 这里读的就是同一个目录。
-    tmp = os.environ.get("TEMP") or os.environ.get("TMP") or ""
-    if not tmp or not os.path.isdir(tmp):
-        return False
-    return any(f.startswith("l2t-cleanup-") and f.endswith(".bat")
-               for f in os.listdir(tmp))
+    dirs = []
+    for k in ("TEMP", "TMP"):
+        v = os.environ.get(k)
+        if v:
+            dirs.append(v)
+    if install:
+        try:
+            dirs.append(os.path.dirname(os.path.abspath(install)))
+        except Exception:                               # noqa: BLE001
+            pass
+    for d in dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        if any(f.startswith("l2t-cleanup-") and f.endswith(".bat")
+               for f in names):
+            return True
+    return False
+
+
+def _wait_cleanup(install: str, timeout: float = 20.0) -> bool:
+    """等清理助手真的把安装目录删掉（**结果导向**的判据）。
+
+    ⚠️ 加这条是因为"bat 存在"只是**代理指标**：bat 可能写错地方、
+    可能起不来。用户真正关心的是"目录最后有没有被清掉"。
+
+    ⚠️⚠️ **目录消失后还要再等一会儿**（用例间竞态，真踩到）：
+    清理 bat 的循环是
+        for /L %%i in (1,1,10) do ( if not exist <target> goto done
+                                    rmdir /s /q <target>
+                                    ping -n 2 ... )
+    "目录消失"只说明那次 `rmdir` 成功了，bat 可能还在 `ping` 里睡着；
+    而**下一个用例会用同一个路径**重新建目录 —— 残留的 bat 醒来后
+    发现目录又有了，就把它**删掉**，表现为
+    「卸载脚本是瘦启动器」用例报"没生成卸载脚本"（实为被删）。
+    所以这里在目录消失后再多等一档（> 一次 `ping -n 2`），让 bat 走到 `goto done` 退出。
+    """
+    import time
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if not os.path.isdir(install):
+            time.sleep(3.0)          # 让残留 bat 走完循环退出，别去删下个用例的目录
+            return True
+        time.sleep(0.5)
+    return not os.path.isdir(install)
 
 
 def _models_under(root):
@@ -117,7 +166,8 @@ def t_keep_models_from_install():
     # ⚠️ 卸载改成"延迟清理"之后，返回时目录**还在**（要留 exe 与 _internal/
     # 给清理助手收尾），所以不能再用"目录立刻消失"当判据。
     # 改验：程序目录里**已经有内容被删掉** + **安排了清理助手**。
-    assert _scheduled_cleanup(), "没有安排清理助手（目录会永远留着）"
+    assert _scheduled_cleanup(install), "没有安排清理助手（目录会永远留着）"
+    assert _wait_cleanup(install), "安排了清理助手但目录没被清掉"
     if os.path.isdir(install):
         assert not os.path.isdir(os.path.join(install, "outputs")), \
             "程序文件一个都没删（卸载没生效）"
@@ -137,7 +187,8 @@ def t_keep_models_already_in_data():
     # ⚠️ 卸载改成"延迟清理"之后，返回时目录**还在**（要留 exe 与 _internal/
     # 给清理助手收尾），所以不能再用"目录立刻消失"当判据。
     # 改验：程序目录里**已经有内容被删掉** + **安排了清理助手**。
-    assert _scheduled_cleanup(), "没有安排清理助手（目录会永远留着）"
+    assert _scheduled_cleanup(install), "没有安排清理助手（目录会永远留着）"
+    assert _wait_cleanup(install), "安排了清理助手但目录没被清掉"
     if os.path.isdir(install):
         assert not os.path.isdir(os.path.join(install, "outputs")), \
             "程序文件一个都没删（卸载没生效）"
@@ -153,8 +204,10 @@ def t_delete_models_when_asked():
     assert rc == 0, f"退出码 {rc}\n{out}"
     # ⚠️ 卸载改成"延迟清理"之后，返回时目录**还在**（要留 exe 与 _internal/
     # 给清理助手收尾），所以不能再用"目录立刻消失"当判据。
-    # 改验：程序目录里**已经有内容被删掉** + **安排了清理助手**。
-    assert _scheduled_cleanup(), "没有安排清理助手（目录会永远留着）"
+    # 改验：程序目录里**已经有内容被删掉** + **安排了清理助手** +
+    # **助手真把目录清掉了**（结果导向，见 `_wait_cleanup` 的说明）。
+    assert _scheduled_cleanup(install), "没有安排清理助手（目录会永远留着）"
+    assert _wait_cleanup(install), "安排了清理助手但目录没被清掉"
     if os.path.isdir(install):
         assert not os.path.isdir(os.path.join(install, "outputs")), \
             "程序文件一个都没删（卸载没生效）"

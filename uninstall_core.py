@@ -360,6 +360,68 @@ def _schedule_delete_on_reboot(path: str) -> bool:
         return False
 
 
+def _pick_writable_dir(target: str) -> str:
+    """挑一个**真能写**的临时目录放清理脚本；都不行返回空串。
+
+    ⚠️ 三条不能省（都是真踩到的）：
+    1. **必须真写一个探针文件**再删掉 —— `os.path.isdir()` + `os.access(W_OK)`
+       在 Windows 上对 ACL **不可靠**（实测说"可写"却 `PermissionError`）；
+    2. **排除 `target` 内部** —— 清理脚本要删的就是 `target`，
+       脚本自己住在里面时 `rmdir /s /q` 会失败（文件被 cmd 占用），
+       等于白排一个清理；
+    3. 候选顺序：环境变量 → `LOCALAPPDATA\\Temp` → `USERPROFILE` 下的 Temp →
+       `C:\\Windows\\Temp` → **`target` 的上一级目录**。
+    """
+    # ⚠️⚠️ **不要用 `tempfile.gettempdir()`**（第二次踩到才发现）：
+    # 它内部有"候选全失败就退回当前工作目录"的逻辑，而卸载过程中
+    # 当前目录**可能已经被删掉**（安装目录就是 cwd 时）——
+    # 那时它会直接抛 `FileNotFoundError`，把整个清理安排搞崩。
+    # 实测：探针里 print(tempfile.gettempdir()) 直接把卸载进程打挂了。
+    # 所以这里用**确定性候选**，一项项真写探针。
+    cands = []
+    for k in ("TEMP", "TMP"):
+        v = os.environ.get(k)
+        if v:
+            cands.append(v)
+    la = os.environ.get("LOCALAPPDATA")
+    if la:
+        cands.append(os.path.join(la, "Temp"))
+    up = os.environ.get("USERPROFILE")
+    if up:
+        cands.append(os.path.join(up, "AppData", "Local", "Temp"))
+    cands.append(r"C:\Windows\Temp")
+    # 最后兜底：安装目录的**上一级**（通常可写，且不在要删的目录里）
+    try:
+        cands.append(os.path.dirname(os.path.abspath(target)))
+    except Exception:                                   # noqa: BLE001
+        pass
+
+    tgt = os.path.abspath(target)
+    seen = set()
+    for c in cands:
+        if not c:
+            continue
+        try:
+            c = os.path.abspath(c)
+        except Exception:                               # noqa: BLE001
+            continue
+        if c in seen or not os.path.isdir(c):
+            continue
+        seen.add(c)
+        # 不能是 target 自己或它的子目录
+        if c == tgt or c.startswith(tgt + os.sep):
+            continue
+        probe = os.path.join(c, f".l2t-wtest-{os.getpid()}")
+        try:
+            with open(probe, "w") as fh:
+                fh.write("x")
+            os.remove(probe)
+            return c
+        except OSError:
+            continue
+    return ""
+
+
 def _schedule_cleanup(target: str) -> str:
     """写一个"等我们退出后删除 `target`"的批处理，并**脱离**启动它。
 
@@ -375,7 +437,26 @@ def _schedule_cleanup(target: str) -> str:
     import subprocess
     import tempfile
     import time
-    tmp = os.environ.get("TEMP") or tempfile.gettempdir()
+    # ⚠️⚠️ **临时目录要"试着写一下"再选**（2026-10-14 真踩到）。
+    #
+    # 原来的写法是 `os.environ.get("TEMP") or tempfile.gettempdir()`：
+    # **只要 TEMP 有值就直接用它**，而 TEMP 不可写时不会回退 ——
+    # 于是清理助手写不出来 → 卸载报"没删干净、请手动删"。
+    #
+    # 实测触发场景（我自己的机器上就复现了）：
+    #   * `TEMP` / `TMP` 都指向 `C:\Users\<u>\AppData\Local\Temp`；
+    #   * `os.path.isdir()` 说存在、`os.access(W_OK)` 说可写
+    #     （**Windows 上 `os.access` 对 ACL 不可靠**）；
+    #   * 但真去 `open(..., "w")` 就是 `PermissionError: [Errno 13]`。
+    #   * `tempfile.gettempdir()` 于是逐个候选回退，最后**返回了工作目录** ——
+    #     而把清理脚本写进工作目录/安装目录是**无效甚至有害**的
+    #     （脚本要删的目录里包含它自己时 `rmdir` 会失败）。
+    #
+    # 现在：列出候选 → **排除 target 内部** → 逐个真写一个探针文件 →
+    # 用第一个真正能写的。都写不了才老实返回空（并让上层给出人工提示）。
+    tmp = _pick_writable_dir(target)
+    if not tmp:
+        return ""
     script = os.path.join(tmp, f"l2t-cleanup-{os.getpid()}.bat")
     log = os.path.join(tmp, f"l2t-cleanup-{os.getpid()}.log")
     # timeout /t 2 等 2 秒让本进程退出；然后最多重试 10 次（每次 1 秒）
