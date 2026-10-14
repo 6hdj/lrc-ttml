@@ -101,6 +101,10 @@ CHECKS = [
      "（阴性疾病对照验证过：去掉取消检查 → 半截安装被判成 ready）"),
     ("源码可跑", "参数生效性", ["tools/test_param_effect.py"], False,
      "每个界面选项改一遍、产物真的变了"),
+    ("源码可跑", "README 与版本一致", ["tools/test_readme.py"], False,
+     "下载入口指向当前版本号、不把旧版流程（part1.bin / 手工合并 /\n"
+     "「安装程序需要 UAC」/「安装包已内置 CUDA」）当现行做法\n"
+     "（用户明确要求：别让新用户照旧版教程操作）"),
     ("源码可跑", "文档同步", ["tools/gen_module_docs.py", "--check"], False,
      "模块说明与源码一致"),
 
