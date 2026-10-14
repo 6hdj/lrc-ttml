@@ -256,6 +256,24 @@ def main() -> int:
     art = artifacts()
     failed = [r for r in results if r[3] not in (0, None)]
 
+    # ---- 变异检查：单独跑，**不放进 CHECKS** ----
+    # ⚠️ 不能放进 CHECKS：本报告是"release_report 跑测试"，
+    # 而变异检查会**改源码再跑测试**；如果它自己也被变异检查覆盖，
+    # 就变成在自己头上动刀（递归且危险）。所以这里是**单向**调用：
+    # 报告 → 变异检查 → 测试。变异检查自己不进报告。
+    mut = None
+    if not a.quick:
+        try:
+            mr = subprocess.run(
+                [sys.executable, os.path.join("tools", "mutation_check.py")],
+                cwd=HERE, capture_output=True, timeout=7200,
+                env=dict(os.environ))
+            mut = (mr.returncode,
+                   ((mr.stdout or b"") + (mr.stderr or b"")).decode(
+                       "utf-8", "replace"))
+        except Exception as e:                          # noqa: BLE001
+            mut = (1, f"跑变异检查失败：{type(e).__name__}: {e}")
+
     # ------------------------------------------------ 写报告
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     L = []
@@ -319,6 +337,28 @@ def main() -> int:
                 for ln in (state,):
                     L.append(f"  {ln}")
                 L.append("  ```")
+
+    # ---- 变异检查结果（放在"逐项结果"之后、"未验证项"之前）----
+    L.append("\n## 三·补、这些测试**真的能失败**吗（变异检查）\n")
+    L.append("**这一节比上面那张表更重要。** 上面只能证明「测试现在通过」，"
+             "证明不了「测试能失败」。本项目**四次**踩到「假绿」——"
+             "测试在、断言在，但它测的不是它声称测的东西"
+             "（改名≠移除、跑错解释器、环境传丢、取消用例测不出坏）。\n")
+    if mut is None:
+        L.append("（`--quick` 模式跳过；完整跑一次才做变异检查）\n")
+    elif mut[0] == 0:
+        L.append("✅ **全部变异都被抓到**：把每个关键防护点故意改坏后，"
+                 "对应测试都失败了。\n")
+        L.append("```")
+        for ln in mut[1].strip().split("\n")[-14:]:
+            L.append(ln)
+        L.append("```")
+    else:
+        L.append("❌ **有变异没被抓到 —— 说明有测试测不出坏（假绿）**：\n")
+        L.append("```")
+        for ln in mut[1].strip().split("\n")[-20:]:
+            L.append(ln)
+        L.append("```")
 
     L.append("\n## 四、未验证项清单（本环境做不到的，逐条说明原因）\n")
     L.append("| 状态 | 未验证的事 | 为什么做不到 |")

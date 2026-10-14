@@ -62,16 +62,24 @@ def main() -> int:
     print("=" * 74)
 
     # ---- 1. 源码：asr.py 的三个来源都要认 ----
+    # ⚠️⚠️ **不能只判断"字符串在不在"**（变异检查抓出来的假绿）：
+    # 原来写 `"L2T_HF_CACHE" in seg` —— 把
+    # `os.environ.get("L2T_HF_CACHE")` 改成 `os.environ.get("L2T_HF_CACHE_X")`
+    # 之后，子串 **依然在**，测试照样通过。
+    # 现在直接断言**取值表达式本身**（多行，含 `os.environ.get(...)`），
+    # 改坏任何一个字符都会失败。
     print("\n[1] asr.py 的取值优先级")
     src = io.open(os.path.join(HERE, "asr.py"), encoding="utf-8").read()
     i = src.find("self.cache_dir = (")
-    seg = src[i:i + 320]
-    has_official = "HUGGINGFACE_HUB_CACHE" in seg
-    has_alias = "L2T_HF_CACHE" in seg
+    seg = src[i:i + 420]
+    has_official = 'os.environ.get("HUGGINGFACE_HUB_CACHE")' in seg
+    has_alias = 'or os.environ.get("L2T_HF_CACHE")' in seg
     print(f"       认 HUGGINGFACE_HUB_CACHE: {has_official}")
     print(f"       认 L2T_HF_CACHE（别名） : {has_alias}")
-    check(has_official and has_alias,
-          "asr 同时认官方变量与项目别名",
+    check(has_official, "asr 认官方变量 HUGGINGFACE_HUB_CACHE",
+          "改坏取值表达式时应失败")
+    check(has_alias,
+          "asr 认项目别名 L2T_HF_CACHE（断言的是取值表达式，不是子串）",
           "只认一个的话，另一种写法会被静默无视、然后重新下载 3GB")
 
     # ---- 2. 源码：launcher 不能用 setdefault 锁死缓存 ----

@@ -47,18 +47,21 @@ def check(cond: bool, label: str, extra: str = "") -> None:
 
 
 def make_zip(path: str) -> str:
-    """造一个"像 CUDA 包"的 zip：若干文件铺在 bin/ 下，条目要**够多**。
+    """造一个"像 CUDA 包"的 zip：条目够多、**每个够大**，确保解压能持续一会儿。
 
-    ⚠️ 条目数很重要：取消用例必须确保"取消发生在**解压循环内部**"。
-    第 21 轮第一版只放了 41 个条目，解压瞬间就完了，
-    取消信号落到解压**前后**的窗口里 —— 于是"去掉解压时的取消检查"
-    测试**照样通过**（阴性对照失败，说明测试是假的）。现在放到 400 条，
-    解压足够长，取消一定落在循环里。
+    ⚠️⚠️ 为什么必须"够大"（反复踩出来的）：取消用例要让取消**落在解压循环内部**。
+    第一版 41 个条目 → 解压瞬间完成，取消落到循环外；
+    第二版 400 个条目但每个 32 KB → 解压仍是毫秒级，跟取消时机赛跑，
+    于是**时灵时不灵**（变异检查三轮里中一轮）。
+    现在每个条目 256 KB × 400 = 100 MB，解压要**几秒**，
+    取消必然落在循环里 —— 测试不再看运气。
+    代价：造包 + 下载 + 解压约十几秒，换来的是判定可靠。
     """
     with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as z:
         z.writestr("bin/cublas64_12.dll", b"A" * 1024)
+        filler = os.urandom(256 * 1024)
         for i in range(400):
-            z.writestr(f"bin/filler{i:03d}.bin", os.urandom(32 * 1024))
+            z.writestr(f"bin/filler{i:03d}.bin", filler)
     return path
 
 
@@ -138,19 +141,48 @@ def main() -> int:
     # ---- 2. 取消解压：必须停下，且 site 不能出现 ----
     print("\n[2] 解压途中取消")
     shutil.rmtree(root, ignore_errors=True)
+    # ⚠️⚠️ **必须连着下载缓存一起清掉**（真踩到，而且是"时灵时不灵"的根源）：
+    # `<root>/.wheels/cuda.zip` 若已存在，`download()` 会**跳过下载**直接解压 ——
+    # 于是下面用来判断"下载已结束"的那个进度标记（`已下载 …100%`）**永远不会出现**，
+    # 取消predicate 永远返回 False，测试就变成"取消被无视但下载装完了"，exit=0。
+    # 批量跑时前面的用例已经把 zip 下好，所以时灵时不灵；单独跑（干净沙箱）就通过。
+    shutil.rmtree(os.path.join(root, ".wheels"), ignore_errors=True)
     mgr2 = rs.RuntimeManager(manifest=manifest)
     mgr2._root_override = root
-    # ⚠️ **用进度回调当取消时机，而不是数调用次数**（第一版就是数次数，
-    # 结果取消落在解压之外的窗口，阴性对照证明测试测不出坏）。
-    # 解压阶段才会报 `解压 i/n`，所以"看到解压进度就取消"**一定**落在循环里。
-    state = {"started_cancel": False}
+    # ⚠️⚠️ **取消时机要结构性确定，不能跟解压/下载速度赛跑**（反复踩三次）。
+    # 走过的错路：
+    #   ① 数 `stop()` 调用次数 → 落点取决于下载耗时，不稳；
+    #   ② 等"看到解压进度"→ 第一个进度在**循环最后一条**才报，太晚；
+    #   ③ 等"已下载 100%" → 若缓存命中会跳下载，这个标记**永不出现**，
+    #      predicate 永远 False（而且批量跑时缓存已被前面的用例填上）。
+    # 现在：**一进入解压阶段（第一次收到 `解压 i/n`）就开始数 `stop()`**，
+    # 数到第 20 次就取消。解压 401 个条目会调 `stop()` 约 200 次，
+    # 第 20 次**必然**在循环内部 —— 与下载速度、缓存命中、机器负载都无关。
+    state = {"unpack_stops": 0, "in_unpack": False}
 
     def cancel_on_unpack() -> bool:
-        return state["started_cancel"]
+        if state["in_unpack"]:
+            state["unpack_stops"] += 1
+        return state["unpack_stops"] >= 20
 
     def prog2(pct, msg):
+        # 解压阶段才会报 `解压 i/n` —— 这就是"已经进解压"的确凿信号
         if msg and "解压" in str(msg):
-            state["started_cancel"] = True
+            state["in_unpack"] = True
+
+    # ⚠️⚠️ **不要把"进入解压阶段"押在进度回调上**。
+    # 这是我在这里栽的第四次：进度回调 `p(i*100/total, …)` 在一个大包里
+    # 可能**一次都不报**（或报得很晚），于是"开始计数"的标志永远不亮，
+    # 取消 predicate 恒为 False —— 用例变成"取消了但装完"，测试静默通过。
+    # 改成**直接包住 `_unpack`**：它一被调用就说明下载已经结束、解压即将开始，
+    # 这个事实与进度回调、缓存命中、机器快慢全都无关。
+    _orig_unpack = rs.RuntimeManager._unpack
+
+    def _hooked_unpack(self, spec, files, tmp_site, log=print, p=None, stop=None):
+        state["in_unpack"] = True
+        return _orig_unpack(self, spec, files, tmp_site, log=log, p=p, stop=stop)
+
+    rs.RuntimeManager._unpack = _hooked_unpack
 
     site2 = mgr2.site_dir("cuda")
     cancelled = False
@@ -161,8 +193,49 @@ def main() -> int:
         cancelled = True
     except Exception as e:                              # noqa: BLE001
         print(f"       （抛出 {type(e).__name__}: {str(e)[:80]}）")
-    check(state["started_cancel"], "确实进入了**解压阶段**才取消（用例有效）")
+    finally:
+        rs.RuntimeManager._unpack = _orig_unpack
+    check(state["unpack_stops"] >= 20,
+          "取消发生在**解压阶段**（用例有效）",
+          f"解压阶段只数到 {state['unpack_stops']} 次 stop")
     check(cancelled, "取消时抛 DownloadCancelled（不是静默装完）")
+
+    # ---- 2b. **结构性**断言：解压循环里必须逐条检查取消 ----
+    # ⚠️⚠️ 为什么除了行为用例还要有这一条（老实说明）：
+    # 上面那个取消用例依赖"取消信号能在解压循环跑完之前被送达"。
+    # 我为此改了四轮（数 stop 次数 → 等解压进度 → 等下载标记 → 挂钩 `_unpack`），
+    # 在**满负载**（整套变异检查连跑）下仍然会偶发地让解压先跑完 ——
+    # 那时用例静默通过，而"去掉循环里的取消检查"这个变异就抓不到。
+    # 也就是说：**行为用例本身有竞态，不能单独作为保证**。
+    # 这条断言不看竞态，直接检查源码结构：
+    # 解压循环体内、`z.extract(...)` **之前**必须有一次"检查取消"的调用。
+    # 它比行为用例弱（管不住"调用了但不生效"），但**确定性**地守住
+    # "循环里必须检查"这件事；两条一起用，既确定又有行为覆盖。
+    import inspect
+    src_lines = inspect.getsource(rs.RuntimeManager._unpack).split("\n")
+    # 找 `for i, m in enumerate(...)`，在**同一个缩进块内**按顺序找
+    # "检查取消" 与 `z.extract(`
+    loop_ok = False
+    indent = ""
+    seen_stop = False
+    for ln in src_lines:
+        st = ln.strip()
+        if st.startswith("for i, m in enumerate("):
+            indent = ln[:len(ln) - len(ln.lstrip())]
+            seen_stop = False
+            continue
+        if not indent:
+            continue
+        if ln.strip() and not ln.startswith(indent + " "):
+            continue                                    # 循环体结束
+        if st.startswith("stop()") or st.startswith("_stop2()"):
+            seen_stop = True
+        elif seen_stop and st.startswith("z.extract("):
+            loop_ok = True
+            break
+    check(loop_ok,
+          "解压循环内**每一条**之前都检查取消（结构性断言，不看竞态）",
+          "循环里没找到『先检查取消、再解压』的顺序")
     check(not os.path.isdir(site2),
           "**取消后 site 不存在**（不会留下半截被当成已装）")
     check(not os.path.isdir(site2 + ".extract"),
