@@ -300,7 +300,23 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ 关闭
     def closeEvent(self, event: QCloseEvent) -> None:   # noqa: N802
+        # ⚠️⚠️ **无头模式下绝不能用 `QMessageBox`**（2026-10-14 踩到，真 bug）：
+        # `QMessageBox.question` 在没有事件循环时（界面自检 / 自动化脚本里
+        # 只有 `processEvents()`，没有 `app.exec()`）会**永久阻塞**。
+        # 实测：我的"窗口缩放"校验脚本卡在 `w.close()` 上十几分钟不动 ——
+        # 因为关窗时后台的体检任务还在跑，于是走进这个分支就出不来了。
+        #
+        # 项目里的约定是"所有弹窗走 `Page.say()/ask()`，识别 `L2T_HEADLESS`
+        # 时改成打印"，但这里当初**直接调了 QMessageBox**，漏在约定之外。
+        # 现在按约定处理：无头时打印一行、按"取消关闭"处理（保守，不误关）。
+        import os as _os
         if self.ctx.tasks.has_running():
+            _headless = bool(_os.environ.get("L2T_HEADLESS"))
+            if _headless:
+                print("[close] 还有任务在跑；无头模式不弹窗，按「不关」处理",
+                      flush=True)
+                event.ignore()
+                return
             ans = QMessageBox.question(
                 self, "还有任务在跑",
                 "现在还有任务没结束（转换或下载）。\n\n"
