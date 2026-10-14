@@ -546,6 +546,28 @@ def status_dot(state: str, text: str = "") -> QLabel:
     return label(f"{icon} {text}".strip(), color=color)
 
 
+def empty_state(title: str = "", body: str = "") -> QWidget:
+    """统一的**空状态**块（没有任务 / 没下模型 / 没有结果时用）。
+
+    ⚠️ 为什么单独做（Phase 1 审查）：空状态散落在各页各写各的 ——
+    home/tasks/models 里各有 5/1/5 处"还没…"文案，样式、间距都不一样，
+    拼在一起不像一套。现在统一成：居中的标题 + 次要说明，配色走 token。
+    """
+    w = QWidget()
+    lay = QVBoxLayout(w)
+    lay.setContentsMargins(24, 18, 24, 18)
+    lay.setSpacing(4)
+    lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    t = label(title, kind="dim")
+    t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    lay.addWidget(t)
+    if body:
+        b = label(body, kind="faint", wrap=True)
+        b.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(b)
+    return w
+
+
 class Page(QWidget):
     """页面基类。
 
