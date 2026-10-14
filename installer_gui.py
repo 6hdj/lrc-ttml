@@ -1577,26 +1577,51 @@ def e2e(dest: str) -> int:
         print("    ✗ 拿不到主程序的报告")
         root.destroy()
         return 1
-    bad = [i for i in items if not i["ok"] and i["level"] == "crit"]
-    print(f"    共 {len(items)} 项，缺 {len(bad)} 项必需的：")
-    for i in bad:
-        print(f"      - {i['name']}：{i['detail']}")
+    # ⚠️⚠️ **这里必须和 GUI 路径同口径**（2026-10-14 修，用户验收时发现）。
+    # 原来自测用 `level == "crit"` 判"必需" —— 那是**旧口径**，
+    # 会把语音模型（3 GB）和 CUDA 运行库（527 MB）也算进去，
+    # 于是 `--e2e` **真的去下载 4 GB**：
+    # 实测安装目录从 342 MB 涨到 **4025.9 MB**，而 GUI 路径已经不这么做了。
+    # 两条路径口径不一致是**测试在骗人**：自测说"安装阶段要下大件"，
+    # 而用户实际不会 —— 反过来也会掩盖问题。现在统一用 scope。
+    import types
 
-    print("\n[4] 补全…")
+    def _scope_of(d: dict) -> str:
+        """主程序报了 scope 就用它；退回老 `--doctor` 时按 key 映射算。"""
+        sc = d.get("scope")
+        if sc in ("launch", "convert", "extra"):
+            return sc
+        ns = types.SimpleNamespace(key=d.get("key", ""))
+        return envcheck.scope_of(ns)
+
+    launch_bad = [i for i in items if not i["ok"] and _scope_of(i) == "launch"]
+    convert_pending = [i for i in items
+                       if not i["ok"] and _scope_of(i) == "convert"]
+    print(f"    共 {len(items)} 项；影响打开 {len(launch_bad)} 项；"
+          f"处理歌词才要 {len(convert_pending)} 项")
+    for i in launch_bad:
+        print(f"      [影响打开] {i['name']}：{i['detail']}")
+    for i in convert_pending:
+        print(f"      [待下载·不拦打开] {i['name']}：{i['detail']}")
+
+    print("\n[4] 补全（**只补影响打开的**）…")
+    print("    ⚠️ 语音模型 / CUDA 运行库属于「处理歌词才要」，"
+          "安装阶段**不下载** —— 到软件里的「模型」页下。")
     done_cuda = False
     skip_models = "--no-models" in sys.argv
     if skip_models:
         print("    （--no-models：跳过下载，只验安装/桌面窗口/卸载）")
-    for i in ([] if skip_models else bad):
+    # ⚠️ 只遍历 `launch_bad`。`convert_pending` 一律跳过（用户明确要求）。
+    for i in ([] if skip_models else launch_bad):
         k = i["key"]
         fn = None
-        if k == "whisper":
-            fn = lambda: core.fetch_whisper("large-v3")
-        elif k == "campp":
+        if k == "campp":
             fn = core.fetch_campp
-        elif k.startswith("cuda_") and not done_cuda:
-            fn = core.fetch_cuda
-            done_cuda = True
+        elif k.startswith("cuda_"):
+            # 理论上不会进来（CUDA 现在是 convert），留着防御：
+            # 真进来的话说明 scope 表被改坏了，明确说出来。
+            print(f"    ⚠️ {k} 被判成 launch 了 —— scope 表可能有问题，跳过不下载")
+            continue
         if fn is None:
             continue
         print(f"    ── {i['name']} ──")

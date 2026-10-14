@@ -1,20 +1,34 @@
 # Lyric2TTML
 
-**当前版本：v1.1.0**　·　安装包 **190 MB**　·　**不需要管理员权限**
+**当前版本：v1.1.1**　·　安装包 **190 MB**　·　**不需要管理员权限**
 
 > ## ⬇️ 下载
 >
-> **[`Lyric2TTML-1.1.0-setup.exe`](https://github.com/6hdj/lrc-ttml/releases/download/v1.1.0/Lyric2TTML-1.1.0-setup.exe)**（190 MB，双击即装）
+> **[`Lyric2TTML-1.1.1-setup.exe`](https://github.com/6hdj/lrc-ttml/releases/download/v1.1.1/Lyric2TTML-1.1.1-setup.exe)**（190 MB，双击即装）
 >
 > 全部版本：[Releases](https://github.com/6hdj/lrc-ttml/releases)　·　
 > 安装与首次使用步骤见下方[「Windows 一键安装」](#windows-一键安装推荐不用装-python)
 >
-> ⚠️ **v1.1.0 与 v1.0.x 的安装方式完全不同**：旧版是
+> ⚠️ **v1.1 与 v1.0.x 的安装方式完全不同**：旧版是
 > `part1.bin + part2.bin + merge-and-extract-v3.bat`（1.8 GB，要手动合并），
 > 新版是**单个 exe**。如果你看到"合并解压"的教程，那是旧版的，别照做。
 >
 > ⚠️ **首次使用要联网下两样**（语音模型约 3 GB + GPU 运行时约 529 MB），
 > 都下完后**完全离线可用**。详见下方说明。
+>
+> ### v1.1.1 修了什么（相对 v1.1.0）
+>
+> * **安装阶段不再要求下载大件**：语音模型（3 GB）与 GPU 运行时（529 MB）
+>   属于"处理歌词时才需要"，现在只在软件内的「模型」页下载 ——
+>   安装程序只检查**能不能打开**。
+>   （以前装完就要求"补全"，等于软件还没打开先下 3.5 GB。）
+> * **中国大陆能下载 GPU 运行时的**：新增**腾讯云 / 阿里云 PyPI 镜像**
+>   作为备用源，首选源失败会**自动换下一个**（原来只配了 GitHub 单一源，
+>   大陆用户实测"连接被拒"就彻底下不动）。
+> * 修掉三个真 bug：多来源回退**实际不生效**、镜像 wheel 的 DLL 布局
+>   识别不到（会重复下载）、"文件被挪走仍报已就绪"的**假就绪**。
+> * `cuDNN` 不再下载（实测对速度无影响，白占 1 GB）；修正
+>   "没有它只能 CPU"（**本项目没有 CPU 降级**，是直接报错）。
 
 把**普通歌词**（`.txt` / `.lrc`）配合**歌曲音频**，智能转换成 Apple Music 逐字歌词（TTML），
 输出遵循 [AMLL TTML Database 官方规范](https://github.com/amll-dev/amll-ttml-db)，
@@ -130,7 +144,7 @@
 ### Windows 一键安装（推荐，不用装 Python）
 
 > **v1.1.0 起只需要下一个文件**：
-> [`Lyric2TTML-1.1.0-setup.exe`](https://github.com/6hdj/lrc-ttml/releases/download/v1.1.0/Lyric2TTML-1.1.0-setup.exe)
+> [`Lyric2TTML-1.1.1-setup.exe`](https://github.com/6hdj/lrc-ttml/releases/download/v1.1.1/Lyric2TTML-1.1.1-setup.exe)
 > （**190 MB**，双击即装）
 >
 > ⚠️ **不要再照 v1.0.x 的教程做**：旧版要下
@@ -139,7 +153,7 @@
 > 安装包是单个 exe。
 
 1. 从 [Releases](https://github.com/6hdj/lrc-ttml/releases/latest) 下载
-   **`Lyric2TTML-1.1.0-setup.exe`**（190 MB）
+   **`Lyric2TTML-1.1.1-setup.exe`**（190 MB）
 2. **双击它** —— **不需要管理员权限、不弹 UAC**
    （默认装到 `%LOCALAPPDATA%\Lyric2TTML`，即当前用户目录）
 3. 向导分三步：**选择位置** → **安装** → **完成**
