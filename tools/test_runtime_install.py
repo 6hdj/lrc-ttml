@@ -307,6 +307,44 @@ def main() -> int:
     check(raised, "只剩坏来源时必须**抛异常**（不能假装成功）")
 
     # ================================================================
+    # 3.5 **备选语义：第一条成功就不下第二条**（第 28 轮修的真 bug）
+    # ================================================================
+    # ⚠️⚠️ 背景：给 cuda 加"国内镜像"时，我把它写成了**第二个 archives 条目**。
+    # 但 `for w in items` 会**逐个都下** —— 于是"备选源"变成"两个都下"：
+    # 实测验收日志写着 **「需要下载 1.0GB」**（zip 528.8 + wheel 527.5），
+    # 用户要多下一倍、多花一倍时间。这条用例用**两个都能成功的本地 mock 源**
+    # 证明：只下第一个，第二个**根本不碰**。
+    sb5 = os.path.join(sb, "rt5")
+    manifest5 = {"schema_version": 1, "runtimes": [{
+        "id": "cuda", "name": "假 CUDA", "purpose": "备选语义",
+        "download_policy": "on_demand", "approx_size": size,
+        "installed_size": size,
+        "verify_files": ["bin/cublas64_12.dll"],
+        "archives": [
+            {"filename": "first.zip", "size": size, "sha256": digest,
+             "urls": [url]},
+            {"filename": "second.zip", "size": size, "sha256": digest,
+             "urls": [url]},
+        ],
+    }]}
+    mgr5 = rs.RuntimeManager(manifest=manifest5, root=sb5)
+    logs5 = []
+    ok5 = mgr5.download("cuda", log=logs5.append)
+    check(ok5, "两个备选源都在时能装成功")
+    cache5 = os.listdir(mgr5.wheel_cache()) if os.path.isdir(
+        mgr5.wheel_cache()) else []
+    check("first.zip" in cache5, "下了第一个源", str(cache5))
+    check("second.zip" not in cache5,
+          "**没有**下第二个源（备选语义：成功即止）", str(cache5))
+    check(not any("second.zip" in m and "下载" in m for m in logs5),
+          "日志里没有下载第二个源的记录",
+          str([m for m in logs5 if "second" in m][:2]))
+    # 进度总量也要报"实际要下的量"，不是两条相加
+    total_line = next((m for m in logs5 if "需要下载" in m), "")
+    check("需要下载" in total_line and "2.0" not in total_line,
+          "日志里的总量是单条大小（不是两条相加）", total_line)
+
+    # ================================================================
     # 4. **wheel 布局的 DLL 归位**（第 28 轮：加国内镜像源时发现的）
     # ================================================================
     # ⚠️ 两种来源的目录深度**不一样**：

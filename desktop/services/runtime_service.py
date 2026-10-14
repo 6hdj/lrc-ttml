@@ -319,7 +319,31 @@ class RuntimeManager:
             raise ValueError(f"{rid}: 清单里既没有 wheel 也没有 archives")
 
         items = wheels or archives
-        total = sum(int(w.get("size") or 0) for w in items)
+        # ⚠️⚠️ **`archives` 的多条目是「备选源」，不是「都要下」**（第 28 轮修的真 bug）。
+        #
+        # 背景：为了在大陆能下到 cuBLAS，我在清单里给 cuda 加了**第二个条目**
+        # （阿里云/腾讯云上的 `nvidia_cublas_cu12-…whl`）作为 GitHub 的备选。
+        # 但 `for w in items` 会**逐个都下** —— 于是"备选"变成了"两个都下"：
+        # 实测验收日志写着 **「需要下载 1.0GB」**，用户要下
+        # zip(528.8 MB) **加** wheel(527.5 MB) = **1 GB**，而只需要 529 MB。
+        #
+        # 判据：`archives` 是"我们自己打的自包含载荷"，多条 = 同一份东西的
+        # 不同拿法（不同文件名/大小/SHA256，所以没法合并成一条多 url）。
+        # 而 `wheels` 是 python 包，**多条是真的都需要**（比如某组件要两个轮子），
+        # 保持累积语义。
+        # 需要显式覆盖时可以在条目上写 `"alternatives": true/false`。
+        _alt = any(bool(w.get("alternatives")) for w in items)
+        if archives and not wheels:
+            _alt = True          # archives 默认就是备选语义
+        if wheels and any(w.get("alternatives") for w in items):
+            _alt = True
+
+        # 进度总量：备选语义下**只算第一条**（用户实际要下的量），
+        # 否则进度条会显示"1.0 GB"这种让人以为要下两倍的数字。
+        if _alt and items:
+            total = int(items[0].get("size") or 0)
+        else:
+            total = sum(int(w.get("size") or 0) for w in items)
         cache = self.wheel_cache()
         paths.ensure_dir(cache)
 
@@ -405,6 +429,15 @@ class RuntimeManager:
                 last_err_all = last_err
                 log(f"[跳过] {fn} 的所有来源都失败，换下一个来源")
                 continue
+
+            # ⚠️ **备选语义：这一条成功了就收工，不再下后面的**（第 28 轮修）。
+            # 没有这个 break，"备选源"会变成"两个都下" ——
+            # 实测 `需要下载 1.0GB`（zip 528.8 MB + wheel 527.5 MB）多下一倍。
+            # 位置很关键：必须在**内层 url 循环之外**（内层的 break 只退出内层）。
+            if _alt:
+                log(f"[完成] 已从 {os.path.basename(fn)} 拿到运行组件，"
+                    f"不再尝试其它备选源")
+                break
 
         # ⚠️⚠️ **不能靠 `for…else` 判"全都失败"**（我自己先写错一次）：
         # 上面那个 `continue` 属于**内层** `for url` 循环，
