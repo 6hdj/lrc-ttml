@@ -150,25 +150,53 @@ def main(argv=None) -> int:
 
     # ⚠️⚠️ 第 19 轮起**默认安装包不含 CUDA 运行时**（方案 D：717.7 MB → 189.9 MB），
     # 而语音识别**没有它就跑不了**（`asr.py` 明确拒绝 CPU）。
-    # 所以验收脚本要在这里**先把它装上**，否则第 5 步真转换必然失败，
+    # 所以验收脚本要在这里确保运行时可用，否则第 5 步真转换必然失败，
     # 而失败原因看起来像"打包版坏了"（其实是"还没下运行时"）。
-    # 这也正是真实用户第一次跑会遇到的情形 —— 顺带把这条链路一起验了。
+    #
+    # ⚠️ **判据必须问程序自己**（`--runtime-cli --status --json`），
+    # 不能只看 `<data_dir>/runtime/cuda` 这个路径（真踩到两次）：
+    # 完整包（`L2T_FULL_CUDA=1`）把 CUDA 打在 `_internal/nvidia/cublas/bin`，
+    # 系统 CUDA Toolkit 又在别处 —— 它们**都可用**，但硬编码路径看不见，
+    # 于是验收会**白下 529 MB**（实测 591.9s / 426.4s，两次都中了）。
     print("\n=== 4.5 确保 GPU 运行时可用（按需下载，约 529 MB 一次性）===")
-    _rt_bin = os.path.join(base, ".accept-data", "runtime", "cuda", "bin")
-    if os.path.isfile(os.path.join(_rt_bin, "cublas64_12.dll")):
-        print(f"    已就绪：{_rt_bin}")
-    else:
-        print("    未安装 —— 通过程序自己的 runtime-cli 下载（首次约 1-2 分钟）")
+    r_st = _run(exe, base, "runtime status",
+                ["--runtime-cli", "--status", "--json"], timeout=300,
+                env_extra=env, expect=None)
+    cuda_ready = False
+    if r_st and r_st[2] == 0:
+        try:
+            import json as _json
+            tail = r_st[0][r_st[0].find("{"):r_st[0].rfind("}") + 1]
+            info = _json.loads(tail)
+            for rt in info.get("runtimes", []):
+                if rt.get("id") == "cuda":
+                    cuda_ready = rt.get("status") == "ready"
+                    print(f"    程序自报：{rt.get('status_label')} — "
+                          f"{(rt.get('detail') or '')[:70]}")
+        except Exception as e:                          # noqa: BLE001
+            print(f"    （解析运行时状态失败：{type(e).__name__}，按未就绪处理）")
+    if not cuda_ready:
+        print("    未就绪 —— 通过程序自己的 runtime-cli 下载（首次约 1-2 分钟）")
         _run(exe, base, "runtime install",
              ["--runtime-cli", "--install", "cuda"], timeout=3600,
              env_extra=env, expect=None)
-        ok_rt = os.path.isfile(os.path.join(_rt_bin, "cublas64_12.dll"))
-        _run(exe, base, "runtime install",
-             ["--runtime-cli", "--install", "cuda"], timeout=3600,
-             env_extra=env, expect=0 if ok_rt else None)
-        print(f"    cublas 就位={ok_rt}")
-        if not ok_rt:
+        r_st2 = _run(exe, base, "runtime status",
+                     ["--runtime-cli", "--status", "--json"], timeout=300,
+                     env_extra=env, expect=None)
+        if r_st2 and r_st2[2] == 0:
+            try:
+                import json as _json2
+                tail2 = r_st2[0][r_st2[0].find("{"):r_st2[0].rfind("}") + 1]
+                for rt in _json2.loads(tail2).get("runtimes", []):
+                    if rt.get("id") == "cuda":
+                        cuda_ready = rt.get("status") == "ready"
+            except Exception:                           # noqa: BLE001
+                pass
+        print(f"    cuda 就绪={cuda_ready}")
+        if not cuda_ready:
             print("    ⚠️ 运行时没装上 —— 第 5 步真转换会失败，且**不是**打包版的问题")
+    else:
+        print("    已就绪（无需下载）")
 
     res = _run(exe, base, "--uicheck", ["--uicheck"], timeout=600,
                env_extra=env, expect=None)
