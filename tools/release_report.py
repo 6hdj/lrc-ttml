@@ -81,6 +81,9 @@ CHECKS = [
     ("源码可跑", "缺 GPU 运行时的前置提示", ["tools/test_gpu_guard.py"], False,
      "点「开始制作」时的检查：就绪不拦、缺件指向模型页、\n"
      "**没 N 卡不让人白下 529 MB**、清单没组件/检查器坏都不拦"),
+    ("源码可跑", "运行组件来源判定", ["tools/test_runtime_source.py"], False,
+     "CUDA 来自**完整包/系统/venv** 时也必须判就绪\n"
+     "（否则完整包会显示「未安装」并拦住转换 —— 真踩到，含阴性对照）"),
     ("源码可跑", "参数生效性", ["tools/test_param_effect.py"], False,
      "每个界面选项改一遍、产物真的变了"),
     ("源码可跑", "文档同步", ["tools/gen_module_docs.py", "--check"], False,

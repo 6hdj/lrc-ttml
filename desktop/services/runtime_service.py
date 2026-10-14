@@ -201,6 +201,32 @@ class RuntimeManager:
             st.detail = why
             return st
 
+        # ⚠️⚠️ **还要认"不是我们下载的"那些来源**（第 20 轮修的真 bug）。
+        # 上面只看了 `<data_dir>/runtime/<id>` —— 但 CUDA 运行库可能来自：
+        #   * **完整安装包**（`_internal/nvidia/cublas/bin`，`L2T_FULL_CUDA=1` 打的那种）；
+        #   * 系统装的 CUDA Toolkit（`CUDA_PATH`）；
+        #   * 源码模式 venv 里的 `nvidia-cublas-cu12`。
+        # 只认自己下载的那份会怎样（实测过）：
+        #   `gpu_probe.cuda_libs()` 说 **ok=True**（DLL 真能加载），
+        #   而 `check('cuda')` 说 **not_installed** —— 于是
+        #     ① 「模型」页显示"GPU 运行时未安装"，引导用户**白下 529 MB**；
+        #     ② 「开始制作」的前置检查直接**拦住转换**，
+        #        也就是**完整包（离线版）反而做不了歌词**，比小包还糟。
+        # 判据用 `cuda_libs()`（`ctypes.WinDLL` 真加载）而不是"看目录在不在"：
+        # 文件在但加载不了（ABI 不匹配等）不该算就绪。
+        if spec.get("verify_dll_probe") == "cuda":
+            try:
+                from desktop.services import gpu_probe
+                libs = gpu_probe.cuda_libs()
+                if libs.get("ok"):
+                    st.status = READY
+                    st.detail = f"已可用（不是本程序下载的）：{libs.get('detail', '')}"
+                    return st
+            except Exception:                           # noqa: BLE001
+                # 探测失败**不改变结论**（继续按"未安装"走）——
+                # 这里不能因为一个探测异常就把可用的环境判成不可用。
+                pass
+
         # 没有装：看有没有 .part 可以续传
         # ⚠️ `archives` 也要看：CUDA 走的是 zip，不看的话
         # "下载中断后还想续传"会被判成"从未开始"（真踩到：detail 显示 0B）。
