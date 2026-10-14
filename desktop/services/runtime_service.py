@@ -383,47 +383,55 @@ class RuntimeManager:
                     f"{str(last_err)[:140]}）。已下好的部分保留在 {part}，"
                     f"重试会**接着下**。")
 
-        # ---- 解包到 site 目录 ----
-        p(None, "正在安装…")
-        log(f"解包到 {self.site_dir(rid)}")
-        site = self.site_dir(rid)
-        _safe_rmtree(site)
-        paths.ensure_dir(site)
-        for f in files:
-            if f.lower().endswith(".whl"):
-                _extract_wheel(f, site, log=log, stop=stop)
-            else:
-                # `archives`（我们自己打的 zip）：直接解开到 site 目录，
-                # 里面就是 `bin/*.dll` —— 正好是 `gpu_probe.cuda_dirs()`
-                # 会去找的 `<data_dir>/runtime/cuda/bin`。
-                log(f"解压 {os.path.basename(f)} …")
-                with zipfile.ZipFile(f) as z:
-                    z.extractall(site)
-        # ⚠️ 只有 wheel 需要 flatten（whl 里带 `torch/` 之类的前缀）。
-        # zip 归档是我们自己排的目录结构，flatten 反而会把 `bin/` 打平。
-        if any(f.lower().endswith(".whl") for f in files):
-            _flatten_site(site, log=log)
+        # ⚠️⚠️ **下载完、还没解压，这里必须再查一次取消** —— 这是阴性对照逼出来的真 bug。
+        # 原流程是：文件下载循环结束 → **直接进入解压**。
+        # 用户若在**这中间**点取消（下载刚完成的那一刻），取消信号没人看，
+        # 程序照样解压、照样报"完成"。
+        # `tools/test_runtime_install.py` 的取消用例恰好落在这个窗口；
+        # 我把"解压时的取消检查"故意去掉后测试**仍然通过** ——
+        # 证明真正让那次取消生效的不是解压循环，而是这个缺口。
+        _stop()
 
-        # ---- 落盘之后**必须真的验一次**（需求第 3 条：光有文件不算就绪）----
-        p(None, "正在验证…")
-        if spec.get("verify_files"):
-            # 非 python 包（CUDA 运行时）：验关键文件
-            ok, why = _verify_files_present(spec, site)
-        else:
-            ok, why = _verify_loaded(spec, site)
-        self.invalidate(rid)
-        if not ok:
-            st = self.check(rid, use_cache=False)
-            st.status = FAILED
-            st.detail = f"装好了但加载失败：{why}"
-            log(f"[失败] {st.detail}")
-            raise RuntimeError(
-                f"{spec.get('name', rid)} 安装完成但验证失败：{why}\n"
-                f"  文件在 {site}。可以点「重试」重新下载；"
-                f"如果反复失败请到「帮助与诊断」导出日志。")
-        # 记下"这次真的加载验证过了" —— 之后 check() 读它，不再 import
-        # （冻结版里重复 import torch 会崩，见 _write_state 的说明）
-        _write_state(site, spec, why)
+        # ---- 解包到**临时目录**，验完再原子换上去 ----
+        # ⚠️⚠️ 两个都必须修（第 21 轮）：
+        #  ① **不能直接往 site 解压**：解到一半崩了/被强杀，`site` 里就是
+        #     半截文件。`check()` 看到 `site` 存在就会去验证 ——
+        #     万一关键文件恰好已解出来，就会判 READY（**假就绪**）。
+        #  ② **`extractall` 完全不理会取消**：一个 529 MB 的 zip 解压要几十秒，
+        #     用户点了取消却停不下来，装完还会显示"完成"。
+        # 现在：解到 `site + ".extract"` → 在那里验证 → 换上去。
+        p(None, "正在安装…")
+        site = self.site_dir(rid)
+        log(f"解包到 {site}")
+        tmp_site = site + ".extract"
+        try:
+            self._unpack(spec, files, tmp_site, log=log, p=p, stop=stop)
+
+            # ---- 在**临时目录**验一次（需求第 3 条：光有文件不算就绪）----
+            p(None, "正在验证…")
+            if spec.get("verify_files"):
+                # 非 python 包（CUDA 运行时）：验关键文件
+                ok, why = _verify_files_present(spec, tmp_site)
+            else:
+                ok, why = _verify_loaded(spec, tmp_site)
+            self.invalidate(rid)
+            if not ok:
+                st = self.check(rid, use_cache=False)
+                st.status = FAILED
+                st.detail = f"装好了但加载失败：{why}"
+                log(f"[失败] {st.detail}")
+                raise RuntimeError(
+                    f"{spec.get('name', rid)} 安装完成但验证失败：{why}\n"
+                    f"  文件在 {site}。可以点「重试」重新下载；"
+                    f"如果反复失败请到「帮助与诊断」导出日志。")
+
+            self._activate(spec, tmp_site, site, why, log=log)
+        except BaseException:
+            # ⚠️ 任何中断（取消/异常）都要清掉临时目录 ——
+            # 留着既占空间，也可能被误当成安装现场。
+            _safe_rmtree(tmp_site)
+            raise
+
         # ⚠️ 这里**不要**再调一次 `check()` 当判据：那次会**再 import 一次 torch**，
         # 而第二次 import 走的是缓存路径、判据可能不同 —— 于是出现
         # "日志写着「真实加载通过」，却报「装好了但加载失败」"这种自相矛盾的
@@ -435,6 +443,55 @@ class RuntimeManager:
         log(f"[完成] {st.name}：{st.detail}")
         p(100.0, "完成")
         return st
+
+    def _unpack(self, spec: dict, files: list, tmp_site: str,
+                log=print, p=None, stop=None) -> None:
+        """把下载好的包解到 `tmp_site`（**逐条检查取消**）。"""
+        p = p or (lambda pct, msg: None)
+        stop = stop or (lambda: False)
+
+        def _stop2() -> None:
+            if stop():
+                raise DownloadCancelled("用户取消")
+
+        paths.ensure_dir(tmp_site)
+        for f in files:
+            _stop2()
+            if f.lower().endswith(".whl"):
+                _extract_wheel(f, tmp_site, log=log, stop=stop)
+            else:
+                # `archives`（我们自己打的 zip）：逐条解开并检查取消，
+                # 里面就是 `bin/*.dll` —— 正好是 `gpu_probe.cuda_dirs()`
+                # 会去找的 `<data_dir>/runtime/cuda/bin`。
+                log(f"解压 {os.path.basename(f)} …")
+                with zipfile.ZipFile(f) as z:
+                    members = z.infolist()
+                    total_m = len(members) or 1
+                    for i, m in enumerate(members, 1):
+                        _stop2()
+                        z.extract(m, tmp_site)
+                        if i % 4 == 0 or i == total_m:
+                            p(i * 100.0 / total_m, f"解压 {i}/{total_m}")
+        # ⚠️ 只有 wheel 需要 flatten（whl 里带 `torch/` 之类的前缀）。
+        # zip 归档是我们自己排的目录结构，flatten 反而会把 `bin/` 打平。
+        if any(f.lower().endswith(".whl") for f in files):
+            _flatten_site(tmp_site, log=log)
+
+    def _activate(self, spec: dict, tmp_site: str, site: str, why: str,
+                  log=print) -> None:
+        """验证通过后，把临时目录**原子**换成正式的 site。
+
+        ⚠️ 顺序：先把"已验证"状态写进**临时目录**，再删旧的 site、改名换上去。
+        反过来（先 `_write_state(site)` 再换）状态文件会写进临时目录随后丢失，
+        `check()` 读不到标记就要再 import 一次（冻结版里那次 import 有崩的风险）。
+        """
+        _write_state(tmp_site, spec, why)
+        _safe_rmtree(site)
+        try:
+            os.replace(tmp_site, site)
+        except OSError:
+            # 跨卷等情况下 `os.replace` 对目录可能失败 → 退回 shutil.move。
+            shutil.move(tmp_site, site)
 
     # ------------------------------------------------------------- 清理
     def remove(self, rid: str, log: Callable[[str], None] = print) -> RuntimeState:

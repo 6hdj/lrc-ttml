@@ -84,6 +84,9 @@ CHECKS = [
     ("源码可跑", "运行组件来源判定", ["tools/test_runtime_source.py"], False,
      "CUDA 来自**完整包/系统/venv** 时也必须判就绪\n"
      "（否则完整包会显示「未安装」并拦住转换 —— 真踩到，含阴性对照）"),
+    ("源码可跑", "运行组件安装原子性/取消", ["tools/test_runtime_install.py"], False,
+     "解压先写临时目录、验过才换上去；取消要真的停\n"
+     "（阴性疾病对照验证过：去掉取消检查 → 半截安装被判成 ready）"),
     ("源码可跑", "参数生效性", ["tools/test_param_effect.py"], False,
      "每个界面选项改一遍、产物真的变了"),
     ("源码可跑", "文档同步", ["tools/gen_module_docs.py", "--check"], False,
