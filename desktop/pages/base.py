@@ -15,6 +15,11 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
+# ⚠️ 尺寸/间距/圆角 token 的**唯一来源**（与主题无关，所以不在调色板里）。
+# 改名成 `_T` 是为了显式说明"这是 qss() 要用的表"，别在页面里直接 import ——
+# 页面要间距就用 QSS 或布局的 setSpacing(T["SP3"])，别抄数字。
+from desktop.pages.tokens import T as _T
+
 # --------------------------------------------------------------- 配色（唯一来源）
 #
 # ⚠️⚠️ **深浅色主题：一个色号都不能少**。
@@ -48,6 +53,18 @@ DARK = {
     # （蓝底白字）**在白底页面上看不清按钮上的字**（截图里"保存""重新体检"
     # 那两个字几乎全白 —— 真踩到，靠看图才发现）。
     "on_accent": "#ffffff",
+
+    # ---------------- 2026-10-14 UI 重构新增：层级与交互态 ----------------
+    # ⚠️ 规范要求"页面背景柔和中性、内容区层级清晰、主色只用于关键操作"。
+    # 原来只有 bg/panel/panel2 三档，做不出"侧边栏比页面略深、卡片比页面亮"
+    # 这种细腻层级，于是各处手填颜色（就是"页面拼接感"的来源）。
+    # 这几档**必须两套主题都有**，否则 `test_theme.py` 的键集断言会挂。
+    "bg_side": "#101216",     # 侧边栏：比页面背景略深一档
+    "hover": "#252a33",       # 悬停底（中性，不抢主色）
+    "hover_strong": "#2c323c",
+    "selected": "#22314a",    # 选中/当前项底（主色的极淡版）
+    "border_strong": "#3a424e",
+    "field": "#161920",       # 输入框底（比卡片略深，像"凹下去"）
 }
 
 # 浅色主题：**不是把深色反过来那么简单**，三条要注意的：
@@ -72,6 +89,18 @@ LIGHT = {
     # 浅色主题的主按钮：强调色 `#1f6feb` 是**深蓝** → 白字对比度最好
     # （不能用 `text`：那会让深字压在深蓝上，读不出来）。
     "on_accent": "#ffffff",
+
+    # ---------------- 2026-10-14 UI 重构新增：层级与交互态 ----------------
+    # ⚠️ 规范要求"页面背景柔和中性、内容区层级清晰、主色只用于关键操作"。
+    # 原来只有 bg/panel/panel2 三档，做不出"侧边栏比页面略深、卡片比页面亮"
+    # 这种细腻层级，于是各处手填颜色（就是"页面拼接感"的来源）。
+    # 这几档**必须两套主题都有**，否则 `test_theme.py` 的键集断言会挂。
+    "bg_side": "#eceef1",     # 侧边栏：比页面背景略深一档
+    "hover": "#e7eaee",       # 悬停底（中性，不抢主色）
+    "hover_strong": "#dde1e7",  # 悬停（用于侧边栏选中前的过渡感）
+    "selected": "#e3edfd",    # 选中/当前项底（主色的极淡版）
+    "border_strong": "#c3c9d1",  # 需要更明显分隔时
+    "field": "#ffffff",       # 输入框底（浅色下与 panel 同色才干净）
 }
 
 THEMES = {"dark": DARK, "light": LIGHT}
@@ -82,110 +111,208 @@ THEMES = {"dark": DARK, "light": LIGHT}
 C = dict(DARK)
 
 _QSS_TEMPLATE = """
+/* ============================================================================
+   全局基础：字体、正文色、背景
+   ⚠️ 尺寸/间距/圆角一律走「token」（来自 `desktop/pages/tokens.py`），
+      颜色走调色板（随主题变）。**不要在页面里另写一套数字** ——
+      那正是重构前"每个页面各写一套、拼在一起不像一套软件"的根源。
+   ============================================================================ */
 QWidget {
     background: {{bg}};
     color: {{text}};
     font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
-    font-size: 13px;
+    font-size: {{FS_BODY}};
 }
-QLabel#h1 { font-size: 20px; font-weight: 600; }
-QLabel#h2 { font-size: 15px; font-weight: 600; }
+QLabel { background: transparent; }
+QLabel#h1 { font-size: {{FS_H1}}; font-weight: 600; }
+QLabel#h2 { font-size: {{FS_H2}}; font-weight: 600; }
 QLabel#dim { color: {{dim}}; }
-QLabel#faint { color: {{faint}}; font-size: 12px; }
-QLabel#mono { font-family: Consolas, "Courier New", monospace; font-size: 12px; }
+QLabel#faint { color: {{faint}}; font-size: {{FS_SMALL}}; }
+QLabel#mono {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: {{FS_SMALL}};
+    color: {{dim}};
+}
+/* 侧边栏：比页面背景深一档，做出"导航区 vs 内容区"的层级 */
+QWidget#side { background: {{bg_side}}; }
 
+/* ============================================================ 卡片 ======== */
 QFrame#card {
     background: {{panel}};
     border: 1px solid {{line}};
-    border-radius: 8px;
+    border-radius: {{R_MD}};
 }
 QFrame#cardFlat {
     background: {{panel2}};
     border: 1px solid {{line}};
-    border-radius: 6px;
+    border-radius: {{R_SM}};
 }
 
+/* ============================================================ 按钮 ========
+   ⚠️ 伪状态必须**写全**（Phase 1 审查发现原模板 `:pressed` 是 0 个 ——
+      点下去没有任何反馈，这是"点击没反应"的主要来源）。
+   ⚠️ `#primary:disabled` 这类必须显式写：QSS 里 ID 选择器优先级高于
+      `:disabled` 伪类，不写就会让禁用按钮保留启用态的文字色（深蓝底+深色字）。
+   ========================================================================= */
 QPushButton {
-    background: {{panel2}};
+    background: {{panel}};
     border: 1px solid {{line}};
-    border-radius: 6px;
-    padding: 6px 14px;
+    border-radius: {{R_SM}};
+    padding: {{SP1}} {{SP3}};
+    min-height: {{H_CTRL}};
     color: {{text}};
 }
-QPushButton:hover { background: {{panel2}}; border-color: {{line}}; }
-/* ⚠️ 这几个 `:disabled` 规则必须**显式**写：
-   QSS 里 ID 选择器（`#primary`）的优先级高于 `:disabled` 伪类，
-   所以不写 `#primary:disabled` 的话，禁用按钮会保留**启用态**的文字色 ——
-   实测就是"深蓝底 + 深色字"，按钮上的字几乎看不见（截图里一眼能看到）。 */
-QPushButton:disabled { color: {{dim}}; background: {{panel}}; border-color: {{line}}; }
+QPushButton:hover { background: {{hover}}; border-color: {{border_strong}}; }
+QPushButton:pressed { background: {{hover_strong}}; }
+QPushButton:focus {
+    border-color: {{accent}};
+    outline: none;
+}
+QPushButton:disabled {
+    color: {{faint}}; background: {{panel2}}; border-color: {{line}};
+}
 QPushButton#primary {
     background: {{accent}};
     border: 1px solid {{accent}};
-    /* 深色文字压在亮蓝上，对比度够但**中文字形细、11px 下显得糊**
-       （截图里"开始制作""下载识别模型"都偏虚）。改成白字更清楚，
-       也是这类"主操作按钮"的通行做法。 */
     color: {{on_accent}};
     font-weight: 600;
-    padding: 9px 22px;
+    padding: {{SP1}} {{SP5}};
 }
-QPushButton#primary:hover { background: {{accent}}; color: {{on_accent}}; }
+QPushButton#primary:hover { background: {{accent_dim}}; border-color: {{accent_dim}}; }
+QPushButton#primary:pressed { background: {{accent_dim}}; }
 QPushButton#primary:disabled {
-    background: {{panel2}}; border: 1px solid {{line}}; color: {{dim}};
-}
-QPushButton#nav {
-    background: transparent; border: none; border-radius: 6px;
-    padding: 9px 12px; text-align: left; color: {{dim}};
-}
-QPushButton#nav:hover { background: {{panel2}}; color: {{text}}; }
-QPushButton#nav:checked {
-    background: {{panel2}}; color: {{text}};
-    border-left: 3px solid {{accent}};
+    background: {{panel2}}; border: 1px solid {{line}}; color: {{faint}};
 }
 
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit {
-    background: {{panel2}};
-    border: 1px solid {{line}};
-    border-radius: 6px;
-    padding: 5px 8px;
-    selection-background-color: {{accent_dim}};
+/* ---------------- 侧边栏导航 ---------------- */
+QPushButton#nav {
+    background: transparent; border: none;
+    border-radius: {{R_SM}};
+    padding: {{SP2}} {{SP3}};
+    text-align: left;
+    color: {{dim}};
+    min-height: {{H_CTRL}};
 }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
+QPushButton#nav:hover { background: {{hover}}; color: {{text}}; }
+QPushButton#nav:checked {
+    background: {{selected}};
+    color: {{accent}};
+    font-weight: 600;
+}
+/* 危险操作（彻底清理等）：红字，但**底仍是中性** —— 不要一整块红 */
+QPushButton#danger { color: {{err}}; border-color: {{err}}; }
+QPushButton#danger:hover { background: {{hover}}; border-color: {{err}}; }
+QPushButton#danger:pressed { background: {{hover_strong}}; }
+
+/* ============================================================ 输入控件 === */
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTextEdit {
+    background: {{field}};
+    border: 1px solid {{line}};
+    border-radius: {{R_SM}};
+    padding: {{SP1}} {{SP2}};
+    min-height: {{H_CTRL}};
+    selection-background-color: {{accent}};
+    selection-color: {{on_accent}};
+}
+QPlainTextEdit, QTextEdit { min-height: 0; }
+QLineEdit:hover, QComboBox:hover { border-color: {{border_strong}}; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
+QPlainTextEdit:focus, QTextEdit:focus {
     border-color: {{accent}};
 }
+QLineEdit:disabled, QComboBox:disabled {
+    color: {{faint}}; background: {{panel2}};
+}
+QComboBox::drop-down { border: none; width: 18px; }
 QComboBox QAbstractItemView {
-    background: {{panel2}}; border: 1px solid {{line}};
-    selection-background-color: {{accent_dim}};
+    background: {{panel}};
+    border: 1px solid {{line}};
+    border-radius: {{R_SM}};
+    padding: {{SP1}};
+    selection-background-color: {{selected}};
+    selection-color: {{text}};
+    outline: none;
 }
-QCheckBox, QRadioButton { spacing: 6px; }
+QCheckBox, QRadioButton { spacing: {{SP2}}; background: transparent; }
 QCheckBox::indicator, QRadioButton::indicator { width: 15px; height: 15px; }
+/* 开关（QCheckBox 当开关用时靠 objectName="switch"）*/
+QCheckBox#switch { spacing: {{SP2}}; }
 
+/* ============================================================ 进度条 ===== */
 QProgressBar {
-    background: {{panel2}}; border: 1px solid {{line}};
-    border-radius: 5px; height: 12px; text-align: center; color: {{text}};
+    background: {{panel2}};
+    border: 1px solid {{line}};
+    border-radius: {{R_SM}};
+    height: 10px;
+    text-align: center;
+    color: {{text}};
+    font-size: {{FS_SMALL}};
 }
-QProgressBar::chunk { background: {{accent}}; border-radius: 4px; }
+QProgressBar::chunk { background: {{accent}}; border-radius: 5px; }
 
-QScrollArea { border: none; }
+/* ============================================================ 滚动条 =====
+   细、无按钮、悬停才明显 —— 避免抢注意力（规范："避免厚重装饰"） */
+QScrollArea { border: none; background: transparent; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
-QScrollBar::handle:vertical { background: {{line}}; border-radius: 5px; min-height: 30px; }
-QScrollBar::handle:vertical:hover { background: {{line}}; }
-QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
-QScrollBar:horizontal { background: transparent; height: 10px; }
-QScrollBar::handle:horizontal { background: {{line}}; border-radius: 5px; min-width: 30px; }
-
-QTableWidget, QListWidget {
-    background: {{panel}}; border: 1px solid {{line}};
-    border-radius: 6px; gridline-color: {{line}};
+QScrollBar::handle:vertical {
+    background: {{line}}; border-radius: 5px; min-height: 32px;
 }
+QScrollBar::handle:vertical:hover { background: {{border_strong}}; }
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+QScrollBar:horizontal { background: transparent; height: 10px; }
+QScrollBar::handle:horizontal {
+    background: {{line}}; border-radius: 5px; min-width: 32px;
+}
+QScrollBar::handle:horizontal:hover { background: {{border_strong}}; }
+
+/* ============================================================ 表格/列表 == */
+QTableWidget, QListWidget, QTreeWidget {
+    background: {{panel}};
+    border: 1px solid {{line}};
+    border-radius: {{R_SM}};
+    gridline-color: {{line}};
+    outline: none;
+}
+QTableWidget::item:selected, QListWidget::item:selected {
+    background: {{selected}}; color: {{text}};
+}
+QTableWidget::item:hover, QListWidget::item:hover { background: {{hover}}; }
 QHeaderView::section {
-    background: {{panel2}}; border: none; border-bottom: 1px solid {{line}};
-    padding: 6px 8px; color: {{dim}};
+    background: {{panel2}};
+    border: none;
+    border-bottom: 1px solid {{line}};
+    padding: {{SP1}} {{SP2}};
+    color: {{dim}};
+    font-size: {{FS_SMALL}};
 }
 QSplitter::handle { background: {{line}}; }
+
+/* ============================================================ 状态栏/提示 */
 QStatusBar { background: {{panel}}; border-top: 1px solid {{line}}; }
+QStatusBar QLabel { color: {{dim}}; font-size: {{FS_TINY}}; }
 QToolTip {
-    background: {{panel2}}; color: {{text}};
-    border: 1px solid {{line}}; padding: 4px 6px;
+    background: {{panel}};
+    color: {{text}};
+    border: 1px solid {{border_strong}};
+    border-radius: {{R_SM}};
+    padding: {{SP1}} {{SP2}};
+}
+/* 菜单（下拉/右键）：QSS 不管的话会跟着系统走成白底，在深色主题里很突兀 */
+QMenu {
+    background: {{panel}}; border: 1px solid {{line}};
+    border-radius: {{R_SM}}; padding: {{SP1}};
+}
+QMenu::item { padding: {{SP1}} {{SP4}}; border-radius: {{SP1}}; }
+QMenu::item:selected { background: {{selected}}; }
+
+/* ============================================================ 分区标题 ==
+   "① 选文件"这类步骤标题：底色略深，形成分组而不是又一张卡片 */
+QLabel#section {
+    font-size: {{FS_BODY}};
+    font-weight: 600;
+    color: {{text}};
+    padding: {{SP1}} 0;
 }
 """
 
@@ -204,6 +331,12 @@ def qss(theme: Optional[str] = None) -> str:
     """
     pal = THEMES.get(theme or "", C)
     out = _QSS_TEMPLATE
+    # ⚠️ **先替换尺寸 token，再替换颜色**（2026-10-14 重构加）。
+    # `T` 是"与主题无关"的尺寸/间距/圆角（见 `tokens.py`）；
+    # 颜色在调色板里、随主题变。两者用**同一个 `{{key}}` 语法**，
+    # 所以如果有键名撞车，颜色（后替换）会赢 —— 这正是我们要的优先级。
+    for k, v in _T.items():
+        out = out.replace("{{" + k + "}}", str(v))
     for k, v in pal.items():
         out = out.replace("{{" + k + "}}", str(v))
     return out
@@ -229,8 +362,10 @@ def resolve_theme(name: str) -> str:
             winreg.CloseKey(k)
             return "light" if int(val) == 1 else "dark"
         except Exception:                               # noqa: BLE001
-            return "dark"
-    return "dark"
+            # ⚠️ 2026-10-14 重构：读不到注册表时退回**浅色**（新默认观感）。
+            return "light"
+    # 未识别主题名 → 退回浅色（新默认）
+    return "light"
 
 
 def apply_theme(name: str) -> str:
@@ -524,10 +659,18 @@ class Page(QWidget):
         return ans == QMessageBox.StandardButton.Yes
 
     # ---------------------------------------------------------------- 工具
-    def card_with(self, *widgets, spacing: int = 8, margins=(14, 12, 14, 12)):
+    def card_with(self, *widgets, spacing: int = 8, margins=None):
+        # ⚠️ 卡片内边距**统一走 token**（2026-10-14 重构）。
+        # 原来默认 `(14,12,14,12)`，个别页面还会传 `(16,14,16,14)` 之类 ——
+        # 这是"页面拼接感"的一个来源：同一类卡片各页留白不一样。
+        # 现在默认用 CARD_PAD_X/Y；确需不同的页面显式传。
+        if margins is None:
+            margins = (_T["CARD_PAD_X"], _T["CARD_PAD_Y"],
+                       _T["CARD_PAD_X"], _T["CARD_PAD_Y"])
         f = card()
         lay = QVBoxLayout(f)
-        lay.setContentsMargins(*margins)
+        lay.setContentsMargins(*[int(v.rstrip("px")) if isinstance(v, str)
+                                 else v for v in margins])
         lay.setSpacing(spacing)
         for x in widgets:
             if x is None:

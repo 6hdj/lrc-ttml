@@ -125,7 +125,9 @@ def run_gui(argv: Optional[List[str]] = None) -> int:
     # ---- 主题：**必须在建窗口之前**定下来 ----
     # 配置里的 `theme` 一直存在（dark/light/auto），但**从来没人读过** ——
     # 一个"设了没用"的死字段。现在真正接上。
-    _theme_name = "dark"
+    # ⚠️ 2026-10-14 UI 重构：**默认浅色**（任务书要求"默认优先浅色主题"）。
+    # 老用户已经存了 dark 的继续 dark；只有"从没设过主题"的新装默认 light。
+    _theme_name = "light"
     # 优先级：环境变量 > 配置文件。环境变量这条路是为了
     # ① 截图/自检能稳定指定主题（否则会被存盘里的旧值盖掉）；
     # ② 技术支持让人临时换个主题排查（不用改配置）。
@@ -138,7 +140,7 @@ def run_gui(argv: Optional[List[str]] = None) -> int:
             # 后者会重新读一遍磁盘、和上下文里的那份**不是同一个对象**，
             # 用户在设置页改了主题，这里读到的可能还是旧值。
             from desktop import config as _config_mod
-            _theme_name = str(_config_mod.current().get("theme") or "dark")
+            _theme_name = str(_config_mod.current().get("theme") or "light")
         except Exception:                               # noqa: BLE001
             pass
     _theme = apply_theme(_theme_name)

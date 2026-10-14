@@ -50,6 +50,10 @@ class MainWindow(QMainWindow):
 
         # ---------------- 左侧 ----------------
         side = QWidget()
+        # ⚠️⚠️ 必须设 objectName，否则 QSS 里 `QWidget#side` 那条规则匹配不到，
+        # 侧边栏就和页面同一个背景色，做不出"导航区 vs 内容区"的层级
+        # （Phase 2 的像素校验抓到的：侧边栏亮度 245 = 页面 245，没分层）。
+        side.setObjectName("side")
         side.setFixedWidth(184)
         slay = QVBoxLayout(side)
         slay.setContentsMargins(10, 14, 10, 12)

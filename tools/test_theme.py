@@ -129,8 +129,10 @@ def main() -> int:
     # ---- 6. auto 解析 ----
     print("\n[6] auto 解析")
     check(b.resolve_theme("auto") in ("dark", "light"), "auto 能解析成具体主题")
-    check(b.resolve_theme("") == "dark", "空值退回深色（不崩）")
-    check(b.resolve_theme("乱写") == "dark", "无法识别的值退回深色")
+    # ⚠️ 2026-10-14 UI 重构：默认观感从深色改成**浅色**（任务书要求
+    # "默认优先设计浅色主题"）。空值/乱写都退回 light，不再退回 dark。
+    check(b.resolve_theme("") == "light", "空值退回浅色（不崩）")
+    check(b.resolve_theme("乱写") == "light", "无法识别的值退回浅色")
 
     print("\n" + "=" * 74)
     print(f"  通过 {_ok} 项，失败 {_fail} 项")
