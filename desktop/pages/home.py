@@ -229,7 +229,18 @@ class HomePage(Page):
         self.banner = label("", wrap=True)
         lay.addWidget(page_header(self))
         lay.addWidget(self.banner)
-        for w in (files_box, meta_box, self.adv_box, self.run_box, self.res_box):
+        # ⚠️ 2026-10-14 UI 重构：选文件 + 填信息**并排**（两列）。
+        # 原来五张卡竖向堆叠，主按钮和结果区被挤到很下面，首屏只看到选文件。
+        # 现在把"输入"（①选文件 ②填信息）并排放一行，③高级④开始⑤结果紧跟其后，
+        # 首屏就能看到"选文件 → 开始"的主链路。
+        top = QWidget()
+        top_lay = QHBoxLayout(top)
+        top_lay.setContentsMargins(0, 0, 0, 0)
+        top_lay.setSpacing(14)
+        top_lay.addWidget(files_box, 3)
+        top_lay.addWidget(meta_box, 2)
+        lay.addWidget(top)
+        for w in (self.adv_box, self.run_box, self.res_box):
             lay.addWidget(w)
         lay.addStretch(1)
         # 平台 ID 折叠在最后（多数人用不到）
