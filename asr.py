@@ -86,8 +86,16 @@ class WhisperASR:
         #     而这里指向 `_internal\.hf_cache` → **两边不是同一个目录**，
         #     于是"装好了模型，程序却说找不到"（真踩过，用户直接炸了）。
         #   * 升级/重装 `_internal` 被覆盖，模型跟着丢。
+        # ⚠️⚠️ **三个来源都要认**（真踩到：`L2T_HF_CACHE` 被无视，导致
+        # 本地明明有 3GB 模型却重新联网下载）：
+        #   1. `HUGGINGFACE_HUB_CACHE`（HF 官方）
+        #   2. `L2T_HF_CACHE`（本项目别名；`desktop/paths.hf_cache_dir()` 认它，
+        #      `launcher.py` 也已经统一，但**命令行/测试**可能只传这一个）
+        #   3. 默认位置
+        # 只认第 1 个的话，只用 `L2T_HF_CACHE` 的场景会静默走成"没缓存"。
         self.cache_dir = (cache_dir
                           or os.environ.get("HUGGINGFACE_HUB_CACHE")
+                          or os.environ.get("L2T_HF_CACHE")
                           or DEFAULT_CACHE_DIR)
         self.cpu_threads = cpu_threads or (os.cpu_count() or 4)
         self.log = log

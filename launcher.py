@@ -67,9 +67,29 @@ def _rehome() -> str:
     # "HUGGINGFACE_HUB_CACHE", os.path.join(HERE, ".hf_cache"))`，而冻结后
     # HERE 指向 _internal —— 于是 3GB 的模型会被下到**包内部**：
     # 升级/重装就丢，用户也根本找不到。放在 exe 旁边才是对的。
-    hub = os.path.join(base, ".hf_cache")
-    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", hub)
-    os.makedirs(hub, exist_ok=True)
+    #
+    # ⚠️⚠️ **但这行 `setdefault` 会把"用户指定的缓存"吃掉**（真踩到）：
+    # 程序识别两种写法 —— `HUGGINGFACE_HUB_CACHE`（HF 官方）和
+    # `L2T_HF_CACHE`（本项目别名，桌面版/`paths.hf_cache_dir()` 认它）。
+    # 老代码只 `setdefault` 官方那个，于是**只要用户传的是 `L2T_HF_CACHE`，
+    # 这里就抢先把它写死成 `<exe>/.hf_cache`**，后面 `paths.hf_cache_dir()`
+    # 再想纠正也晚了（asr 已经读到了错误的目录）——
+    # 表现是：**明明本地有 3GB 模型，程序却重新联网下载**。
+    # 实测（`HUGGINGFACE_HUB_CACHE` 生效、`L2T_HF_CACHE` 被忽略，
+    # 下载一直跑不完）确认就是这个原因。
+    #
+    # 现在：**三个来源都认**，而且优先级与 `desktop.paths.hf_cache_dir()`
+    # 保持一致（显式指定 > 程序目录旁边的旧缓存 > 默认位置）。
+    hub = (os.environ.get("HUGGINGFACE_HUB_CACHE")
+           or os.environ.get("L2T_HF_CACHE")
+           or os.path.join(base, ".hf_cache"))
+    os.environ["HUGGINGFACE_HUB_CACHE"] = hub      # 覆盖，不用 setdefault
+    # 顺手把别名也设上，让 `paths.hf_cache_dir()` 看到的是同一个答案
+    os.environ.setdefault("L2T_HF_CACHE", hub)
+    try:
+        os.makedirs(hub, exist_ok=True)
+    except OSError:
+        pass
 
     # web_server：HERE 决定 index.html 去哪找，UPLOAD_DIR/OUTPUT_DIR 决定写到哪
     import web_server

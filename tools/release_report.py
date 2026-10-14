@@ -72,6 +72,9 @@ CHECKS = [
      "默认用户目录/不写 HKLM/名称一致"),
     ("源码可跑", "权限不足路径", ["tools/test_perm_denied.py"], False,
      "指向不可写目录时给人话 + 提管理员那条路"),
+    ("源码可跑", "模型缓存复用", ["tools/test_hf_cache.py"], False,
+     "L2T_HF_CACHE / HUGGINGFACE_HUB_CACHE 都能生效"
+     "（只认一个的话用户会白下 3GB —— 真踩过）"),
     ("源码可跑", "参数生效性", ["tools/test_param_effect.py"], False,
      "每个界面选项改一遍、产物真的变了"),
     ("源码可跑", "文档同步", ["tools/gen_module_docs.py", "--check"], False,

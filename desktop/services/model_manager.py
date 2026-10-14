@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client as http_client
 import json
 import os
 import shutil
@@ -687,7 +688,42 @@ def _http_get_to_file(url: str, dst: str, log=print, p=None, stop=None,
                 with open(dst, mode) as fh:
                     while True:
                         stop()
-                        chunk = r.read(1 << 20)
+                        # ⚠️⚠️ **读中断时要把"已经读到的那一截"写下来**，否则
+                        # `.part` 要么不存在、要么是上一轮的旧长度，
+                        # **断点续传等于白做**（每次失败都从头开始）。
+                        # 真踩到：`desktop/selftest.py` 第 14 组一直报
+                        # "下载失败后必须保留 .part"。
+                        # 两种断法都要处理：
+                        #   * `http.client.IncompleteRead` —— 服务端 Content-Length
+                        #     说 1KB、只发了一半就关；异常对象里带 `partial`；
+                        #   * `ConnectionResetError`（Windows 上更常见）——
+                        #     对方强制断开，`read()` 直接抛，**这一轮读到的
+                        #     数据会丢**，所以要在异常里把 partial 补上。
+                        try:
+                            # ⚠️⚠️ **必须用 `read1()`，不能用 `read(n)`**。
+                            # `http.client` 的 `read(n)` 走 `_safe_readinto`，
+                            # 它会**反复重试直到把 n 个字节读满**；连接被
+                            # 强制断开时（Windows 上很常见：
+                            # `ConnectionResetError [WinError 10054]`）它直接抛，
+                            # **一个字节都不返回** —— 于是 `.part` 建出来是 0 字节，
+                            # 断点续传完全失效（每次失败都从头下）。
+                            # 实测（`.tmp/diag_part.py`）：日志显示 3 次重试全失败，
+                            # `.part` 存在但大小 = 0。
+                            # `read1(n)` 是"**最多读 n，读到多少给多少**"，
+                            # 正好适合边下边写。
+                            read = getattr(r, "read1", None) or r.read
+                            chunk = read(1 << 20)
+                        except Exception as _re:              # noqa: BLE001
+                            partial = b""
+                            if isinstance(_re, http_client.IncompleteRead):
+                                partial = _re.partial or b""
+                            if partial:
+                                fh.write(partial)
+                                fh.flush()
+                                got += len(partial)
+                                log(f"[中断] 已保存 {human(got)}，"
+                                    f"下次从这里接着下")
+                            raise
                         if not chunk:
                             break
                         fh.write(chunk)
