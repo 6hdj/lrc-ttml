@@ -66,6 +66,10 @@ CHECKS = [
      "延迟清理能真正删干净、且不自毁运行库"),
     ("源码可跑", "升级覆盖安装", ["tools/test_upgrade.py"], False,
      "覆盖升级不丢用户数据；只读/占用文件处理"),
+    ("源码可跑", "安装器向导三阶段", ["tools/test_installer_stages.py"], False,
+     "阶段切换的**控件文字与可见性**用程序读（不靠肉眼看图）\n"
+     "：第 1 步只留路径+勾选、第 2 步有真实进度（值+字节数）、\n"
+     "第 3 步是完成页+「启动软件」，步骤条高亮按 走过/当前/未到 分色"),
     ("源码可跑", "安装器主题一致", ["tools/test_installer_theme.py"], False,
      "安装程序与桌面版逐色一致"),
     ("源码可跑", "per-user 要求", ["tools/test_peruser.py"], False,
@@ -221,8 +225,12 @@ def _needs_qt(cmd: list) -> bool:
     否则报告里会出现"失败"，而真相是解释器用错了。
     """
     s = " ".join(cmd)
+    # ⚠️ 新增任何"要 GUI/装库"的测试都要登记进来，否则报告会用系统 python 跑它、
+    # 报 `ModuleNotFoundError`，**而那是假失败**（这个坑已经踩过两次：
+    # 上一次 `test_gpu_guard`、这次 `test_installer_stages`）。
     return any(k in s for k in ("uicheck", "test_theme", "test_param_effect",
-                               "test_icon", "test_gpu_guard"))
+                               "test_icon", "test_gpu_guard",
+                               "test_installer_stages"))
 
 
 def main() -> int:

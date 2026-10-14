@@ -347,8 +347,17 @@ class Installer:
         """
         from desktop.pages.base import (DARK, LIGHT)  # noqa: F401  (仅为对称)
         self.set_stage(stage)
+        # ⚠️⚠️ **预览里必须直接改控件，不能用 `self.set_sub(...)`**（真踩到）：
+        # `set_sub()` 只是往队列里塞 `("sub", …)`，要等 `_pump()`（主循环定时器）
+        # 取出来才真的生效。预览模式下没人跑泵 ⇒ **副标题一直停在旧文字**。
+        # 表现很隐蔽：截图上看不出（图里是"准备就绪"），
+        # 但断言副标题会失败；而且"手动跑 `--stage done` 能过、测试里过不了" ——
+        # 因为手动跑时主循环转起来了。这里直接 `configure`。
+        def _sub(text: str, color: str = ACCENT) -> None:
+            self.sub.configure(text=text, fg=color)
+
         if stage == "install":
-            self.set_sub("正在检查你的电脑…（首次可能要一两分钟，请勿关闭）", ACCENT)
+            _sub("正在检查你的电脑…（首次可能要一两分钟，请勿关闭）")
             self.log_line("安装位置：" + self.install_dir)
             self.log_line("[1/4] 解压主程序…")
             self.log_line("      已解压 387 个文件（1078 MB）")
@@ -366,7 +375,7 @@ class Installer:
                                   command=self.start_install_app)
             self.btn_quit.configure(state="normal")
         elif stage == "done":
-            self.set_sub("安装完成，可以使用了", OK)
+            _sub("安装完成，可以使用了", OK)
             self.log_line("")
             self.log_line("安装位置：" + self.install_dir)
             self.log_line("已创建开始菜单快捷方式")
@@ -379,7 +388,7 @@ class Installer:
                                   command=self.launch_app)
             self.btn_quit.configure(state="normal")
         else:
-            self.set_sub("准备就绪，点「开始安装」", ACCENT)
+            _sub("准备就绪，点「开始安装」", ACCENT)
             self.btn_go.configure(text="开始安装",
                                   command=self.start_install_app,
                                   state="normal")
@@ -1720,6 +1729,37 @@ def relaunch_elevated() -> bool:
     return False
 
 
+def _declare_dpi_aware() -> bool:
+    """声明**per-monitor DPI 感知**（必须在 `tk.Tk()` **之前**调）。
+
+    ⚠️⚠️ 为什么必须有（第 23 轮踩到，而且是被"截图被切"顺带查出来的）：
+    不声明的话，Windows 会把整个进程窗口当"不懂 DPI 的老程序"，
+    **按显示器缩放做位图拉伸** —— 界面能用，但**所有字都是糊的**。
+    而且 Tk 报出来的屏幕尺寸是**逻辑值**（本机 1536x864，真实是 1920x1080），
+    于是"窗口坐标/尺寸"和"屏幕像素"差 1.25 倍（截图被切就是这个原因）。
+
+    声明之后（实测）：Tk 报 1920x1080（物理值），`tk scaling` 由系统自动算对，
+    字是**真渲染**的 —— 100%/125%/150%/200% 下都清晰。
+
+    返回值只用于日志；**失败不抛异常**（老系统上没有 shcore 也要能跑）。
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        # 2 = PROCESS_PER_MONITOR_DPI_AWARE（Win8.1+）
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return True
+    except Exception:                                   # noqa: BLE001
+        try:
+            import ctypes
+            # 退路：Win7/Vista 的旧接口（1 = 系统 DPI 感知）
+            ctypes.windll.user32.SetProcessDPIAware()
+            return True
+        except Exception:                               # noqa: BLE001
+            return False
+
+
 def main() -> int:
     # ---- 卸载：`卸载程序.bat` 和主程序的 `--uninstall` 都走这里 ----
     # ⚠️ 必须放在**提权之前**：卸载不需要管理员（删自己安装的目录），
@@ -1740,11 +1780,12 @@ def main() -> int:
     # ---- 截图 / 只看一眼：**不提权、不干活** ----
     # ⚠️ 必须在 `relaunch_elevated()` 之前 —— 否则截图也会弹 UAC（自动化挂死）。
     if shot_mode() or view_mode():
+        _declare_dpi_aware()          # ⚠️ 必须在这里也声明（这条分支自建 Tk）
         root = tk.Tk()
-        try:
-            root.tk.call("tk", "scaling", 1.25)
-        except Exception:
-            pass
+        # ⚠️ 同样不再写死 `tk scaling 1.25` —— 见 main() 末尾的说明：
+        # 声明 per-monitor DPI 感知后，Tk 会从系统拿到正确缩放
+        # （实测声明后 Tk 报 1920x1080、scaling≈1.67），
+        # 字是真渲染而不是被位图拉伸。
         inst = Installer(root, autostart=False)
 
         if shot_mode():
@@ -1851,11 +1892,18 @@ def main() -> int:
     # 快捷方式与卸载注册表项都走 HKCU，**没有任何一步真的需要管理员**。
     # 用户主动选机器级目录（如 Program Files）时，让他自己右键「以管理员身份运行」，
     # 权限不足由 `ensure_dir()` 在真正写入时给出可解释的失败提示。
+    _declare_dpi_aware()
     root = tk.Tk()
-    try:
-        root.tk.call("tk", "scaling", 1.25)
-    except Exception:
-        pass
+    # ⚠️⚠️ **删掉了写死的 `tk scaling 1.25`**（第 23 轮修）。
+    # 原来这里硬把 Tk 缩放设成 1.25 —— 那是**为了在 125% 的机器上看起来不糊**
+    # 而打的补丁，实际效果是：
+    #   * 进程**没声明 DPI 感知** ⇒ Windows 把整个窗口**位图拉伸**，
+    #     所有文字/线条都被拉糊（不是"字变大"，是"变虚"）；
+    #   * 于是 Tk 报的屏幕是**逻辑值**（1536x864），而真实屏幕是 1920x1080；
+    #   * 再叠一个写死的 1.25，在 100% 的机器上字会**过大**、在 150% 的机器上**仍糊**。
+    # 现在：先声明 **per-monitor DPI aware**，Tk 自己就能从系统拿到
+    # 正确的 `tk scaling`（实测声明后 Tk 报 1920x1080，缩放自动算对），
+    # 字是**真渲染**而不是被拉伸 —— 任何缩放下都清晰。
     Installer(root)
     root.mainloop()
     return 0
