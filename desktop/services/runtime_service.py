@@ -183,9 +183,9 @@ class RuntimeManager:
             purpose=spec.get("purpose", ""),
             note=spec.get("note", ""),
             location=self.dir_for(rid),
-            download_bytes=sum(int(w.get("size") or 0)
-                               for w in ((spec.get("wheels") or [])
-                                         + (spec.get("archives") or []))),
+            # ⚠️ 走 `_download_bytes()`（唯一实现）—— 备选语义下只算第一条，
+            # 否则界面会显示"需要下载 1.0GB"（实际只要 529 MB）。
+            download_bytes=_download_bytes(spec),
             installed_bytes=int(spec.get("installed_size") or 0),
             spec=spec,
         )
@@ -327,23 +327,10 @@ class RuntimeManager:
         # 实测验收日志写着 **「需要下载 1.0GB」**，用户要下
         # zip(528.8 MB) **加** wheel(527.5 MB) = **1 GB**，而只需要 529 MB。
         #
-        # 判据：`archives` 是"我们自己打的自包含载荷"，多条 = 同一份东西的
-        # 不同拿法（不同文件名/大小/SHA256，所以没法合并成一条多 url）。
-        # 而 `wheels` 是 python 包，**多条是真的都需要**（比如某组件要两个轮子），
-        # 保持累积语义。
-        # 需要显式覆盖时可以在条目上写 `"alternatives": true/false`。
-        _alt = any(bool(w.get("alternatives")) for w in items)
-        if archives and not wheels:
-            _alt = True          # archives 默认就是备选语义
-        if wheels and any(w.get("alternatives") for w in items):
-            _alt = True
-
-        # 进度总量：备选语义下**只算第一条**（用户实际要下的量），
-        # 否则进度条会显示"1.0 GB"这种让人以为要下两倍的数字。
-        if _alt and items:
-            total = int(items[0].get("size") or 0)
-        else:
-            total = sum(int(w.get("size") or 0) for w in items)
+        # 判据与"总量"都走**唯一实现** `_is_alternatives` / `_download_bytes`
+        # （原因见那两个函数的注释：这个语义原先散在三处，我只修了两处）。
+        _alt = _is_alternatives(spec, items)
+        total = _download_bytes(spec)
         cache = self.wheel_cache()
         paths.ensure_dir(cache)
 
@@ -848,6 +835,48 @@ def _write_state(site: str, spec: dict, why: str) -> None:
 def _now() -> str:
     import datetime
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _entries_of(spec: dict) -> list:
+    """组件要下的条目（`wheels` 优先，否则 `archives`）。"""
+    return list((spec.get("wheels") or []) or (spec.get("archives") or []))
+
+
+def _is_alternatives(spec: dict, items: list) -> bool:
+    """条目之间是**备选**（成功一个即止）还是**累积**（都要下）。
+
+    ⚠️ 判据（第 28 轮定）：`archives` 是"我们自己打的自包含载荷"，
+    多条 = 同一份东西的不同来源（文件名/大小/SHA256 不同，没法合并成一条多 url）
+    ⇒ 备选。`wheels` 是 python 包，多条通常**真的都需要** ⇒ 累积。
+    条目上写 `"alternatives": true/false` 可显式覆盖。
+    """
+    if any(bool(w.get("alternatives")) for w in items):
+        return True
+    if items and all("alternatives" in w for w in items):
+        return any(bool(w.get("alternatives")) for w in items)
+    # 没显式写：archives（且没有 wheels）按备选
+    return bool(spec.get("archives")) and not spec.get("wheels")
+
+
+def _download_bytes(spec: dict) -> int:
+    """这个组件**实际要下多少字节**。
+
+    ⚠️⚠️ **必须只有这一处实现**（第 28 轮踩到第三次才收敛）：
+    同一个"备选 vs 累积"的语义原先散在三处 ——
+      ① `download()` 的进度总量；
+      ② `download()` 的成功即止判断；
+      ③ `_check_uncached()` 报给界面的 `download_bytes`。
+    我只修了①②，漏了③，于是**验收日志里仍然写着「需要下载 1.0GB」**，
+    而界面「模型」页也是读这个数 —— 用户会以为要下两倍。
+    现在①②③都走这里，改一次就全对。
+    """
+    items = _entries_of(spec)
+    if not items:
+        return 0
+    if _is_alternatives(spec, items):
+        # 备选：按**第一条**算（用户实际要下的量）
+        return int(items[0].get("size") or 0)
+    return sum(int(w.get("size") or 0) for w in items)
 
 
 def _missing_declared_files(spec: dict, site: str) -> list:
