@@ -210,6 +210,16 @@ class SettingsPage(Page):
         tid = self.ctx.workers.start_env_check(full=full)
         self._env_tid = tid
 
+    def submit_current(self) -> bool:
+        """Enter 快捷键：保存设置（本页的主操作）。
+
+        ⚠️ 这里选「保存」而不是「重新体检」，理由：
+        Enter 的语义是"确认/提交当前表单"，而保存是**幂等、廉价**的；
+        体检要几秒且会把结论覆盖掉，误触代价更大。
+        """
+        self._save()
+        return True
+
     def on_task(self, t: Dict[str, Any]) -> None:
         if not self._built or t.get("id") != getattr(self, "_env_tid", ""):
             return

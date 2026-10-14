@@ -108,6 +108,11 @@ CHECKS = [
     ("源码可跑", "安装作用域分层", ["tools/test_install_scope.py"], False,
      "安装程序只拦「影响打开」的；语音模型(3GB)与 CUDA 运行库(527MB)\n"
      "属于 convert，**不在安装阶段要求下载**（用户明确要求）"),
+    ("源码可跑", "设计一致性", ["tools/test_design_consistency.py"], False,
+     "**用断言代替肉眼看图**：QSS 无残留占位符 + 状态齐全、\n"
+     "页面无硬编码 font-size/border-radius、所有卡片内边距同源、\n"
+     "两套主题键集相同、两种主题下六页都能渲染、Enter 挂钩符合契约\n"
+     "（变异验证过：塞硬编码尺寸 / 改一个卡片内边距都会被抓到）"),
     ("源码可跑", "文档同步", ["tools/gen_module_docs.py", "--check"], False,
      "模块说明与源码一致"),
 
@@ -246,7 +251,8 @@ def _needs_qt(cmd: list) -> bool:
     return any(k in s for k in ("uicheck", "test_theme", "test_param_effect",
                                "test_icon", "test_gpu_guard",
                                "test_installer_stages", "test_hidpi",
-                               "test_first_run", "test_install_scope"))
+                               "test_first_run", "test_install_scope",
+                               "test_design_consistency"))
 
 
 def main() -> int:
