@@ -127,6 +127,31 @@ def _find_dll(names: List[str]) -> Optional[str]:
     return None
 
 
+def has_nvidia_gpu() -> bool:
+    """这台机器**有没有 NVIDIA 驱动**（= 有没有 N 卡）。
+
+    为什么需要单独一个判据（真踩到）：`cuda_libs()` 在**没有 N 卡**的机器上
+    也会报 `ok=False`（cuBLAS 加载不了），和"有卡但没装 CUDA 运行时"**看起来一样**。
+    但这两件事的**正确处置完全相反**：
+      * 有卡缺运行时 → 让用户去下 529 MB 的 CUDA 运行时（有用）；
+      * 没卡 → 下一万个运行时也没用，应该直接说"本软件需要 NVIDIA 显卡"。
+    混在一起就会让没有 N 卡的用户白下 529 MB。
+
+    判据：Windows 上能否加载 `nvcuda.dll`（NVIDIA 驱动提供的系统级 DLL）。
+    ⚠️ 加载失败**不等于**没卡（可能只是驱动异常），所以只在**明确加载不了**时
+    才返回 False —— 宁可少拦，也不要把有卡的用户拦住。
+    """
+    if os.name != "nt":
+        return True                                     # 非 Windows 不判定
+    try:
+        ctypes.WinDLL("nvcuda.dll")                     # type: ignore[attr-defined]
+        return True
+    except OSError:
+        return False
+    except Exception:                                   # noqa: BLE001
+        return True                                     # 判定不了就不拦
+
+
 def cuda_libs() -> Dict[str, Any]:
     """cuBLAS / cuDNN 能不能**真的加载**（``ctypes.WinDLL``，不是看文件在不在）。"""
     if os.name != "nt":

@@ -461,6 +461,18 @@ class HomePage(Page):
                 f"• 识别模型还没下载（{mid}）。请到左侧「模型」页点「下载」，"
                 f"装好之后再回来点开始。")
             return
+        # GPU 运行时（CUDA）没装 → **也在点开始之前拦住**。
+        # ⚠️ 为什么必须在这里拦（第 19 轮补）：
+        # CUDA 运行时自第 18 轮起改为"按需下载"。如果只在 `asr.py` 里报错，
+        # 用户点「开始制作」后会看到一段**技术性报错**（而且是在任务跑起来之后），
+        # 而不是"去哪儿点一下就好"。`asr.py` 那条报错要保留（命令行也要用），
+        # 但界面这条路要给**可操作**的说法。
+        # ⚠️ 判定用 `check()` 而不是"看目录在不在"：目录在但文件不全
+        # （下了一半）也算没装好 —— 与模型那边同一个口径。
+        gpu_problem = self._gpu_runtime_problem()
+        if gpu_problem:
+            self.lb_problem.setText(gpu_problem)
+            return
         self.lb_problem.setText("")
         self.log_box.clear()
         self.log_box.appendPlainText("正在准备...")
@@ -470,6 +482,40 @@ class HomePage(Page):
         self.lb_stage.setText("已提交，等模型加载...")
         self.btn_start.setEnabled(False)
         self.btn_cancel.setEnabled(True)
+
+    def _gpu_runtime_problem(self) -> str:
+        """GPU 运行时没就绪时返回一句人话，否则返回空串。
+
+        ⚠️ 三种"不能报"的情况，别误拦：
+          * **机器上没有 NVIDIA 显卡** —— 那不是"少下个组件"，
+            下载 CUDA 运行时也救不了（`asr.py` 明确拒绝 CPU）。
+            这时给一句"本软件需要 NVIDIA 显卡"，别让用户白下 529 MB。
+          * 清单里没有 cuda 组件（例如源码模式/旧清单）→ 别拦，
+            让原来的链路照常跑（否则会把能用的环境拦死）。
+          * 运行时检查本身出错 → **不拦**（检查失败不等于功能不可用，
+            宁可让转换去试，也不要因为一个检查器的问题挡住用户）。
+        """
+        try:
+            from desktop.services import gpu_probe, runtime_service
+            # 没有 NVIDIA 显卡：下运行时也没用，直接说清
+            try:
+                if not gpu_probe.has_nvidia_gpu():
+                    return ("• 没有检测到 NVIDIA 显卡。本软件的语音识别"
+                            "必须用显卡（CPU 跑一首歌要几分钟，所以没有做"
+                            "降级）。请换一台带 NVIDIA 显卡的机器。")
+            except Exception:                            # noqa: BLE001
+                pass                                     # 探测不了就不拦
+            mgr = runtime_service.RuntimeManager()
+            if "cuda" not in [s.get("id") for s in mgr.all_specs()]:
+                return ""
+            st = mgr.check("cuda")
+            if st.status == "ready":
+                return ""
+            return ("• GPU 运行时还没安装。请到左侧「模型」页，"
+                    "在「运行组件（按需下载）」里点 CUDA 那一行的"
+                    "「下载并安装」，装好之后再回来点开始。")
+        except Exception:                                # noqa: BLE001
+            return ""
 
     def _cancel(self) -> None:
         if self._current_task:
