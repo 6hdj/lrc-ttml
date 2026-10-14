@@ -194,12 +194,30 @@ class RuntimeManager:
             st.present_bytes = _dir_size(site)
             ok, why = _verify_installed(spec, site)
             if ok:
-                st.status = READY
+                # ⚠️⚠️ **安装记录通过还不够，必须真的核对关键文件在不在**
+                # （第 28 轮发现，是个"假就绪"）。
+                # `_verify_installed()` 只看**总字节数**（`got < want * 0.95`），
+                # 而"把 `bin/` 整个挪到 `bin_moved/`"字节数**一点没变** ⇒
+                # 它报"2 个文件齐全"，`_check_uncached` 在这里**直接 return**，
+                # 清单里声明的 `verify_files` **根本没被检查过**。
+                # 后果：DLL 被误删/挪走/半截解压时，界面仍显示"已就绪"，
+                # 用户点「开始制作」才报 DLL 找不到 —— 与项目里
+                # "不许假就绪"的约定相悖。
+                # 现在：文件对不上就把记录判废，**继续往下走** probe 那条路
+                # （真加载一次），让结论由"能不能用"决定，而不是"曾经装过"。
+                miss = _missing_declared_files(spec, site)
+                if not miss:
+                    st.status = READY
+                    st.detail = why
+                    return st
+                st.detail = f"安装记录在，但关键文件缺失：{', '.join(miss[:3])}"
+            else:
                 st.detail = why
+            if spec.get("verify_dll_probe") != "cuda":
+                # 没有"真加载"这条兜底时，文件缺失就是失败（别给假就绪）
+                st.status = FAILED
+                st.detail = st.detail or why
                 return st
-            st.status = FAILED
-            st.detail = why
-            return st
 
         # ⚠️⚠️ **还要认"不是我们下载的"那些来源**（第 20 轮修的真 bug）。
         # 上面只看了 `<data_dir>/runtime/<id>` —— 但 CUDA 运行库可能来自：
@@ -377,11 +395,41 @@ class RuntimeManager:
                 p(done_bytes * 100.0 / total if total else None, "已下载")
                 break
             else:
-                # ⚠️ 失败时**绝不删 .part**（那是断点续传的全部指望）
-                raise RuntimeError(
-                    f"{fn} 下载失败（最后：{type(last_err).__name__}: "
-                    f"{str(last_err)[:140]}）。已下好的部分保留在 {part}，"
-                    f"重试会**接着下**。")
+                # ⚠️⚠️ **一个来源失败，要能继续试下一个来源**（第 28 轮修的真 bug）。
+                # 原来这里是 `raise RuntimeError(...)` —— 只要**第一个** archive
+                # 的 urls 全部失败就整单放弃，**根本不看第二个 archive**。
+                # 于是"加了国内镜像备用源"完全不起作用：
+                # 用户实测 GitHub 连接被重置（WinError 10052/10054），
+                # 明明镜像可用，程序却直接报"下载失败"。
+                # 现在：记下错误、**保留 .part**（断点续传的指望），继续下一个来源。
+                last_err_all = last_err
+                log(f"[跳过] {fn} 的所有来源都失败，换下一个来源")
+                continue
+
+        # ⚠️⚠️ **不能靠 `for…else` 判"全都失败"**（我自己先写错一次）：
+        # 上面那个 `continue` 属于**内层** `for url` 循环，
+        # 而这里的 `else` 会挂到**外层** `for w in items` 上 ——
+        # 内层成功 `break` 只是跳出内层，**外层照常结束**，
+        # 于是"其实已经下好了"也会走进 else 去抛异常。
+        # 用一个显式标志最不容易写错。
+        all_failed = (not files) and (done_bytes == 0)
+        if all_failed:
+            # 把"试过哪些来源"说清楚 —— 否则用户只知道"失败了"，
+            # 不知道还能去哪儿找。
+            tried = []
+            for w2 in items:
+                for u2 in (w2.get("urls") or []):
+                    try:
+                        tried.append(u2.split("/")[2])
+                    except Exception:                   # noqa: BLE001
+                        tried.append(u2)
+            last_err = locals().get("last_err_all") or locals().get("last_err")
+            raise RuntimeError(
+                f"{rid}: 所有下载来源都失败了"
+                f"（试过 {len(tried)} 个：{', '.join(dict.fromkeys(tried))}）。"
+                f"最后错误：{type(last_err).__name__}: {str(last_err)[:140]}。"
+                f"已下好的部分保留在缓存目录，重试会**接着下**。"
+                f"也可手动下载后用离线导入。")
 
         # ⚠️⚠️ **下载完、还没解压，这里必须再查一次取消** —— 这是阴性对照逼出来的真 bug。
         # 原流程是：文件下载循环结束 → **直接进入解压**。
@@ -476,6 +524,14 @@ class RuntimeManager:
         # zip 归档是我们自己排的目录结构，flatten 反而会把 `bin/` 打平。
         if any(f.lower().endswith(".whl") for f in files):
             _flatten_site(tmp_site, log=log)
+        # ⚠️⚠️ **把所有 .dll 提到 `bin/` 下**（真踩到，第 28 轮加镜像源时发现）。
+        # 两种来源的目录深度**不一样**：
+        #   * 我们自己的 `archives` zip     → `bin/*.dll`
+        #   * PyPI 的 `nvidia-cublas-cu12`  → `nvidia/cublas/bin/*.dll`
+        # 而 `_verify_files_present()` 只在 `<site>/bin/xxx` 和 `<site>/xxx` 两处找，
+        # 镜像解出来的 DLL 在 `nvidia/cublas/bin/` ⇒ **明明下好了却判"缺少文件"**，
+        # 然后又去重下 528 MB。统一挪到 `bin/` 下，两边口径就一致了。
+        _hoist_dlls(tmp_site, log=log)
 
     def _activate(self, spec: dict, tmp_site: str, site: str, why: str,
                   log=print) -> None:
@@ -594,6 +650,49 @@ def _extract_wheel(wheel: str, site: str, log=print,
     log(f"  解出 {n} 个文件 → {site}")
 
 
+def _hoist_dlls(site: str, log=print) -> None:
+    """把 `site` 下**任意深度**的 `.dll` 都挪到 `<site>/bin/`。
+
+    ⚠️⚠️ 为什么需要（第 28 轮加国内镜像源时发现）：
+    同一个 CUDA 运行组件有两种来源，**目录深度不同**：
+
+    * 我们自己打的 `archives` zip  → `bin/*.dll`
+    * PyPI 的 `nvidia-cublas-cu12` → `nvidia/cublas/bin/*.dll`
+
+    而 `_verify_files_present()` 只在 `<site>/bin/x.dll` 与 `<site>/x.dll` 两处找。
+    镜像那份落在 `nvidia/cublas/bin/` ⇒ 会被判「缺少文件」→ **又去重下 528 MB**。
+    统一挪到 `bin/`，两种来源就都通过了。
+
+    ⚠️ 只搬 `.dll`；不删空目录（留着无害，也免得误伤 python 包结构）。
+    """
+    try:
+        targets = []
+        for root, _dirs, fs in os.walk(site):
+            for f in fs:
+                if f.lower().endswith(".dll"):
+                    targets.append(os.path.join(root, f))
+        if not targets:
+            return
+        bindir = os.path.join(site, "bin")
+        paths.ensure_dir(bindir)
+        moved = 0
+        for src in targets:
+            dst = os.path.join(bindir, os.path.basename(src))
+            if os.path.abspath(src) == os.path.abspath(dst):
+                continue
+            try:
+                if os.path.exists(dst):
+                    os.remove(dst)
+                shutil.move(src, dst)
+                moved += 1
+            except Exception as e:                      # noqa: BLE001
+                log(f"[警告] 挪 {os.path.basename(src)} 失败：{e}")
+        if moved:
+            log(f"[整理] {moved} 个 DLL 统一放到 bin/")
+    except Exception as e:                              # noqa: BLE001
+        log(f"[警告] 整理 DLL 失败（不影响继续）：{type(e).__name__}: {e}")
+
+
 def _flatten_site(site: str, log=print) -> None:
     """把"多套了一层"的布局摊平（**必需，不是洁癖**）。
 
@@ -707,6 +806,26 @@ def _write_state(site: str, spec: dict, why: str) -> None:
 def _now() -> str:
     import datetime
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _missing_declared_files(spec: dict, site: str) -> list:
+    """清单里 `verify_files` 声明了、但**实际不在**的文件（相对路径列表）。
+
+    ⚠️ 与 `_verify_files_present()` 的差别：那个返回"整体 ok + 一句说明"，
+    这里返回**缺了哪些**，供 `_check_uncached` 在"安装记录通过"之后
+    再做一次**具体文件**核对（记录只看总字节数，抓不到"文件被挪走"）。
+    两边都允许 `bin/x.dll` 与已归位的 `x.dll` 两种位置。
+    """
+    want = list(spec.get("verify_files") or [])
+    if not want:
+        return []
+    out = []
+    for rel in want:
+        cands = [os.path.join(site, *rel.split("/")),
+                 os.path.join(site, os.path.basename(rel))]
+        if not any(os.path.isfile(c) and os.path.getsize(c) > 0 for c in cands):
+            out.append(rel)
+    return out
 
 
 def _verify_installed(spec: dict, site: str) -> tuple:

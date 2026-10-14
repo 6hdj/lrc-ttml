@@ -243,7 +243,131 @@ def main() -> int:
     st2 = mgr2.check("cuda")
     check(st2.status != "ready", "取消后状态不是 ready", st2.status)
 
+    # ================================================================
+    # 3. **多来源回退**（第 28 轮修的真 bug）
+    # ================================================================
+    # ⚠️⚠️ 背景：用户实测「PyPI 直连被拒」，加了国内镜像后**仍然不生效** ——
+    # 因为原来的代码在"第一个 archive 的 urls 全失败"时**直接 raise**，
+    # `for w in items` 的第二个来源**根本没机会被尝试**。
+    # 也就是说：清单里加镜像源是无效的，代码假装支持多源。
+    # 这条用例用两个 archive 条目：第一个指向必然失败的端口，
+    # 第二个是本地 mock 服务 —— **必须能装成功**。
+    sb3 = os.path.join(sb, "rt3")
+    manifest3 = {"schema_version": 1, "runtimes": [{
+        "id": "cuda", "name": "假 CUDA", "purpose": "多源回退",
+        "download_policy": "on_demand", "approx_size": size,
+        "installed_size": size,
+        "verify_files": ["bin/cublas64_12.dll"],
+        "archives": [
+            {"filename": "dead.zip", "size": size, "sha256": digest,
+             "urls": ["http://127.0.0.1:1/dead.zip"]},
+            {"filename": "good.zip", "size": size, "sha256": digest,
+             "urls": [url]},
+        ],
+    }]}
+    mpath3 = os.path.join(sb, "rt3.json")
+    json.dump(manifest3, open(mpath3, "w", encoding="utf-8"),
+              ensure_ascii=False)
+    # ⚠️ `root` 是**只读属性**（真踩到：写过 `mgr3.root = sb3` →
+    # `AttributeError: property 'root' has no setter`）。沙箱目录要走构造参数。
+    mgr3 = rs.RuntimeManager(manifest=manifest3, root=sb3)
+    logs3 = []
+    ok3 = False
+    try:
+        ok3 = mgr3.download("cuda", log=logs3.append)
+    except Exception as e:                              # noqa: BLE001
+        check(False, "第一个来源失败后能回退到第二个来源",
+              f"{type(e).__name__}: {str(e)[:110]}")
+    check(ok3, "第一个来源失败后能回退到第二个来源（装成功）")
+    check(any("[跳过]" in m for m in logs3),
+          "日志里有『换下一个来源』的痕迹")
+    st3 = mgr3.check("cuda", use_cache=False)
+    check(st3.status == "ready", "回退装完后状态是 ready", st3.status)
+
+    # ⚠️ 阴性对照的思路写在这里：把第二个 archive 条目删掉，
+    # `download()` 必须**抛异常**（而不是"假装成功"）。
+    # 只删条目、不动别的，是最小改动。
+    manifest3["runtimes"][0]["archives"] = \
+        manifest3["runtimes"][0]["archives"][:1]
+    mgr3._manifest = manifest3
+    # ⚠️⚠️ **必须删"已安装目录"本身，且用 `dir_for()` 取路径**（我第一版写错两次）：
+    #   ① 删的是 `<root>/runtime`，而实际安装在 `<root>/cuda`
+    #      （`RuntimeManager.root` **本身就是** …/runtime，`dir_for` 在其下拼 id）；
+    #      结果已装的 `bin/cublas64_12.dll` 还在 → `check()` 报 ready →
+    #      `download()` 一句「已就绪，无需下载」就返回，**根本不走下载**。
+    #   ② 下载缓存也要清（`download()` 见缓存命中会跳过下载）。
+    shutil.rmtree(mgr3.dir_for("cuda"), ignore_errors=True)
+    shutil.rmtree(mgr3.wheel_cache(), ignore_errors=True)
+    mgr3.invalidate()
+    raised = False
+    try:
+        mgr3.download("cuda", log=lambda m: None)
+    except Exception:                                   # noqa: BLE001
+        raised = True
+    check(raised, "只剩坏来源时必须**抛异常**（不能假装成功）")
+
+    # ================================================================
+    # 4. **wheel 布局的 DLL 归位**（第 28 轮：加国内镜像源时发现的）
+    # ================================================================
+    # ⚠️ 两种来源的目录深度**不一样**：
+    #   * 我们自己的 archives zip  → `bin/*.dll`
+    #   * PyPI 的 nvidia-cublas-cu12 → `nvidia/cublas/bin/*.dll`
+    # 而 `_verify_files_present()` 只看 `<site>/bin/x.dll` 与 `<site>/x.dll`。
+    # 镜像那份会落在 `nvidia/cublas/bin/` ⇒ **明明下好了却判"缺少文件"**，
+    # 然后又去重下 528 MB。`_hoist_dlls()` 就是为这个加的。
+    sb4 = os.path.join(sb, "rt4")
+    z4 = os.path.join(sb, "wheel-layout.zip")
+    with zipfile.ZipFile(z4, "w") as z:
+        # 模拟 wheel 的真实布局
+        z.writestr("nvidia/cublas/bin/cublas64_12.dll", b"y" * 8192)
+        z.writestr("nvidia/cublas/bin/cublasLt64_12.dll", b"z" * 4096)
+        z.writestr("nvidia/cublas/__init__.py", b"# pkg\n")
+    d4 = open(z4, "rb").read()
+    s4, sz4 = hashlib.sha256(d4).hexdigest(), len(d4)
+    srv4, _dg4, _sz = serve(z4)
+    u4 = f"http://127.0.0.1:{srv4.server_address[1]}/w.zip"
+    manifest4 = {"schema_version": 1, "runtimes": [{
+        "id": "cuda", "name": "假 CUDA", "purpose": "wheel 布局",
+        "download_policy": "on_demand", "approx_size": sz4,
+        "installed_size": sz4,
+        "verify_files": ["bin/cublas64_12.dll", "bin/cublasLt64_12.dll"],
+        "archives": [{"filename": "w.zip", "size": sz4, "sha256": s4,
+                      "urls": [u4]}],
+    }]}
+    mgr4 = rs.RuntimeManager(manifest=manifest4,
+                             root=os.path.join(sb4, "rt"))
+    ok4 = mgr4.download("cuda", log=lambda m: None)
+    check(ok4, "wheel 布局（nvidia/cublas/bin/）也能装成功")
+    st4 = mgr4.check("cuda", use_cache=False)
+    check(st4.status == "ready",
+          "wheel 布局装完后状态是 ready（DLL 被归位到 bin/）",
+          f"{st4.status}: {st4.detail[:70]}")
+    bindir4 = os.path.join(mgr4.site_dir("cuda"), "bin")
+    check(os.path.isfile(os.path.join(bindir4, "cublas64_12.dll"))
+          and os.path.isfile(os.path.join(bindir4, "cublasLt64_12.dll")),
+          "两个 DLL 真的落在 bin/ 下")
+
+    # ⚠️ 阴性对照：手动把归位结果抹掉（把 bin/ 挪走）。
+    # ⚠️⚠️ **必须同时禁用 `verify_dll_probe`**（真踩到）：本开发机上系统/venv
+    #   里本来就有可用的 cuBLAS，探针会**正确地**判 ready ——
+    #   那样这条断言测的就不是"文件在不在 bin/"，而是"这台机器有没有 CUDA"。
+    #   所以这里把探针关掉，让它回到"只看 verify_files"的口径。
+    import shutil as _sh
+    _sh.move(bindir4, os.path.join(mgr4.site_dir("cuda"), "bin_moved"))
+    _no_probe = json.loads(json.dumps(manifest4))
+    _no_probe["runtimes"][0].pop("verify_dll_probe", None)
+    mgr4._manifest = _no_probe
+    mgr4.invalidate()
+    st4b = mgr4.check("cuda", use_cache=False)
+    check(st4b.status != "ready",
+          "把 bin/ 挪走后必须**不再 ready**（证明判据真的看文件）",
+          f"{st4b.status}（若为 ready，说明判据看的是别的东西）")
+    _sh.move(os.path.join(mgr4.site_dir("cuda"), "bin_moved"), bindir4)
+    mgr4._manifest = manifest4
+    mgr4.invalidate()
+
     srv.shutdown()
+    srv4.shutdown()
     print("\n" + "=" * 74)
     print(f"  通过 {_ok} 项，失败 {_fail} 项")
     print("=" * 74)

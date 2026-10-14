@@ -53,7 +53,72 @@ os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(BASE, ".hf_cache"))
 
 # CUDA 运行库：PyPI 上的 wheel 里就是现成的 DLL，直接下 wheel 再解包，
 # 比装 CUDA Toolkit 轻得多，也不用管理员权限。
-CUDA_PKGS = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
+#
+# ⚠️⚠️ **只要 cuBLAS，不要 cuDNN**（2026-10-14 用户实测后定的）：
+# 本项目 GPU 推理走 CTranslate2，实测（真 RTX 4060 + 真音频）
+#   cuBLAS + cuDNN + nvrtc → 1.43~1.50s
+#   只有 cuBLAS            → 1.43~1.59s
+# **没有差别**，而 cuDNN 白占 1095 MiB。原来这里要下两个包（约 2 GB），
+# 用户在小水管上要下 1 GB 无用数据。理由详见 `envcheck.CUDA_DLLS` 的注释。
+CUDA_PKGS = ["nvidia-cublas-cu12"]
+
+# ⚠️ 下载源（**国内镜像优先**，第 28 轮加）。
+# 用户实测：PyPI 官方直连 → `WinError 10061 由于目标计算机积极拒绝`，
+# 于是整个 CUDA 运行库一个都下不到。
+# 本机实测可达性与吞吐（2026-10-14）：
+#   腾讯云 3.91 MB/s ／ 阿里云 0.17~8.7 MB/s（抖动大）
+#   清华 / 中科大 时通时拒（所以放在后面，通了就是赚）
+#   官方 PyPI 0.75s 首包，作最后兜底
+# 前两个是 `/simple/` 页面（要解析 href），官方那个是 JSON API。
+PYPI_INDEXES = [
+    "https://mirrors.cloud.tencent.com/pypi/simple/",
+    "https://mirrors.aliyun.com/pypi/web/simple/",
+    "https://pypi.tuna.tsinghua.edu.cn/simple/",
+    "https://mirrors.ustc.edu.cn/pypi/simple/",
+    "https://pypi.org/pypi/",
+]
+
+
+def baseis_json(base: str) -> bool:
+    """PyPI 官方那套是 `<base><pkg>/json`；镜像的 simple 页是 HTML。"""
+    return base.rstrip("/").endswith("/pypi")
+
+
+def _simple_page_meta(base: str, pkg: str) -> dict:
+    """从 simple 页解析出**版本号最高的 win_amd64 wheel** 的直链。
+
+    ⚠️ href 形如 `../../packages/ab/cd/<hash>/<file>.whl#sha256=…`：
+    去掉 `#…` 片段，再把 `../` 按 base 的路径段削掉。
+    """
+    import re
+    import urllib.parse
+    import urllib.request
+
+    url = f"{base.rstrip('/')}/{pkg}/"
+    with urllib.request.urlopen(
+            urllib.request.Request(url, headers={"User-Agent": "Lyric2TTML"}),
+            timeout=30) as r:
+        html = r.read().decode("utf-8", "replace")
+    items = re.findall(r'href="([^"]+\.whl)[^"]*"', html)
+    wins = [u for u in items if "win_amd64" in u]
+    if not wins:
+        return {}
+
+    def _ver(u: str) -> tuple:
+        m = re.search(r"-((?:\d+\.)+\d+)-", u)
+        return tuple(int(x) for x in (m.group(1).split(".") if m else ["0"]))
+
+    pick = max(wins, key=_ver)
+    p = urllib.parse.urlparse(url)
+    parts = [x for x in p.path.split("/") if x][:-1]
+    if parts and parts[-1] == "simple":
+        parts = parts[:-1]
+    rel = pick
+    while rel.startswith("../"):
+        rel = rel[3:]
+    direct = f"{p.scheme}://{p.netloc}/" + "/".join(parts) + "/" + rel
+    m2 = re.search(r"-((?:\d+\.)+\d+)-", pick)
+    return {"version": m2.group(1) if m2 else "", "url": direct}
 
 CAMPP_REPO = "iic/speech_campplus_sv_zh-cn_16k-common"
 CAMPP_DIR = os.path.join(BASE, "models", "campplus")
@@ -220,42 +285,68 @@ def fetch_whisper(model: str) -> bool:
 
 
 def fetch_cuda() -> bool:
-    """下载 CUDA 运行库（cublas / cudnn）。
+    """下载 CUDA 运行库（**只需要 cuBLAS**）。
 
-    ⚠️ **不用 pip**：直接向 PyPI 取 wheel 的下载地址、用 urllib 拉下来、
-    用 zipfile 解出 DLL。原因是 pip 在冻结环境里没法安全调用
-    （`sys.executable` 指向安装程序自己），而 wheel 本质就是个 zip，
-    自己解反而更可控、还能显示进度。
+    ⚠️⚠️ **三条改过的事实（第 28 轮，用户实测报错驱动）**：
+
+    1. **不再依赖 PyPI 官方**。原来写死 `https://pypi.org/pypi/.../json`
+       —— 中国大陆用户实测直接
+       `WinError 10061 由于目标计算机积极拒绝`，于是
+       `[失败] 解出 0 个 DLL`。现在**先查国内镜像**（清华/阿里云/中科大/腾讯云），
+       都失败才回退 PyPI 官方。
+    2. **cuDNN 不是必需的**。实测（真 RTX 4060、真音频）：
+       只有 cuBLAS 时 GPU 1.43~1.59s，加 cuDNN 后 1.43~1.50s —— **没差别**，
+       而 cuDNN 白占 1095 MiB。本项目的 GPU 推理走 CTranslate2，**只要 cuBLAS**。
+       所以这里只下 cuBLAS（约 528 MB），不再白下 1 GB。
+       （用户已下过的 cuDNN 不会被删；`envcheck` 把它算作可选加速项。）
+    3. **文案要照实说**：本项目**没有 CPU 降级** —— 缺运行库时是**直接报错**，
+       不是"慢很多"。原来那句"没有它只能 CPU，慢很多"是错的，
+       会让用户以为"先凑合跑"也行。
+
+    ⚠️ **不用 pip**：直接取 wheel 的下载地址、用 urllib 拉、zipfile 解出 DLL。
+    冻结环境里 `sys.executable` 指向安装程序自己，pip 没法安全调用；
+    而 wheel 本质就是个 zip，自己解反而更可控、还能显示进度。
     """
-    say(f"\n  下载 CUDA 运行库（cublas + cudnn，约 2 GB）→ {CUDA_DIR}")
-    say("  这一步让语音识别能跑在 GPU 上；没有它只能 CPU，慢很多。")
+    say(f"\n  下载 CUDA 运行库（cuBLAS，约 528 MB）→ {CUDA_DIR}")
+    say("  语音识别必须用显卡（本项目没有 CPU 降级），而显卡加速要 cuBLAS。")
     import json as _json
     import urllib.request
     os.makedirs(CUDA_DIR, exist_ok=True)
     n = 0
     for pkg in CUDA_PKGS:
         try:
-            say(f"    查询 {pkg} 的最新版本…")
-            with urllib.request.urlopen(
-                    f"https://pypi.org/pypi/{pkg}/json", timeout=30) as r:
-                meta = _json.loads(r.read().decode("utf-8", "replace"))
-            ver = meta["info"]["version"]
-            url = ""
-            for f in meta["releases"].get(ver, []):
-                fn = f.get("filename", "")
-                if fn.endswith(".whl") and "win_amd64" in fn:
-                    url = f["url"]
+            # ---- ① 依次尝试各来源（国内镜像优先）----
+            meta = None
+            used = ""
+            for base in PYPI_INDEXES:
+                try:
+                    say(f"    查询 {pkg} 的版本（{base.split('/')[2]}）…")
+                    if baseis_json(base):
+                        with urllib.request.urlopen(
+                                f"{base}{pkg}/json", timeout=30) as r:
+                            meta = _json.loads(r.read().decode("utf-8", "replace"))
+                    else:
+                        meta = _simple_page_meta(base, pkg)
+                    used = base.split("/")[2]
                     break
+                except Exception as e:              # noqa: BLE001
+                    say(f"      [跳过] {type(e).__name__}: {str(e)[:70]}")
+            if not meta:
+                say(f"    [失败] {pkg}：所有来源都查不到（网络问题？）")
+                continue
+            ver = meta.get("version") or ""
+            url = meta.get("url") or ""
             if not url:
                 say(f"    [失败] {pkg} {ver} 没有 Windows 版 wheel")
                 continue
-            say(f"    下载 {os.path.basename(url)} …")
+            say(f"    下载 {os.path.basename(url)} （来自 {used}）…")
             tmp = os.path.join(CUDA_DIR, "_tmp.whl")
             with urllib.request.urlopen(url, timeout=120) as r, \
                     open(tmp, "wb") as out:
                 total = int(r.headers.get("Content-Length") or 0)
                 got = 0
                 step = 8 * 1024 * 1024
+                last_shown = -1
                 while True:
                     chunk = r.read(step)
                     if not chunk:
@@ -263,8 +354,11 @@ def fetch_cuda() -> bool:
                     out.write(chunk)
                     got += len(chunk)
                     if total:
-                        say(f"      {got / 1024 / 1024:.0f} / "
-                            f"{total / 1024 / 1024:.0f} MB")
+                        mb = got // (16 * 1024 * 1024)
+                        if mb != last_shown:        # 每 16 MB 报一次，别刷屏
+                            last_shown = mb
+                            say(f"      {got / 1048576:.0f} / "
+                                f"{total / 1048576:.0f} MB")
             with zipfile.ZipFile(tmp) as z:
                 for name in z.namelist():
                     if name.lower().endswith(".dll"):
