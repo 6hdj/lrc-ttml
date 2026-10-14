@@ -87,3 +87,6 @@ build/
 *.dylib
 
 .venvpack
+
+# 构建元信息：打包前由 tools/make_build_info.py 生成，**不入库**
+desktop/resources/build_info.json

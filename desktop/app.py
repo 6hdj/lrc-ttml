@@ -250,7 +250,28 @@ def main(argv: Optional[List[str]] = None) -> int:
         rest = [a for a in argv if a != "--runtime-cli"]
         return int(runtime_service._cli(rest))
     if any(a in ("--version", "-V") for a in argv):
+        # ⚠️⚠️ **带上构建来源**（第 27 轮补的缺口）：
+        # 原来只打一行 "Lyric2TTML 桌面版 1.1.0" —— 用户报问题时
+        # 我们**无法判断他装的是哪一次构建**（本仓真出现过"交付物比源码旧两小时"
+        # 而无人察觉）。现在把 `build_info.json`（打包前由
+        # `tools/make_build_info.py` 生成）里的 commit / 是否带未提交改动 打出来。
         print(f"Lyric2TTML 桌面版 {__version__}")
+        try:
+            import json as _json
+            from desktop import paths as _paths
+            for _root in _paths.resource_roots():
+                _p = os.path.join(_root, "desktop", "resources",
+                                  "build_info.json")
+                if os.path.isfile(_p):
+                    with open(_p, encoding="utf-8") as _fh:
+                        _bi = _json.load(_fh)
+                    print(f"  构建来源：commit {_bi.get('git_short', '?')}"
+                          f"（{_bi.get('git_branch', '?')}）"
+                          f"  构建于 {_bi.get('built_at', '?')}"
+                          + ("　⚠️ 含未提交改动" if _bi.get("dirty") else ""))
+                    break
+        except Exception:                               # noqa: BLE001
+            pass                                        # 元信息缺失不影响 --version
         return 0
 
     return run_gui(argv)

@@ -94,6 +94,32 @@ def dirty_sources() -> list:
     return rows
 
 
+def embedded_build_info() -> dict:
+    """读**打进产物里的**构建元信息（它比"产物文件的时间戳"可信得多）。
+
+    ⚠️ 为什么这是最强判据（第 27 轮补）：
+    时间戳会被"碰一下"骗（上一次就误报过），git 状态也只说明"当前工作树干净"、
+    不说明"产物是从这个 commit 打的"。而 `build_info.json` 是**打包前写进包里的**，
+    它记的 commit 就是这份产物真正的来源 —— 直接比它和 HEAD 即可。
+    先看主程序目录（真产物），再退回源码目录（开发态）。
+    """
+    cands = [
+        os.path.join(HERE, "dist", "Lyric2TTML", "_internal", "desktop",
+                     "resources", "build_info.json"),
+        os.path.join(HERE, "desktop", "resources", "build_info.json"),
+    ]
+    for p in cands:
+        if os.path.isfile(p):
+            try:
+                import json as _json
+                d = _json.load(open(p, encoding="utf-8"))
+                d["_from"] = os.path.relpath(p, HERE)
+                return d
+            except Exception:                           # noqa: BLE001
+                pass
+    return {}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="交付产物新鲜度")
     ap.add_argument("--json", action="store_true")
@@ -101,6 +127,9 @@ def main() -> int:
 
     dirty = dirty_sources()
     ht = head_time()
+    head = git("rev-parse", "--short", "HEAD")
+    bi = embedded_build_info()
+    emb = bi.get("git_short", "")
     rows = []
     for label, p in ARTIFACTS:
         if not os.path.isfile(p):
@@ -108,7 +137,18 @@ def main() -> int:
                          "why": "产物不存在（还没打包？）"})
             continue
         m = os.path.getmtime(p)
-        if dirty:
+        # 判据按可信度排序：先比产物里记的 commit，再退回 git 状态/时间
+        if label == "主程序" and emb and head:
+            if emb != head:
+                ok, why = False, (f"产物里记的 commit 是 {emb}，当前 HEAD 是 "
+                                  f"{head} —— 改了代码没重建主程序")
+            else:
+                bits = []
+                if dirty:
+                    bits.append(f"工作树有 {len(dirty)} 个未提交改动")
+                ok = not dirty
+                why = ("；".join(bits) + "，产物不可能包含它们") if dirty else ""
+        elif dirty:
             ok, why = False, (f"有 {len(dirty)} 个未提交改动，产物不可能包含："
                               f"{', '.join(dirty[:3])}")
         elif ht and m < ht:
@@ -116,18 +156,27 @@ def main() -> int:
         else:
             ok, why = True, ""
         rows.append({"name": label, "path": os.path.relpath(p, HERE), "ok": ok,
-                     "why": why, "exe_mtime": m, "head_time": ht})
+                     "why": why, "exe_mtime": m, "head_time": ht,
+                     "embedded_commit": emb if label == "主程序" else ""})
 
     if a.json:
-        print(json.dumps({"dirty": dirty, "rows": rows}, ensure_ascii=False))
+        print(json.dumps({"dirty": dirty, "head": head,
+                          "embedded": bi, "rows": rows}, ensure_ascii=False))
         return 0 if all(r["ok"] for r in rows) else 1
 
     fmt = lambda t: datetime.datetime.fromtimestamp(t).strftime("%m-%d %H:%M:%S")
     print("=" * 74)
     print("  交付产物新鲜度（源码改过就必须重新打包）")
     print("=" * 74)
-    print(f"  未提交的源码改动：{len(dirty)} 个"
+    print(f"  当前 HEAD：{head or '?'}   未提交源码改动：{len(dirty)} 个"
           + (f"  {dirty[:4]}" if dirty else ""))
+    if bi:
+        print(f"  产物内记录的构建来源：{bi.get('_from')} → "
+              f"commit {emb or '?'}（{bi.get('git_branch', '?')}）"
+              f"  构建于 {bi.get('built_at', '?')}"
+              + ("　⚠️ 含未提交改动" if bi.get("dirty") else ""))
+    else:
+        print("  产物内**没有**构建元信息（先跑 tools/make_build_info.py 再打包）")
     bad = 0
     for r in rows:
         mark = "OK  " if r["ok"] else "FAIL"
@@ -139,10 +188,11 @@ def main() -> int:
     print()
     if bad:
         print(f"  ❌ {bad} 个产物与源码不一致 —— 重建步骤：")
-        print("     1) .venvpack\\Scripts\\python.exe -m PyInstaller --noconfirm \\")
+        print("     1) python tools/make_build_info.py")
+        print("     2) .venvpack\\Scripts\\python.exe -m PyInstaller --noconfirm \\")
         print("          --distpath dist/_app --workpath build/_app Lyric2TTML.spec")
-        print("     2) Copy-Item -Recurse dist/_app/Lyric2TTML dist/Lyric2TTML")
-        print("     3) python tools/build_installer_only.py   （需 L2T_WITH_QT=1）")
+        print("     3) Copy-Item -Recurse dist/_app/Lyric2TTML dist/Lyric2TTML")
+        print("     4) python tools/build_installer_only.py   （需 L2T_WITH_QT=1）")
         return 1
     print("  ✓ 产物与源码一致（没有忘打包）")
     return 0

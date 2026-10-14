@@ -141,6 +141,28 @@ datas += [('desktop/resources/model_manifest.json', 'desktop/resources'),
 if os.path.isfile('desktop/resources/app.ico'):
     datas += [('desktop/resources/app.ico', 'desktop/resources')]
     print('[icon] 随包分发 desktop/resources/app.ico（窗口/任务栏图标用）')
+
+# ⚠️⚠️ **构建元信息**（这份产物是从哪个 commit 打的）—— 必须打进包里。
+# 由 `tools/make_build_info.py` 在打包**之前**生成。
+# 为什么要它（第 26–27 轮的教训）：出现过"交付物比源码旧两小时、
+# 少了两个修复，而所有测试都通过"——因为测试跑的就是那个旧产物。
+# 产物里带上 commit 之后：① 用户报问题能一眼看到版本来源；
+# ② "产物新鲜度"能**比 commit**而不是比时间戳（时间戳会被"碰一下"骗）。
+# ⚠️ 没有这个文件时**不能报错**（开发构建可能没跑生成脚本），只提示。
+if os.path.isfile('desktop/resources/build_info.json'):
+    datas += [('desktop/resources/build_info.json', 'desktop/resources')]
+    _bi = {}
+    try:
+        import json as _json
+        with open('desktop/resources/build_info.json', encoding='utf-8') as _fh:
+            _bi = _json.load(_fh)
+    except Exception:                                   # noqa: BLE001
+        pass
+    print(f"[build] 打入构建元信息 commit={_bi.get('git_short', '?')} "
+          f"dirty={_bi.get('dirty', '?')}")
+else:
+    print('[build] ⚠️ 没有 desktop/resources/build_info.json —— '
+          '--version 里不会有 commit；先跑 tools/make_build_info.py')
 binaries = []
 hiddenimports = ['doctor', 'envcheck', 'install', 'download_model',
                  # 卸载逻辑在 uninstall_core（**故意不放在 installer_gui**：

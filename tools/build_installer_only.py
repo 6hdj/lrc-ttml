@@ -19,6 +19,7 @@
 """
 import os
 import shutil
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +35,35 @@ assert br.WITH_QT, "必须先设 L2T_WITH_QT=1（否则装完没有桌面窗口�
 app_dir = os.path.join("dist", br.APP)
 assert os.path.isfile(os.path.join(app_dir, f"{br.APP}.exe")), \
     f"没有主程序：{app_dir}"
+
+# ---- ⓪ ⚠️⚠️ **打包前先刷新"构建元信息"** ----
+# `desktop/resources/build_info.json` 记录"这份产物是从哪个 commit 打的"，
+# 用户在 `--version` 里能看到，交付报告的"产物新鲜度"也靠它比 commit。
+# ⚠️ 但**主程序是上一步 PyInstaller 打进去的**：这里重新生成只会更新
+# `desktop/resources/` 下的源文件，**不会**改已经打好的主程序。
+# ⇒ 所以这里刷新它**只为**两个用途：
+#   ① 提示"你现在这个主程序里的 commit 是哪个"（若与当前 HEAD 不符就该重建主程序）；
+#   ② 让随后重打的安装包至少带上最新的元信息副本。
+# 真正的做法仍是"改了源码 → 重建主程序"。这一点写在这里免得被误解成"刷新就够了"。
+_info = os.path.join(HERE, "desktop", "resources", "build_info.json")
+_before = ""
+if os.path.isfile(_info):
+    try:
+        import json as _j
+        _before = _j.load(open(_info, encoding="utf-8")).get("git_short", "")
+    except Exception:                                   # noqa: BLE001
+        pass
+subprocess.run([sys.executable, os.path.join(HERE, "tools",
+                                             "make_build_info.py")],
+               cwd=HERE, check=False)
+try:
+    import json as _j2
+    _after = _j2.load(open(_info, encoding="utf-8")).get("git_short", "")
+except Exception:                                       # noqa: BLE001
+    _after = ""
+if _before and _after and _before != _after:
+    print(f"  ⚠️ 主程序里记录的 commit（{_before}）与当前 HEAD（{_after}）**不一致**"
+          f" —— 改了源码却只重打安装包，产物里还是旧代码，请重建主程序")
 
 # ---- ① ⚠️ 打包前必须清掉"测试跑出来的运行时残留" ----
 # 真踩过：验收脚本在 app 目录里留下了 `.hf_cache`（2.9 GB 的 whisper 模型）、
