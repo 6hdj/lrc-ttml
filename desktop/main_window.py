@@ -22,18 +22,21 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QMessageBox,
 from desktop import __version__
 from desktop.context import AppContext
 from desktop.pages.base import (C, QSS, STATUS_COLOR, STATUS_ICON, dim, label)
+from desktop.pages.icons import nav_icon
 
 # 导航顺序：开始 → 制作 → 任务 → 模型 → 设置 → 帮助
 # ⚠️ 「帮助 / 诊断」是任务书 C 明确列的一页，之前**没有**：
 # `--doctor` 的完整输出、日志在哪、装到哪了，用户在界面里都拿不到，
 # 报问题时只能靠开发者手动跑命令。现在补上（放最后，不抢主流程的注意力）。
+# ⚠️ 2026-10-14 UI 重构：**去掉 emoji**（🏠🎵📋…），图标改成
+# `desktop/pages/icons.py` 统一画的单色线条图标（任务书：不混用表情符号）。
 NAV = [
-    ("welcome", "🏠  开始", "第一次用先看这里：环境、模型、怎么用"),
-    ("home", "🎵  制作", "选文件、开始转换、看结果"),
-    ("tasks", "📋  任务", "转换与下载的进度、日志"),
-    ("models", "🧩  模型", "下载 / 校验 / 清理模型"),
-    ("settings", "⚙  设置", "目录、默认值"),
-    ("help", "❓  帮助 / 诊断", "环境行不行、日志在哪、常见问题"),
+    ("welcome", "开始", "第一次用先看这里：环境、模型、怎么用"),
+    ("home", "歌词工作台", "选文件、开始转换、看结果"),
+    ("tasks", "任务中心", "转换与下载的进度、日志"),
+    ("models", "模型管理", "下载 / 校验 / 清理模型"),
+    ("settings", "设置", "目录、默认值"),
+    ("help", "帮助 / 诊断", "环境行不行、日志在哪、常见问题"),
 ]
 
 
@@ -60,9 +63,13 @@ class MainWindow(QMainWindow):
         slay.setSpacing(4)
 
         title = QLabel("Lyric2TTML")
-        title.setStyleSheet("font-size: 15px; font-weight: 700; padding: 2px 6px 10px 6px;")
+        title.setStyleSheet("font-size: 15px; font-weight: 700; "
+                            "padding: 2px 6px 10px 6px;")
         slay.addWidget(title)
 
+        # ⚠️ 图标在按钮里**跟着选中态换色**（未选中 dim、悬停 text、选中 accent）。
+        # 但 QSS 只能改文字色、改不了 QIcon 的颜色 —— 所以用"三态图标"：
+        # 未选中/悬停/选中各画一张，切换时换 `setIcon`。换主题也要重画。
         for key, text, tip in NAV:
             b = QPushButton(text)
             b.setObjectName("nav")
@@ -70,15 +77,25 @@ class MainWindow(QMainWindow):
             b.setAutoExclusive(True)
             b.setToolTip(tip)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._apply_nav_icon(b, key, checked=False)
             b.clicked.connect(lambda _=False, k=key: self.show_page(k))
             slay.addWidget(b)
             self._nav_buttons[key] = b
 
         slay.addStretch(1)
 
+        # ---------------- 侧边栏底部：版本 + GPU 状态 ----------------
+        # ⚠️ 参考图/任务书：底部显示"应用版本及必要的状态信息"。
+        # 原来只有"检查中…"和环境体检按钮，没有版本号。
+        self.lb_ver = QLabel(f"v{__version__}")
+        self.lb_ver.setObjectName("faint")
+        self.lb_ver.setStyleSheet(f"color: {C['faint']}; padding: 2px 6px;")
+        slay.addWidget(self.lb_ver)
+
         self.lb_gpu = QLabel("检查中...")
         self.lb_gpu.setWordWrap(True)
-        self.lb_gpu.setStyleSheet(f"color: {C['dim']}; font-size: 11px; padding: 4px 6px;")
+        self.lb_gpu.setStyleSheet(f"color: {C['dim']}; font-size: 11px; "
+                                  f"padding: 4px 6px;")
         slay.addWidget(self.lb_gpu)
         self.btn_env = QPushButton("环境体检")
         self.btn_env.setObjectName("nav")
@@ -124,6 +141,17 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(120, lambda: self._bg_env_check())
 
     # ------------------------------------------------------------ 导航
+    def _apply_nav_icon(self, b: QPushButton, key: str, checked: bool) -> None:
+        """给导航按钮设三态图标（未选中 dim / 悬停由 QSS 管文字、图标换色）。
+
+        ⚠️ QIcon 的颜色是**画进去的**，QSS 改不了它 —— 所以选中态要换一张
+        用 `accent` 画的图标。`show_page()` 会在切换时统一刷一遍。
+        """
+        color = C["accent"] if checked else C["dim"]
+        b.setIcon(nav_icon(key, color))
+        # 图标与文字间距（图标画在 24×24 里，留点呼吸）
+        b.setStyleSheet(b.styleSheet())  # 保留 QSS 管理的主样式
+
     def show_page(self, key: str, force: bool = False) -> QWidget:
         page = self._page(key)
         if self.stack.indexOf(page) < 0:
@@ -132,6 +160,7 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(page)
         for k, b in self._nav_buttons.items():
             b.setChecked(k == key)
+            self._apply_nav_icon(b, k, checked=(k == key))
         self._current_key = key
         self.lb_status.setText(getattr(page, "TITLE", ""))
         on_show = getattr(page, "on_show", None)
