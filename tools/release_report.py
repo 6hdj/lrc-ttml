@@ -414,6 +414,13 @@ def main() -> int:
              "所以要单独比一次状态：\n")
     if fresh and fresh.get("ok"):
         L.append("✅ **产物与源码一致**（没有未提交的源码改动，产物也不早于 HEAD）\n")
+        _emb = (fresh.get("embedded") or {})
+        if _emb.get("git_short"):
+            L.append(f"产物内记录的构建来源：commit `{_emb['git_short']}`"
+                     f"（`{_emb.get('git_branch', '?')}`）"
+                     f"　构建于 {_emb.get('built_at', '?')}"
+                     + ("　⚠️ 含未提交改动" if _emb.get("dirty") else "")
+                     + f"　当前 HEAD：`{fresh.get('head', '?')}`\n")
     else:
         L.append("❌ **产物与源码不一致** —— 交付物里不是当前源码：\n")
         for r in (fresh or {}).get("rows", []):
