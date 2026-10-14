@@ -54,6 +54,16 @@ datas = [('index.html', '.')]
 _NV = os.path.join('.venvpack', 'Lib', 'site-packages', 'nvidia')
 _CUDA_KEEP = ['cublas']          # 只留 cuBLAS；加回 cudnn/nvrtc 前请先实测
 
+# ⚠️ `L2T_NO_CUDA=1`：**只为度量而存在**的构建开关 —— 打一个"不含 CUDA 运行时"
+# 的包，用来回答"500–600 MB 到底能不能达到、代价是什么"。
+# **不要用它发版**：不含 CUDA 时语音识别**根本跑不了**（`asr.py` 明确拒绝 CPU，
+# 理由是 CPU 处理一首歌要几分钟，静默降级只会让用户以为"这软件很慢"）。
+# 实测（第 17 轮）：去掉 `nvidia/` 后主程序目录 1078 MiB → 440 MiB，
+# 但真转换直接失败（`RuntimeError: 没有可用的显卡…`）。
+if os.environ.get("L2T_NO_CUDA") == "1":
+    _CUDA_KEEP = []
+    print('[cuda] L2T_NO_CUDA=1：本次**不打入任何 CUDA 运行时**（仅用于度量）')
+
 if os.path.isdir(_NV):
     for _lib in _CUDA_KEEP:
         _src = os.path.join(_NV, _lib, 'bin')
