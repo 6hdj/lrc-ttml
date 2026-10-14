@@ -120,7 +120,20 @@ def main() -> int:
             print(f"    清理脚本日志：{content}")
         except OSError:
             pass
-    time.sleep(1.5)
+    # ⚠️⚠️ **必须轮询等它自删，不能睡固定 1.5 秒就断言**（2026-10-15 修 flaky）。
+    #
+    # bat 删完目录后**还没结束**：它要再走一次 `ping -n 2`（约 1 秒）、
+    # 写一行日志、最后才 `del "%~f0"` 自删。
+    # 固定 sleep 1.5s 在空闲时勉强够，但在完整交付报告里
+    # （前面刚跑完 8 个重检查、CPU 正忙）就不够 —— 表现为这条用例**时好时坏**：
+    # 报告里 `卸载可重试性 exit=1`（总耗时 5.7s，说明 [2] 很快过了、差的是 [3]），
+    # 单独跑却 4/4 通过。**这种"负载相关"的失败最容易被误判成产品 bug。**
+    deadline = time.time() + 15.0
+    while time.time() < deadline:
+        leftovers = [f for f in os.listdir(tmp) if f.startswith("l2t-cleanup-")]
+        if not [f for f in leftovers if f.endswith(".bat")]:
+            break
+        time.sleep(0.5)
     leftovers = [f for f in os.listdir(tmp) if f.startswith("l2t-cleanup-")]
     check(not [f for f in leftovers if f.endswith(".bat")],
           "清理用 .bat 已自删", f"残留：{leftovers}")

@@ -82,21 +82,35 @@ def main() -> int:
 
     print("=" * 74)
     ok = r.returncode == 0
-    exe_installed = os.path.exists(os.path.join(dest, "Lyric2TTML.exe"))
+    # ⚠️⚠️ **不能断言"装完 exe 还在"**（2026-10-15 修：这是个"假绿"）。
+    #
+    # `--e2e` 干的是**完整闭环**：装 → 启动桌面窗口 → **卸载**（步骤 [4.6]），
+    # 所以它正常返回时安装目录**本来就应该没了**。
+    # 原来这里写 `exe_installed = os.path.exists(dest/Lyric2TTML.exe)` 并要求它为真
+    # —— 于是这条测试**只有在"卸载没删干净"时才通过**，等于拿 bug 当成功。
+    # 我修好卸载的"清理助手排不上"之后，卸载真的删干净了，
+    # 这条断言立刻翻车（exit=1），暴露了它一直在测反的东西。
+    #
+    # 现在断言**真实结果**：装完 → 启动过 → 卸载后目录必须干净。
+    # "装完能用"由 e2e 内部步骤自己证明（它会真启动桌面窗口并检查退出码）。
+    app_gone = not os.path.isdir(dest) or not os.path.exists(
+        os.path.join(dest, "Lyric2TTML.exe"))
     print(f"  退出码                 : {r.returncode}")
-    print(f"  主程序已安装           : {exe_installed}")
+    print(f"  卸载后安装目录已清空   : {app_gone}")
     print(f"  全程管理员权限         : {is_admin()}（False = 没有提权）")
     print("=" * 74)
-    if ok and exe_installed:
-        print("  ✓ 非管理员进程成功完成安装 —— 没有走提权那条路")
+    if ok and app_gone:
+        print("  ✓ 非管理员进程完成「装 → 启动 → 卸载」闭环 —— 没有走提权那条路")
         print("    （若 exe 要求 requireAdministrator，这个 subprocess 会直接")
         print("      失败并报「请求的操作需要提升」，根本跑不到这里）")
+    elif ok and not app_gone:
+        print("  ✗ 卸载没删干净：装完的目录还在（清理助手没生效或没等到）")
     else:
         print("  ✗ 安装未完成")
 
     if not a.keep:
         shutil.rmtree(dest, ignore_errors=True)
-    return 0 if (ok and exe_installed) else 1
+    return 0 if (ok and app_gone) else 1
 
 
 if __name__ == "__main__":
