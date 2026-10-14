@@ -273,6 +273,26 @@ def main() -> int:
     art = artifacts()
     failed = [r for r in results if r[3] not in (0, None)]
 
+    # ---- 产物新鲜度：**必须在这里单独跑**，不能进 CHECKS ----
+    # ⚠️ 原因：本报告自己会改 `docs/`，而新鲜度检查看的是 `desktop/` + 根目录源码。
+    # 放进 CHECKS 也不会错，但放这里更贴"第五节 交付产物"的语义。
+    # 这条守的是本仓真实事故：改了源码只重打安装包（或不打包），
+    # **所有测试都会通过**（它们跑的是同一个旧产物），只有比状态能发现。
+    fresh = None
+    try:
+        fr = subprocess.run(
+            [sys.executable, os.path.join("tools",
+                                          "check_artifact_freshness.py"),
+             "--json"],
+            cwd=HERE, capture_output=True, timeout=600, env=dict(os.environ))
+        import json as _json
+        fresh = _json.loads((fr.stdout or b"{}").decode("utf-8", "replace")
+                            or "{}")
+        fresh["ok"] = fr.returncode == 0
+    except Exception as e:                              # noqa: BLE001
+        fresh = {"ok": False, "rows": [{"name": "检查失败", "ok": False,
+                                        "why": f"{type(e).__name__}: {e}"}]}
+
     # ---- 变异检查：单独跑，**不放进 CHECKS** ----
     # ⚠️ 不能放进 CHECKS：本报告是"release_report 跑测试"，
     # 而变异检查会**改源码再跑测试**；如果它自己也被变异检查覆盖，
@@ -389,6 +409,17 @@ def main() -> int:
              "「应该没问题」。每轮修掉一条就删一条。\n")
 
     L.append("\n## 五、交付产物\n")
+    L.append("**这些产物必须先「与源码一致」** —— 源码改过却忘了重新打包时，"
+             "所有测试都会通过（它们跑的是同一个旧产物），"
+             "所以要单独比一次状态：\n")
+    if fresh and fresh.get("ok"):
+        L.append("✅ **产物与源码一致**（没有未提交的源码改动，产物也不早于 HEAD）\n")
+    else:
+        L.append("❌ **产物与源码不一致** —— 交付物里不是当前源码：\n")
+        for r in (fresh or {}).get("rows", []):
+            if not r.get("ok"):
+                L.append(f"* {r.get('name')}：{r.get('why')}")
+        L.append("")
     L.append("| 产物 | 路径 | 大小 | 嵌入清单 | 图标 | 版本信息 |")
     L.append("| --- | --- | --- | --- | --- | --- |")
     for label, p, size, mf, ic, ver in art:
