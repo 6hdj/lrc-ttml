@@ -249,6 +249,42 @@ def main(argv: Optional[List[str]] = None) -> int:
         from desktop.services import runtime_service
         rest = [a for a in argv if a != "--runtime-cli"]
         return int(runtime_service._cli(rest))
+    # ⚠️⚠️ **安装程序用的"能不能打开"检查**（2026-10-14 加，用户要求分层）。
+    #
+    # 安装阶段只需要知道"**会影响打开**的东西缺不缺" —— 语音模型（3 GB）、
+    # GPU 运行时（527 MB）属于"处理歌词才要"，**不在安装阶段要求下载**。
+    # 这个入口把结果按 `scope` 报出来，安装程序据此决定：
+    #   * `launch_blockers` 非空 → 拦下并给补全动作；
+    #   * 否则 → 直接"装完可以打开"，大件留给软件里的「模型」页。
+    #
+    # ⚠️ 它也顺带成为**打包版的行为证据**：能在冻结 exe 里跑出带 scope 的 JSON，
+    # 就证明 `envcheck` 的分层代码确实进了产物（比搜字节靠谱得多 ——
+    # 我为此写过三版错误的字节取证）。
+    if any(a in ("--launch-check",) for a in argv):
+        import json as _json
+        _early_env()
+        import envcheck
+        base = (_paths_app_dir() if callable(globals().get("_paths_app_dir"))
+                else os.path.dirname(os.path.abspath(sys.executable))
+                if getattr(sys, "frozen", False) else os.getcwd())
+        cache = os.environ.get("HUGGINGFACE_HUB_CACHE") or os.path.join(
+            base, ".hf_cache")
+        items = envcheck.check_all(base=base, cache_dir=cache,
+                                   frozen=bool(getattr(sys, "frozen", False)))
+        lb = envcheck.launch_blockers(items)
+        cb = envcheck.convert_blockers(items)
+        print(_json.dumps({
+            "app_dir": base,
+            "frozen": bool(getattr(sys, "frozen", False)),
+            "total": len(items),
+            "can_open": not lb,
+            "launch_blockers": [i.key for i in lb],
+            "convert_pending": [i.key for i in cb],
+            "items": [{"key": i.key, "name": i.name, "level": i.level,
+                       "ok": i.ok, "detail": i.detail,
+                       "scope": envcheck.scope_of(i)} for i in items],
+        }, ensure_ascii=False))
+        return 0
     if any(a in ("--version", "-V") for a in argv):
         # ⚠️⚠️ **带上构建来源**（第 27 轮补的缺口）：
         # 原来只打一行 "Lyric2TTML 桌面版 1.1.0" —— 用户报问题时

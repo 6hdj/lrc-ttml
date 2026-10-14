@@ -500,7 +500,17 @@ SCOPE_OF = {
 
 
 def scope_of(item) -> str:
-    """这一项属于哪个作用域（没登记的按 `convert` 保守处理）。"""
+    """这一项属于哪个作用域。
+
+    ⚠️ **优先读项自己带的 `scope`**：安装程序是从主程序的
+    `--launch-check` JSON 重建项的（`SimpleNamespace`），
+    那里已经算好并写明了 scope —— 用它比按 key 再查一遍表更可靠
+    （主程序可能比安装程序新，表里还没有新键时不至于误判）。
+    项上没有 scope（普通源码态）才查 `SCOPE_OF`；仍未登记按 `convert` 保守处理。
+    """
+    own = getattr(item, "scope", None)
+    if own in (LAUNCH, CONVERT, EXTRA):
+        return own
     return SCOPE_OF.get(getattr(item, "key", ""), CONVERT)
 
 

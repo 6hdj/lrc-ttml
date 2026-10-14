@@ -117,6 +117,27 @@ def ask_app_report(base: str) -> dict:
     if not os.path.exists(exe):
         return {}
     try:
+        # ⚠️⚠️ **优先用 `--launch-check`**（2026-10-14 加）。
+        # 它比 `--doctor --json` 多两样这次需要的东西：
+        #   ① 每项的 **`scope`**（launch / convert / extra）——
+        #      安装程序据此只拦"影响打开"的，而不是把 3 GB 模型也算必需；
+        #   ② `can_open` / `launch_blockers` / `convert_pending` 的**结论**。
+        # `--doctor --json` 保留为退路（老版本主程序没有 --launch-check）。
+        r = subprocess.run([exe, "--launch-check"], cwd=base,
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=180)
+        line = ""
+        for ln in (r.stdout or "").splitlines():
+            ln = ln.strip()
+            if ln.startswith("{"):
+                line = ln
+                break
+        if line:
+            d = json.loads(line)
+            if d.get("items"):
+                print("[检查] 用主程序 --launch-check（带 scope）", flush=True)
+                return d
+        # 退路：老主程序只有 --doctor
         r = subprocess.run([exe, "--doctor", "--json"], cwd=base,
                            capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=180)
@@ -126,6 +147,8 @@ def ask_app_report(base: str) -> dict:
             if ln.startswith("{"):
                 line = ln
                 break
+        if line:
+            print("[检查] 退路：用主程序 --doctor --json（无 scope）", flush=True)
         return json.loads(line) if line else {}
     except Exception:
         return {}
@@ -1308,7 +1331,12 @@ class Installer:
             #   * convert/extra 缺 → **不拦**，到软件里下（模型页 / 运行组件卡）
             lb = envcheck.launch_blockers(rows)
             cb = envcheck.convert_blockers(rows)
-            scope = {it.key: envcheck.scope_of(it) for it in rows}
+            # ⚠️ 主程序报回来的项里**已经带了 `scope`**（`--launch-check`），
+            # 优先用它；退回 `--doctor` 时没有 scope，就本地按 key 映射算。
+            scope = {}
+            for it in rows:
+                sc = getattr(it, "scope", None)
+                scope[it.key] = sc or envcheck.scope_of(it)
 
             for it in rows:
                 self.q.put(("addrow", it.key, it.name, it.why, it.level))

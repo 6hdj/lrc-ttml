@@ -280,6 +280,18 @@ def main() -> int:
         return int(runtime_service._cli(
             [a for a in argv if a != "--runtime-cli"]))
 
+    # ⚠️⚠️ **`--launch-check` / `--doctor` 也必须真的路由**（2026-10-14 踩到）：
+    # 我照着 `--runtime-cli` 的注释把它们加进了 `_UI_FLAGS`，
+    # **但漏了"加进白名单 ≠ 有人处理"这后半句** —— 于是
+    # `launcher.py --launch-check` 不进 main.py 的 argparse，
+    # 而是**直接掉到"默认开桌面窗口"**：安装程序去读 JSON 读不到，
+    # 会一直挂到 180 秒超时、把可用环境判成不可用。
+    # （实测：跑 `python launcher.py --launch-check` 会一直不退出，
+    #  等了 10 分钟还在跑 —— 因为它开了个 GUI 窗口。）
+    if any(a in ("--launch-check", "--doctor") for a in argv):
+        from desktop import app as _dapp
+        return int(_dapp.main(argv))
+
     # 走命令行：有参数、且不是界面/桌面版专用的那些参数
     #
     # ⚠️ 这个判断很容易漏：`--uicheck` / `--selftest` / `--version` 这些
@@ -289,6 +301,11 @@ def main() -> int:
     # 而它的作用是**验证 Qt 平台插件在不在**，最容易坏的就是它）。
     _UI_FLAGS = ("--web", "--gui", "--server", "--uicheck", "-uicheck",
                  "--selftest", "-selftest", "--model-cli", "--runtime-cli",
+                 # ⚠️ `--launch-check`（2026-10-14 加）：安装程序用的
+                 # "能不能打开"检查。**必须列进来** —— 否则被转发给
+                 # `main.py` 的 argparse，报 `unrecognized arguments`，
+                 # 安装程序读不到 JSON 就会把可用环境判成不可用。
+                 "--launch-check", "--doctor",
                  "--uninstall", "-uninstall",
                  "--version", "-V")
     cli_like = bool(argv) and not any(a in _UI_FLAGS for a in argv)

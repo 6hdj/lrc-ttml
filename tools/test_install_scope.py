@@ -111,6 +111,42 @@ check(all(envcheck.scope_of(i) != envcheck.LAUNCH for i in items
           if i.key in ("whisper",) and not i.ok),
       "语音模型即使缺失也不进 launch 拦截")
 
+# ---- 6. `--launch-check` 这个入口本身（安装程序要靠它）----
+#
+# ⚠️⚠️ 这里守的是一个**真踩到的坑**：我把 `--launch-check` 加进了
+# `launcher.py` 的 `_UI_FLAGS`，以为"别转发给 main.py"就够了 ——
+# 但**加进白名单 ≠ 有人处理**。结果 `launcher.py --launch-check`
+# **不进 argparse、也不打印 JSON，而是掉到默认分支"开桌面窗口"**：
+# 安装程序读不到 JSON，会挂到 180 秒超时并把可用环境判成不可用。
+# （实测：那条命令等了 10 分钟还不退出 —— 因为它在开 GUI。）
+# 所以必须**真跑一次**这个命令，确认它立刻退出且输出带 scope 的 JSON。
+print("\n[6] --launch-check 入口（安装程序读的就是它）")
+import json as _json                                      # noqa: E402
+import subprocess as _sp                                  # noqa: E402
+
+for label, cmd in (("launcher.py", [sys.executable,
+                                    os.path.join(HERE, "launcher.py"),
+                                    "--launch-check"]),):
+    try:
+        r = _sp.run(cmd, capture_output=True, cwd=HERE, timeout=120,
+                    env={**os.environ, "L2T_HEADLESS": "1"})
+    except _sp.TimeoutExpired:
+        check(False, f"{label} --launch-check 能退出",
+              "超时 —— 多半是掉进了开 GUI 的分支（`_UI_FLAGS` 里有、但没人路由）")
+        print("       （超时：进程被强杀，不再继续读它的输出）")
+        continue
+    txt = ((r.stdout or b"") + (r.stderr or b"")).decode("utf-8", "replace")
+    line = next((l for l in txt.splitlines() if l.strip().startswith("{")), "")
+    check(bool(line), f"{label} --launch-check 输出了 JSON", txt[-120:])
+    if not line:
+        continue
+    d = _json.loads(line)
+    check("can_open" in d and "launch_blockers" in d,
+          f"{label}：JSON 带 can_open / launch_blockers", str(list(d))[:90])
+    scoped = [i for i in (d.get("items") or []) if i.get("scope")]
+    check(len(scoped) == len(d.get("items") or []) and scoped,
+          f"{label}：每一项都带 scope（{len(scoped)} 项）")
+
 print("\n" + "=" * 74)
 print(f"  通过 {_ok} 项，失败 {_fail} 项")
 print("=" * 74)
