@@ -52,8 +52,7 @@ class WelcomePage(Page):
             self.grid_widget,
         )
 
-        # ⚠️ 标题要留着引用：模型装好后它必须从"还差一个…"变成"已就绪"，
-        # 否则界面会自相矛盾（见 `_paint_model` 的说明）。
+        # ② 语音识别模型
         self.head_model = h2("② 还差一个语音识别模型")
         self.model_box = self.card_with(
             self.head_model,
@@ -65,8 +64,33 @@ class WelcomePage(Page):
             self.lb_dl,
         )
 
+        # ---------------------------------------------------------------
+        # ③ 运行组件（首次启动引导**必须**包含它）
+        # ---------------------------------------------------------------
+        # ⚠️⚠️ 为什么必须有这一块（第 25 轮补，是个真的"走进死路"问题）：
+        # 主包自第 19 轮起**不含 CUDA 运行时**（方案 D：717.7 MB → 189.9 MB），
+        # 而语音识别**没有它就跑不了**（`asr.py` 明确拒绝 CPU）。
+        # 但原来的首次启动引导只有"① 环境 ② 模型 ③ 怎么用"——
+        # **一个字都没提 GPU 运行时**。
+        # 后果：用户老老实实按引导走完（环境✓、模型✓），
+        # 点「开始制作」才发现还缺一个 529 MB 的东西，而且不知道该去哪装。
+        # 实测（`.tmp/first_run_probe.py`，把 CUDA 打桩成未安装后）：
+        #   按钮 = ['重新检查环境', '重新下载']，**完全没提 GPU 运行时**。
+        self.lb_rt = label("", wrap=True)
+        self.btn_rt = button("下载 GPU 运行时（必需）", primary=True,
+                             on_click=self._download_runtime)
+        self.lb_rt_note = label("", wrap=True)
+        # ⚠️ 标题留引用：装好后要从"还差一个…"变成"已就绪"（与模型卡同理）
+        self.head_rt = h2("③ 还差一个 GPU 运行时")
+        self.rt_box = self.card_with(
+            self.head_rt,
+            self.lb_rt_note,
+            row(self.btn_rt, None, stretch_index=None),
+            self.lb_rt,
+        )
+
         self.how_box = self.card_with(
-            h2("③ 怎么用"),
+            h2("④ 怎么用"),
             label("1. 到「制作」页，选音频（wav/mp3/flac...）和歌词（TXT/LRC）。\n"
                   "2. 歌名和演唱者会自动从文件名猜出来，猜错了直接改。\n"
                   "3. 点「开始制作」。一首 5 分钟的歌大约 30 秒到 2 分钟。\n"
@@ -80,11 +104,22 @@ class WelcomePage(Page):
         lay.setContentsMargins(22, 18, 22, 22)
         lay.setSpacing(14)
         lay.addWidget(page_header(self))
-        for w in (self.check_box, self.model_box, self.how_box):
+        for w in (self.check_box, self.model_box, self.rt_box, self.how_box):
             lay.addWidget(w)
         lay.addStretch(1)
 
         self._light_check()
+        # ⚠️⚠️ **必须在这里把两张卡都刷一遍**（真踩到，第 25 轮）：
+        # `build()` 原来只调 `_light_check()`，而 `refresh()` 有
+        # `if not self._built: return` 的保护 —— `_built` 是**外层**在 `build()`
+        # 返回之后才置位的，所以构建期的任何 `refresh()` 都被**静默跳过**。
+        # 后果：刚进「开始」页时，运行组件那张卡是**空的**
+        # （`lb_rt` / `lb_rt_note` 都是空串，`rt_box` 甚至 `isVisible()=False`），
+        # 标题和按钮在、中间一行字没有 —— 截图里就是一个明显的空缺。
+        # 而"模型"卡看着正常，只是因为模型状态在更早的 `_light_check()` 里刷到过。
+        # 现在直接调 `_paint_*`（不经过 `refresh()` 的守卫），保证第一眼就是真实状态。
+        self._paint_model()
+        self._paint_runtime()
         return self.scrolled(inner)
 
     # ------------------------------------------------------------ 环境
@@ -202,10 +237,54 @@ class WelcomePage(Page):
         self.lb_dl.setText("已开始下载，到「任务」页能看到进度和日志。")
         self.lb_dl.setStyleSheet(f"color: {C['accent']};")
 
+    # ------------------------------------------------------- ③ 运行组件
+    def _paint_runtime(self) -> None:
+        """运行组件卡的标题/按钮/说明都按状态走（与模型卡同一套规矩）。
+
+        ⚠️ 与模型卡一样的坑：**标题和按钮不能写成静态字面量** ——
+        装好之后还写"还差一个 GPU 运行时 / 下载（必需）"就是自相矛盾。
+        """
+        try:
+            from desktop.services import runtime_service
+            st = runtime_service.RuntimeManager().check("cuda")
+        except Exception as e:                          # noqa: BLE001
+            self.lb_rt.setText(f"读取运行组件状态失败：{type(e).__name__}: {e}")
+            self.rt_box.setVisible(True)
+            return
+        ready = st.status == "ready"
+        if ready:
+            self.head_rt.setText("③ GPU 运行时已就绪")
+            self.btn_rt.setText("重新下载")
+            self.lb_rt.setText(f"√ 已经装好了（{st.detail}）。这一项不用再管。")
+            self.lb_rt.setStyleSheet(f"color: {C['ok']};")
+            self.lb_rt_note.setText("语音识别可以直接跑。")
+        else:
+            self.head_rt.setText("③ 还差一个 GPU 运行时")
+            self.btn_rt.setText("下载 GPU 运行时（必需）")
+            self.lb_rt.setText(f"当前：{st.detail}。需要约 "
+                               f"{st.download_bytes / 1048576:.0f} MB。")
+            self.lb_rt.setStyleSheet(f"color: {C['text']};")
+            self.lb_rt_note.setText(
+                "语音识别必须用显卡跑（CPU 跑一首歌要几分钟，所以没有做降级），"
+                "而显卡加速要的 CUDA 运行库不在安装包里。")
+
+    def _download_runtime(self) -> None:
+        """下载 GPU 运行时（走任务中心，可取消、可续传）。"""
+        try:
+            tid = self.ctx.workers.start_runtime_download("cuda")
+        except Exception as e:                          # noqa: BLE001
+            self.lb_rt.setText(f"启动下载失败：{type(e).__name__}: {e}")
+            self.lb_rt.setStyleSheet(f"color: {C['err']};")
+            return
+        self._rt_tid = tid
+        self.lb_rt.setText("已开始下载（约 529 MB），到「任务」页能看到进度和日志。")
+        self.lb_rt.setStyleSheet(f"color: {C['accent']};")
+
     def refresh(self) -> None:
         if not self._built:
             return
         self._paint_model()
+        self._paint_runtime()
 
     def on_show(self) -> None:
         self.refresh()

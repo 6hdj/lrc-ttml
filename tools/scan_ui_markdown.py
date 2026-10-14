@@ -29,6 +29,43 @@ VISIBLE_CALL = re.compile(
     r"|addItem|setStatusTip|setWhatsThis)\s*\(")
 
 
+def _joined_call_text(lines: list, start: int) -> str:
+    """把从 `start` 行开始的**整段调用文本**拼出来，直到括号闭合。
+
+    ⚠️⚠️ 为什么必须这么做（真漏过，而且是**第三次**）：
+    原来只检查"含 `label(` 的**那一行**"。可是界面文案常常写成多行拼接：
+
+        label("语音识别**必须**用显卡跑（CPU 跑一首歌要几分钟），"
+              "而 CUDA 运行库不在安装包里。")
+
+    星号在**第二行**，那一行既没有 `label(` 也没有其它可见调用名 ⇒
+    **扫描器直接跳过**，于是一个会显示成字面星号的文案被判为"没问题"。
+    本项目已经因为这类漏检在界面上三次显示过字面 `**`（模型卡、运行组件卡、本次）。
+    所以这里改成：从调用开始行往后拼，**按括号配平**找到结尾，
+    只保留**字符串字面量内部**的文本（跳过属性名等标识符）。
+    """
+    buf = []
+    depth = 0
+    seen_open = False
+    for ln in lines[start - 1:start + 40]:
+        # 去掉行内注释（字符串里的 # 不管，保守起见只处理行尾注释）
+        code = ln.split("#")[0] if "#" not in ln.split('"')[0] else ln
+        buf.append(code)
+        for ch in code:
+            if ch == "(":
+                depth += 1
+                seen_open = True
+            elif ch == ")":
+                depth -= 1
+        if seen_open and depth <= 0:
+            break
+    text = "\n".join(buf)
+    # 只取双引号/单引号包裹的内容，避免把标识符也算进来
+    import re as _re
+    parts = _re.findall(r'"([^"\n]*)"|\'([^\'\n]*)\'', text)
+    return "".join(a or b for a, b in parts)
+
+
 def scan_file(path: str, rel: str) -> list:
     hits = []
     lines = open(path, encoding="utf-8").read().split("\n")
@@ -48,8 +85,11 @@ def scan_file(path: str, rel: str) -> list:
             continue
         if not VISIBLE_CALL.search(ln):
             continue
-        for m in MD.finditer(code):
-            hits.append((rel, i, m.group(0), s[:78]))
+        # ⚠️ 扫**整段调用**（含后续拼接行），不只是这一行
+        text = _joined_call_text(lines, i)
+        for m in MD.finditer(text):
+            hits.append((rel, i, m.group(0), text[max(0, m.start() - 20):
+                                                  m.end() + 30].replace("\n", " ")))
     return hits
 
 

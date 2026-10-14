@@ -62,8 +62,12 @@ CHECKS = [
      "在 100%/125%/150%/200% 下真跑（QT_SCALE_FACTOR）：\n"
      "uicheck 通过、**缩放真吃到渲染上**（物理图面积 1.0→1.56→2.25→4.0）、\n"
      "内容占比不塌（阴性对照：空白页 1.8% vs 正常 8.3%）"),
+    ("源码可跑", "首次启动引导", ["tools/test_first_run.py"], False,
+     "引导必须覆盖**真正阻塞**的东西：CUDA 打桩成未安装时\n"
+     "要有「下载 GPU 运行时」、第一眼卡片不能是空的、编号连续、\n"
+     "就绪后文案不能自相矛盾"),
     ("源码可跑", "界面文案检查", ["tools/scan_ui_markdown.py"], False,
-     "纯文本控件里没有漏出的 Markdown 记号"),
+     "纯文本控件里没有漏出的 Markdown 记号（含**多行拼接的字符串**）"),
     ("源码可跑", "卸载逻辑", ["tools/test_uninstall.py"], False,
      "默认保留模型；搬不动就什么都不删"),
     ("源码可跑", "卸载可重试性", ["tools/test_uninstall_retry.py"], False,
@@ -234,7 +238,8 @@ def _needs_qt(cmd: list) -> bool:
     # 上一次 `test_gpu_guard`、这次 `test_installer_stages`）。
     return any(k in s for k in ("uicheck", "test_theme", "test_param_effect",
                                "test_icon", "test_gpu_guard",
-                               "test_installer_stages", "test_hidpi"))
+                               "test_installer_stages", "test_hidpi",
+                               "test_first_run"))
 
 
 def main() -> int:
