@@ -1488,8 +1488,20 @@ def e2e(dest: str) -> int:
     # ⚠️ `--no-uninstall`：只安装、不自动卸载。
     # 用来单独测"卸载/重试"这条路（否则 [4.6] 会在同进程里先卸一遍，
     # 安装目录已经被动过，没法再验卸载行为）。
+    # `un_skipped` 要在这里先定义（`--no-uninstall` 分支之外也会用到）
+    un_skipped = False
     if "--no-uninstall" in sys.argv:
         print("\n[4.6] 跳过卸载检查（--no-uninstall）")
+        # ⚠️⚠️ **跳过必须当成"通过"，不能留 False**（真踩到）。
+        # `un_ok` 默认是 False，而下面 `if not un_ok: return 1` ——
+        # 于是"每一项都通过了、只是没测卸载"的 `--e2e --no-uninstall`
+        # **退出码是 1**，看起来像安装失败。
+        # 危害是实打实的：`tools/test_isolated.py` 就把它判成
+        # "安装流程跑通 ✗ exit=1"，而日志里每一步都是 ✓ ——
+        # **工具谎报失败，和谎报成功一样糟**（会让人去查一个不存在的问题）。
+        # 语义上"跳过"应当是**中性**：不算失败，也不能当成"卸载已验证"。
+        un_ok = True
+        un_skipped = True
     else:
         print("\n[4.6] 卸载检查（默认保留模型）")
         un_ok = False
@@ -1592,6 +1604,10 @@ def e2e(dest: str) -> int:
     if not un_ok:
         print("  ✗ 卸载检查没过（可能删掉了用户的模型）")
         return 1
+    if un_skipped:
+        # 说清楚"没测卸载"，别让调用者以为这一项也过了
+        print("  ✓ 通过（含桌面窗口；卸载检查被 --no-uninstall 跳过，**未验证**）")
+        return 0
     print("  ✓ 全部通过（含桌面窗口与卸载）")
     return 0
 
