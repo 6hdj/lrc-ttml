@@ -180,14 +180,48 @@ def check_optional_weights() -> None:
 
 
 # ------------------------------------------------------------------- 6. GPU
+def _cuda_fix_hint() -> str:
+    """缺 CUDA 运行库时给**可操作**的指引。
+
+    ⚠️⚠️ 老文案是错的（第 19 轮改）：原来写
+    「0 个 —— 会用 CPU 跑（慢些，但能跑）」+「pip install nvidia-cublas-cu12」。
+    两句都不成立：
+      * 本项目的语音识别**明确拒绝 CPU**（`asr.py`：CPU 跑一首歌要几分钟，
+        所以没做降级）—— 不是"慢些但能跑"，是**根本跑不了**；
+      * 冻结版里 `pip install` 也做不到。
+    现在的正确指引取决于"这台机器有没有 N 卡"，两种**处置相反**：
+      * 没 N 卡 → 下什么组件都救不了，只能换机器；
+      * 有 N 卡缺运行时 → 到「模型」页的「运行组件（按需下载）」点一下。
+    """
+    try:
+        from desktop.services import gpu_probe
+        if not gpu_probe.has_nvidia_gpu():
+            return ("没检测到 NVIDIA 显卡。本软件的语音识别必须用显卡\n"
+                    "        （CPU 跑一首歌要几分钟，所以没有做降级）。\n"
+                    "        这不是「缺个组件」能修好的 —— 需要一台带 N 卡的机器。")
+    except Exception:                                   # noqa: BLE001
+        pass
+    try:
+        from desktop.services import runtime_service
+        st = runtime_service.RuntimeManager().check("cuda")
+        if st.status != "ready":
+            return ("语音识别需要 GPU 运行时。请打开软件的「模型」页，\n"
+                    "        在「运行组件（按需下载）」里点 CUDA 那一行的\n"
+                    "        「下载并安装」（约 529 MB，装好即可用）。\n"
+                    "        命令行：Lyric2TTML.exe --runtime-cli --install cuda")
+    except Exception:                                   # noqa: BLE001
+        pass
+    return ("语音识别需要 GPU 运行时。见「模型」页 →「运行组件（按需下载）」，\n"
+            "        或跑：Lyric2TTML.exe --runtime-cli --install cuda")
+
+
 def check_gpu() -> None:
     try:
         import ctranslate2
         n = ctranslate2.get_cuda_device_count()
         add(INFO, "GPU（CTranslate2 可见的 CUDA 设备）", n > 0,
-            f"{n} 个" if n else "0 个 —— 会用 CPU 跑（慢些，但能跑）",
-            "想用显卡：装 NVIDIA 驱动 + cublas/cudnn。\n"
-            "        pip install nvidia-cublas-cu12 nvidia-cudnn-cu12")
+            f"{n} 个" if n else "0 个 —— 语音识别无法运行（本项目不做 CPU 降级）",
+            _cuda_fix_hint() if not n else "")
     except Exception as e:
         add(INFO, "GPU", False, f"无法探测：{type(e).__name__}", "")
 

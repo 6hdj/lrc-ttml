@@ -52,17 +52,30 @@ datas = [('index.html', '.')]
 # 与 `gpu_probe.cuda_dirs` 都认这个布局），所以这里做的是**选择性复制**：
 # 只把 cublas 的 bin 放进包里，目录结构保持不变。
 _NV = os.path.join('.venvpack', 'Lib', 'site-packages', 'nvidia')
-_CUDA_KEEP = ['cublas']          # 只留 cuBLAS；加回 cudnn/nvrtc 前请先实测
 
-# ⚠️ `L2T_NO_CUDA=1`：**只为度量而存在**的构建开关 —— 打一个"不含 CUDA 运行时"
-# 的包，用来回答"500–600 MB 到底能不能达到、代价是什么"。
-# **不要用它发版**：不含 CUDA 时语音识别**根本跑不了**（`asr.py` 明确拒绝 CPU，
-# 理由是 CPU 处理一首歌要几分钟，静默降级只会让用户以为"这软件很慢"）。
-# 实测（第 17 轮）：去掉 `nvidia/` 后主程序目录 1078 MiB → 440 MiB，
-# 但真转换直接失败（`RuntimeError: 没有可用的显卡…`）。
-if os.environ.get("L2T_NO_CUDA") == "1":
-    _CUDA_KEEP = []
-    print('[cuda] L2T_NO_CUDA=1：本次**不打入任何 CUDA 运行时**（仅用于度量）')
+# ⚠️⚠️ **默认不打 CUDA 运行时**（方案 D，用户 2026-10-14 拍板）。
+#
+# 背景（`docs/商业化重构审计与体积报告.md` §3.6 + 待决策）：
+#   * 含 CUDA 的主程序目录 1078.2 MB → 单文件安装包 **717.7 MB**；
+#   * 不含 CUDA 的 342.4 MB → **189.9 MB**；
+#   * 但**不含 CUDA 时语音识别根本跑不了**（`asr.py` 明确拒绝 CPU，
+#     不是"慢跑"）—— 所以不能删，只能"移出主包 + 按需下载"。
+#
+# 已端到端验过（`tools/test_scheme_d_e2e.py`，10/10）：
+#   不含 CUDA 的包 → 从 GitHub Release 真下 528.8 MB（93 秒，支持 Range）
+#   → 校验落盘 → `cuda_dirs()` 找到 → **真转换成功、严格校验 0 错误**。
+#   ⇒ 小包功能与完整包**等价**，只是首次要多下一次运行时。
+#
+# 什么时候需要打"完整包"（自带 CUDA、离线可用）：
+#     $env:L2T_FULL_CUDA = "1"
+# 这条留给"离线部署/内网"场景 —— 那种环境下用户下不了 529 MB。
+_FULL_CUDA = os.environ.get("L2T_FULL_CUDA") == "1"
+_CUDA_KEEP = ['cublas'] if _FULL_CUDA else []
+if _FULL_CUDA:
+    print('[cuda] L2T_FULL_CUDA=1：打入 cuBLAS（完整包，离线可用）')
+else:
+    print('[cuda] 默认形态：**不含** CUDA 运行时（按需下载，'
+          '见「模型」页 →「运行组件」）；要打完整包设 L2T_FULL_CUDA=1')
 
 if os.path.isdir(_NV):
     for _lib in _CUDA_KEEP:

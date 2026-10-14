@@ -147,6 +147,29 @@ def main(argv=None) -> int:
     else:
         print("    ⚠️ 仓库里没有 .hf_cache —— 这一轮会**真的下载 3 GB 模型**，"
               "因此耗时里包含下载时间（不代表转换慢）")
+
+    # ⚠️⚠️ 第 19 轮起**默认安装包不含 CUDA 运行时**（方案 D：717.7 MB → 189.9 MB），
+    # 而语音识别**没有它就跑不了**（`asr.py` 明确拒绝 CPU）。
+    # 所以验收脚本要在这里**先把它装上**，否则第 5 步真转换必然失败，
+    # 而失败原因看起来像"打包版坏了"（其实是"还没下运行时"）。
+    # 这也正是真实用户第一次跑会遇到的情形 —— 顺带把这条链路一起验了。
+    print("\n=== 4.5 确保 GPU 运行时可用（按需下载，约 529 MB 一次性）===")
+    _rt_bin = os.path.join(base, ".accept-data", "runtime", "cuda", "bin")
+    if os.path.isfile(os.path.join(_rt_bin, "cublas64_12.dll")):
+        print(f"    已就绪：{_rt_bin}")
+    else:
+        print("    未安装 —— 通过程序自己的 runtime-cli 下载（首次约 1-2 分钟）")
+        _run(exe, base, "runtime install",
+             ["--runtime-cli", "--install", "cuda"], timeout=3600,
+             env_extra=env, expect=None)
+        ok_rt = os.path.isfile(os.path.join(_rt_bin, "cublas64_12.dll"))
+        _run(exe, base, "runtime install",
+             ["--runtime-cli", "--install", "cuda"], timeout=3600,
+             env_extra=env, expect=0 if ok_rt else None)
+        print(f"    cublas 就位={ok_rt}")
+        if not ok_rt:
+            print("    ⚠️ 运行时没装上 —— 第 5 步真转换会失败，且**不是**打包版的问题")
+
     res = _run(exe, base, "--uicheck", ["--uicheck"], timeout=600,
                env_extra=env, expect=None)
     if res:
@@ -166,12 +189,19 @@ def main(argv=None) -> int:
             os.makedirs(outdir, exist_ok=True)
             # ⚠️ 必须**绝对路径**（见模块 docstring）
             ttml = os.path.join(outdir, "accept.ttml")
+            # ⚠️⚠️ **必须带上完整的 `env`，不能只带 `L2T_HF_CACHE`**（真踩到）。
+            # 原来这里只传 `env_extra={"L2T_HF_CACHE": …}`，于是
+            # `L2T_DATA_DIR` **丢了** —— 而第 4.5 步刚把 CUDA 运行时装到了
+            # `<L2T_DATA_DIR>/runtime/cuda`。数据目录一变，运行时"就不见了"，
+            # 第 5 步必然报 `Library cublas64_12.dll is not found`，
+            # 看起来像"打包版坏了"，其实是**测试脚本没把环境传全**。
+            # 现在把 `env` 整个并进去（含 `L2T_DATA_DIR` / `QT_QPA_PLATFORM` 等）。
+            _conv_env = dict(env)
             res = _run(exe, base, "convert",
                        ["--audio", audio, "--lyrics", lyrics,
                         "--language", "auto", "-o", ttml],
                        timeout=args.timeout, expect=None,
-                       env_extra={"L2T_HF_CACHE": env["L2T_HF_CACHE"]}
-                       if env.get("L2T_HF_CACHE") else None)
+                       env_extra=_conv_env)
             if res and res[2] == 0 and os.path.isfile(ttml):
                 print(f"    产物：{os.path.getsize(ttml)} 字节")
                 print("=== 6. 严格校验产物（打包版 + 仓库校验器各一遍）===")
