@@ -58,6 +58,10 @@ CHECKS = [
      "offscreen 构建 + **渲染断言**（六页都不空白）"),
     ("源码可跑", "主题一致性", ["tools/test_theme.py"], False,
      "深浅两套键集相同 + WCAG 对比度 + QSS 可生成"),
+    ("源码可跑", "桌面版高 DPI", ["tools/test_hidpi.py"], False,
+     "在 100%/125%/150%/200% 下真跑（QT_SCALE_FACTOR）：\n"
+     "uicheck 通过、**缩放真吃到渲染上**（物理图面积 1.0→1.56→2.25→4.0）、\n"
+     "内容占比不塌（阴性对照：空白页 1.8% vs 正常 8.3%）"),
     ("源码可跑", "界面文案检查", ["tools/scan_ui_markdown.py"], False,
      "纯文本控件里没有漏出的 Markdown 记号"),
     ("源码可跑", "卸载逻辑", ["tools/test_uninstall.py"], False,
@@ -230,7 +234,7 @@ def _needs_qt(cmd: list) -> bool:
     # 上一次 `test_gpu_guard`、这次 `test_installer_stages`）。
     return any(k in s for k in ("uicheck", "test_theme", "test_param_effect",
                                "test_icon", "test_gpu_guard",
-                               "test_installer_stages"))
+                               "test_installer_stages", "test_hidpi"))
 
 
 def main() -> int:
