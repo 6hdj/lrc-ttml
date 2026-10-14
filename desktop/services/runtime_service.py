@@ -368,6 +368,15 @@ class RuntimeManager:
                 done_bytes += want
                 files.append(dst)
                 p(done_bytes * 100.0 / total if total else None, "已下载")
+                # ⚠️⚠️ **缓存命中这条路也要"成功即止"**（第 28 轮第二次修）。
+                # 第一版只把 `break` 加在"新下载成功"那条路径上，**漏了这条** ——
+                # 于是"zip 已缓存"时**照样去下镜像那份**：实测把 zip 预置好再跑，
+                # 仍然出现 `nvidia_cublas_…whl.part`（在下载 527 MB 无用数据）。
+                # 触发场景很现实：上次下到一半失败/取消 → 重试时 zip 已在缓存
+                # → 本应先解包收工，却接着去下另一个备选源。
+                if _alt:
+                    log(f"[完成] {fn} 已在缓存且校验通过，不再尝试其它备选源")
+                    break
                 continue
 
             urls = list(w.get("urls") or [])

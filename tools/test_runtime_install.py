@@ -344,6 +344,27 @@ def main() -> int:
     check("需要下载" in total_line and "2.0" not in total_line,
           "日志里的总量是单条大小（不是两条相加）", total_line)
 
+    # ⚠️⚠️ **缓存命中也要"成功即止"**（第二次修，第一版漏的就是这条路径）。
+    # 场景：上次下到一半失败/取消 → 重试时 first.zip 已在缓存。
+    # 第一版只在"新下载成功"那条加了 break，缓存命中那条是 `continue` ——
+    # 于是照样去下 second.zip（实测预置好缓存跑验收，仍在下 527 MB 无用数据）。
+    sb6 = os.path.join(sb, "rt6")
+    mgr6 = rs.RuntimeManager(manifest=manifest5, root=sb6)
+    # 预置：把 first.zip 放进缓存（内容与清单一致 → 校验通过 → 走命中分支）
+    os.makedirs(mgr6.wheel_cache(), exist_ok=True)
+    shutil.copyfile(zpath, os.path.join(mgr6.wheel_cache(), "first.zip"))
+    logs6 = []
+    ok6 = mgr6.download("cuda", log=logs6.append)
+    check(ok6, "缓存命中时能装成功")
+    check(any("[跳过]" in m for m in logs6), "走了缓存命中分支",
+          str([m for m in logs6 if "跳过" in m][:2]))
+    cache6 = os.listdir(mgr6.wheel_cache())
+    check("second.zip" not in cache6,
+          "**缓存命中后没有**下第二个备选源", str(cache6))
+    check(not any("second.zip" in m and "下载" in m for m in logs6),
+          "日志里没有下载第二个源的记录",
+          str([m for m in logs6 if "second" in m][:2]))
+
     # ================================================================
     # 4. **wheel 布局的 DLL 归位**（第 28 轮：加国内镜像源时发现的）
     # ================================================================
