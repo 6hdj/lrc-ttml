@@ -667,6 +667,18 @@ def _http_get_to_file(url: str, dst: str, log=print, p=None, stop=None,
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
                 code = getattr(r, "status", 200)
+                # ⚠️⚠️ **必须用 `read1()`，不能用 `read(n)`**（A/B 实测，不是推测）：
+                # `http.client` 的 `read(n)` 走 `_safe_readinto`，会**反复重试直到
+                # 读满 n 个字节**；连接被强制断开时（Windows 上很常见：
+                # `ConnectionResetError [WinError 10054]`）它直接抛，
+                # **一个字节都不返回** ⇒ `.part` 变 0 字节，断点续传等于没做。
+                # `.tmp/ab_read.py` 同一条件下各跑 8 次：
+                #   `read`     拿到数据 0/8
+                #   `read1`    拿到数据 **8/8**（每次 131072 字节）
+                #   `r.fp.read`（无缓冲原始流） 0/8
+                #   `readinto` 0/8
+                # 所以只有 `read1` 可靠。改这里之前先跑那个 A/B 脚本。
+                read = getattr(r, "read1", None) or r.read
                 if have and code != 206:
                     # 服务器不支持续传：**从头来**。
                     # ⚠️ 这里必须把已下的那截丢掉：不能拿 "ab" 接着写，
@@ -700,18 +712,6 @@ def _http_get_to_file(url: str, dst: str, log=print, p=None, stop=None,
                         #     对方强制断开，`read()` 直接抛，**这一轮读到的
                         #     数据会丢**，所以要在异常里把 partial 补上。
                         try:
-                            # ⚠️⚠️ **必须用 `read1()`，不能用 `read(n)`**。
-                            # `http.client` 的 `read(n)` 走 `_safe_readinto`，
-                            # 它会**反复重试直到把 n 个字节读满**；连接被
-                            # 强制断开时（Windows 上很常见：
-                            # `ConnectionResetError [WinError 10054]`）它直接抛，
-                            # **一个字节都不返回** —— 于是 `.part` 建出来是 0 字节，
-                            # 断点续传完全失效（每次失败都从头下）。
-                            # 实测（`.tmp/diag_part.py`）：日志显示 3 次重试全失败，
-                            # `.part` 存在但大小 = 0。
-                            # `read1(n)` 是"**最多读 n，读到多少给多少**"，
-                            # 正好适合边下边写。
-                            read = getattr(r, "read1", None) or r.read
                             chunk = read(1 << 20)
                         except Exception as _re:              # noqa: BLE001
                             partial = b""

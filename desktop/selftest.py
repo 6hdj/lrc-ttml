@@ -733,8 +733,18 @@ def t_http_download():
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body[: len(body) // 2])
-                self.wfile.flush()
+                # ⚠️⚠️ **必须"发一截 → 等一下 → 再断开"**，不能"写完立刻 close"。
+                # 原因（实测，见 `.tmp/ab_read.py`）：立刻 `close()` 走的是
+                # **RST（强制断开）**，内核会把**还没被应用读走**的字节**丢掉**；
+                # 客户端 `read(1MB)` 因为要"读满"而一个字节都拿不到 ⇒
+                # `.part` 变 0 字节，于是第 14 组**时好时坏**（6 次里挂 5 次）。
+                # 停一下让客户端先把这半截读进用户态，再断开 ——
+                # 这才对应真实的"下到一半连接中断"，也才有**确定**的行为。
+                chunk = body[: len(body) // 2]
+                for i in range(0, len(chunk), 16 * 1024):
+                    self.wfile.write(chunk[i:i + 16 * 1024])
+                    self.wfile.flush()
+                    time.sleep(0.02)
                 self.connection.close()
                 return
             rng = self.headers.get("Range")
