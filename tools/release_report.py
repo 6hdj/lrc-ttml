@@ -75,6 +75,9 @@ CHECKS = [
     ("源码可跑", "模型缓存复用", ["tools/test_hf_cache.py"], False,
      "L2T_HF_CACHE / HUGGINGFACE_HUB_CACHE 都能生效"
      "（只认一个的话用户会白下 3GB —— 真踩过）"),
+    ("源码可跑", "GPU 运行时按需下载", ["tools/test_cuda_runtime.py"], False,
+     "方案 D 的链路：清单对账 zip 的 SHA256/大小、解压布局、\n"
+     "cuda_dirs() 能找到、没配 URL 时如实报错（含阴性对照）"),
     ("源码可跑", "参数生效性", ["tools/test_param_effect.py"], False,
      "每个界面选项改一遍、产物真的变了"),
     ("源码可跑", "文档同步", ["tools/gen_module_docs.py", "--check"], False,

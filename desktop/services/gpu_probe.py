@@ -57,6 +57,16 @@ def cuda_dirs() -> List[str]:
 
     add(os.path.join(app, "cuda"))                     # 手工放置（首选）
     add(os.path.join(app, "cuda", "bin"))
+    # ⓵ **按需下载的 CUDA 运行时组件**（`runtime_service` 的布局）
+    #    第 17 轮把 CUDA 运行时从主包移出（主包 717.7 MB → 189.9 MB，
+    #    详见 `docs/商业化重构审计与体积报告.md` §3.6 / 待决策）。
+    #    下载后落在 `<data_dir>/runtime/cuda/bin`，**必须**在这里被找到，
+    #    否则体检说"缺 CUDA"、而 DLL 其实已经下好了。
+    try:
+        add(os.path.join(paths.data_dir(), "runtime", "cuda", "bin"))
+        add(os.path.join(paths.data_dir(), "runtime", "cuda"))
+    except Exception:                                   # noqa: BLE001
+        pass
     # ① PyInstaller 打包版：资源在 `_internal`（= sys._MEIPASS）
     add_nvidia(paths.source_dir())
     # ② 源码 / 便携版：venv 里的 nvidia-*-cu12

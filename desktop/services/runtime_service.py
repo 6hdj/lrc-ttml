@@ -260,10 +260,19 @@ class RuntimeManager:
 
         spec = self.spec(rid)
         wheels = spec.get("wheels") or []
-        if not wheels:
-            raise ValueError(f"{rid}: 清单里没有 wheel")
+        # ⚠️⚠️ **两种分发形态都要支持**（真踩到）：
+        #   * `wheels`：PyPI 的 .whl（torch 走这条，解包后要 flatten）；
+        #   * `archives`：我们自己打的 zip（**CUDA 运行时**走这条 ——
+        #     它是三个 `.dll`，不是 python 包，没有 wheel 可发）。
+        # 第 17 轮用户选了"方案 D：GPU 运行时按需下载"，主包降到 ~190 MB，
+        # 所以必须有这条路。原来只认 `wheels`，遇到 CUDA 这种
+        # `archives` 形态会直接抛 `清单里没有 wheel`。
+        archives = spec.get("archives") or []
+        if not wheels and not archives:
+            raise ValueError(f"{rid}: 清单里既没有 wheel 也没有 archives")
 
-        total = sum(int(w.get("size") or 0) for w in wheels)
+        items = wheels or archives
+        total = sum(int(w.get("size") or 0) for w in items)
         cache = self.wheel_cache()
         paths.ensure_dir(cache)
 
@@ -275,7 +284,7 @@ class RuntimeManager:
 
         done_bytes = 0
         files: List[str] = []
-        for w in wheels:
+        for w in items:
             _stop()
             fn = w["filename"]
             dst = os.path.join(cache, fn)
@@ -352,12 +361,27 @@ class RuntimeManager:
         _safe_rmtree(site)
         paths.ensure_dir(site)
         for f in files:
-            _extract_wheel(f, site, log=log, stop=stop)
-        _flatten_site(site, log=log)
+            if f.lower().endswith(".whl"):
+                _extract_wheel(f, site, log=log, stop=stop)
+            else:
+                # `archives`（我们自己打的 zip）：直接解开到 site 目录，
+                # 里面就是 `bin/*.dll` —— 正好是 `gpu_probe.cuda_dirs()`
+                # 会去找的 `<data_dir>/runtime/cuda/bin`。
+                log(f"解压 {os.path.basename(f)} …")
+                with zipfile.ZipFile(f) as z:
+                    z.extractall(site)
+        # ⚠️ 只有 wheel 需要 flatten（whl 里带 `torch/` 之类的前缀）。
+        # zip 归档是我们自己排的目录结构，flatten 反而会把 `bin/` 打平。
+        if any(f.lower().endswith(".whl") for f in files):
+            _flatten_site(site, log=log)
 
-        # ---- 落盘之后**必须真的加载一次**（需求第 3 条：光有文件不算就绪）----
+        # ---- 落盘之后**必须真的验一次**（需求第 3 条：光有文件不算就绪）----
         p(None, "正在验证…")
-        ok, why = _verify_loaded(spec, site)
+        if spec.get("verify_files"):
+            # 非 python 包（CUDA 运行时）：验关键文件
+            ok, why = _verify_files_present(spec, site)
+        else:
+            ok, why = _verify_loaded(spec, site)
         self.invalidate(rid)
         if not ok:
             st = self.check(rid, use_cache=False)
@@ -637,6 +661,30 @@ def _verify_installed(spec: dict, site: str) -> tuple:
 def _now_note(rec: dict) -> str:
     when = rec.get("installed_at") or ""
     return f"验证于 {when}" if when else "已验证"
+
+
+def _verify_files_present(spec: dict, site: str) -> tuple:
+    """非 python 包（如 CUDA 运行时）的验证：**核对关键文件真的在**。
+
+    CUDA 运行时就是几个 `.dll`，没有模块可以 `import`，
+    所以 `_verify_loaded` 那套（import + 版本前缀）在这里用不上。
+    但**不能因此不验**：光看目录存在会给出一个骗人的 READY。
+
+    判据取自清单的 `verify_files`（文件名列表）。
+    """
+    want = list(spec.get("verify_files") or [])
+    if not want:
+        return True, "未声明 verify_files（跳过文件检查）"
+    missing = []
+    for rel in want:
+        # 允许 `bin/xxx.dll` 也允许已被 flatten 的 `xxx.dll`
+        cands = [os.path.join(site, *rel.split("/")),
+                 os.path.join(site, os.path.basename(rel))]
+        if not any(os.path.isfile(c) and os.path.getsize(c) > 0 for c in cands):
+            missing.append(rel)
+    if missing:
+        return False, f"缺少文件：{', '.join(missing[:4])}"
+    return True, f"{len(want)} 个文件齐全"
 
 
 def _verify_loaded(spec: dict, site: str) -> tuple:

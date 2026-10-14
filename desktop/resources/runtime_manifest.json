@@ -21,7 +21,9 @@
       "id": "torch",
       "name": "PyTorch 运行时（声纹分声部）",
       "purpose": "CAM++ 声纹模型的前向推理；「对唱分声部」和「人声分离」需要它",
-      "required_for": ["singer_split"],
+      "required_for": [
+        "singer_split"
+      ],
       "default": false,
       "download_policy": "on_demand",
       "approx_size": 124110781,
@@ -49,14 +51,64 @@
         }
       ],
       "deps": [
-        { "name": "filelock", "note": "torch 运行时依赖（通常已随主程序提供）" },
-        { "name": "typing-extensions", "note": "同上" },
-        { "name": "sympy", "note": "torch 运行时依赖；主程序刻意没有打包它（体积）" },
-        { "name": "networkx", "note": "同上" },
-        { "name": "jinja2", "note": "同上（huggingface_hub 也需要它）" },
-        { "name": "fsspec", "note": "同上" },
-        { "name": "mpmath", "note": "sympy 的依赖" },
-        { "name": "MarkupSafe", "note": "jinja2 的依赖" }
+        {
+          "name": "filelock",
+          "note": "torch 运行时依赖（通常已随主程序提供）"
+        },
+        {
+          "name": "typing-extensions",
+          "note": "同上"
+        },
+        {
+          "name": "sympy",
+          "note": "torch 运行时依赖；主程序刻意没有打包它（体积）"
+        },
+        {
+          "name": "networkx",
+          "note": "同上"
+        },
+        {
+          "name": "jinja2",
+          "note": "同上（huggingface_hub 也需要它）"
+        },
+        {
+          "name": "fsspec",
+          "note": "同上"
+        },
+        {
+          "name": "mpmath",
+          "note": "sympy 的依赖"
+        },
+        {
+          "name": "MarkupSafe",
+          "note": "jinja2 的依赖"
+        }
+      ]
+    },
+    {
+      "id": "cuda",
+      "name": "CUDA 运行时（显卡加速）",
+      "purpose": "faster-whisper/CTranslate2 的 GPU 推理需要 cuBLAS；没有它**语音识别根本跑不了**",
+      "required_for": [
+        "asr"
+      ],
+      "default": true,
+      "download_policy": "on_demand",
+      "approx_size": 554472678,
+      "installed_size": 771556864,
+      "license": "NVIDIA CUDA Toolkit EULA（随 nvidia-cublas-cu12 分发）",
+      "note": "第 17 轮起从主安装包移出（主包 717.7 MB -> 189.9 MB）。首次使用语音识别时需要它。",
+      "verify_files": [
+        "bin/cublas64_12.dll",
+        "bin/cublasLt64_12.dll"
+      ],
+      "archives": [
+        {
+          "filename": "cuda-runtime-win-x64-cu12.zip",
+          "size": 554472678,
+          "sha256": "8372ad034553778cbf9d554b6b4fb397426232ef710448bcc8213c477056c9ec",
+          "urls": []
+        }
       ]
     }
   ]
