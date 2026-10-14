@@ -97,7 +97,7 @@
       "approx_size": 554472678,
       "installed_size": 771556864,
       "license": "NVIDIA CUDA Toolkit EULA（随 nvidia-cublas-cu12 分发）",
-      "note": "第 17 轮起从主安装包移出（主包 717.7 MB -> 189.9 MB）。首次使用语音识别时需要它。",
+      "note": "第 17 轮起从主安装包移出（主包 717.7 MB -> 189.9 MB）。首次使用语音识别时需要它。zip 由 tools/make_cuda_pack.py 生成，托管在 GitHub Release `cuda-runtime-cu12`（实测支持 Range，可断点续传）。",
       "verify_files": [
         "bin/cublas64_12.dll",
         "bin/cublasLt64_12.dll"
@@ -107,7 +107,9 @@
           "filename": "cuda-runtime-win-x64-cu12.zip",
           "size": 554472678,
           "sha256": "8372ad034553778cbf9d554b6b4fb397426232ef710448bcc8213c477056c9ec",
-          "urls": []
+          "urls": [
+            "https://github.com/6hdj/lrc-ttml/releases/download/cuda-runtime-cu12/cuda-runtime-win-x64-cu12.zip"
+          ]
         }
       ]
     }
