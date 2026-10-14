@@ -132,19 +132,47 @@ def scan_manifest(path: str, rel: str) -> list:
 
 def main() -> int:
     hits = []
-    for root, _dirs, files in os.walk(os.path.join(HERE, "desktop")):
-        for fn in files:
-            p = os.path.join(root, fn)
-            rel = os.path.relpath(p, HERE)
-            if fn.endswith(".py") and fn not in ("uicheck.py", "selftest.py"):
-                hits.extend(scan_file(p, rel))
-            # ⚠️ 清单 Json 也要扫：界面会把 name/purpose 直接显示出来
-            elif fn.endswith(".json") and "manifest" in fn:
-                hits.extend(scan_manifest(p, rel))
+    # ⚠️⚠️ **安装程序也要扫**（2026-10-14 加，真漏过）：
+    # `installer_gui.py` 是 tkinter 的，同样**纯文本**渲染 ——
+    # 我给它写了一句「是**处理歌词时**才需要的」，星号会原样显示给用户。
+    # 当时这个工具**没报**，因为它的根目录写死了 `desktop/` ——
+    # 我是靠**看截图**才发现的。凡是会显示文本的源码目录都得覆盖。
+    ROOTS = [
+        (os.path.join(HERE, "desktop"), (".py",)),
+        (HERE, (".py",)),          # 仓库根：installer_gui.py / launcher.py 等
+    ]
+    seen = set()
+    # ⚠️ **跳过构建产物目录**：`dist/`、`build/`、`.venv*` 里是**同一份源码的副本**
+    # （`_internal/desktop/resources/model_manifest.json`），
+    # 扫它们只会把同一个问题重复报 10 遍，还会掩盖真正的源头。
+    SKIP_DIRS = {"dist", "build", ".git", ".tmp", "__pycache__",
+                 ".venv", ".venvpack", "node_modules", "outputs"}
+    for base, _exts in ROOTS:
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            for fn in files:
+                p = os.path.join(root, fn)
+                rel = os.path.relpath(p, HERE)
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                if fn.endswith(".py"):
+                    if fn in ("uicheck.py", "selftest.py"):
+                        continue
+                    # 根目录只扫"界面/安装器"这类会显示文本的，别扫算法模块
+                    # （那些里的 `**` 是注释/文档，不是界面文案）
+                    if base == HERE and fn not in (
+                            "installer_gui.py", "launcher.py", "main.py",
+                            "doctor.py", "envcheck.py", "install.py"):
+                        continue
+                    hits.extend(scan_file(p, rel))
+                # ⚠️ 清单 Json 也要扫：界面会把 name/purpose 直接显示出来
+                elif fn.endswith(".json") and "manifest" in fn:
+                    hits.extend(scan_manifest(p, rel))
 
     print("=" * 74)
     print("  界面可见文案里漏下的 Markdown 记号")
-    print("  （覆盖 desktop/**/*.py 与 resources/*manifest*.json）")
+    print("  （覆盖 desktop/**/*.py、installer_gui/launcher 等、*manifest*.json）")
     print("=" * 74)
     if not hits:
         print("  ✅ 没找到（Qt 控件是纯文本，星号会原样显示给用户）")

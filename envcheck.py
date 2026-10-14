@@ -446,6 +446,80 @@ def summarize(items: list) -> tuple:
     return miss_crit, miss_opt
 
 
+# ============================================================ 作用域（能不能打开 vs 能不能做歌词）
+#
+# ⚠️⚠️ **为什么必须分这一层**（2026-10-14 用户提的问题）：
+# `level=CRIT` 的原注释是「缺了**核心功能**跑不了」，但它把两件**完全不同**的事
+# 混成了一个等级：
+#   * `whisper`（语音识别模型，**3 GB**）—— 缺了**软件照样打开**，
+#     只是点「开始制作」时做不了；
+#   * `cuda_cublas64_12.dll`（**527 MB**）—— 同上；
+#   * `pkg_faster_whisper`、写出权限、磁盘空间 —— 缺了**核心真的跑不动**。
+# 后果（用户实测）：**安装程序**把 21 项全检查一遍，然后让用户
+# 「开始补全」—— 也就是**软件还没打开，就要先下 3.5 GB**。
+# 用户的诉求很明确：**安装只保证"装完能打开"，要下大东西到软件里的
+# 「模型」页去下。**
+#
+# 所以这里把每一项标一个 `scope`：
+#   * `launch`  —— **影响能不能打开/核心能否启动**。安装程序只检查这一层。
+#   * `convert` —— 处理歌词时才需要。**在软件里下**（模型页/运行组件卡）。
+#   * `extra`   —— 可选增强功能。缺了只是少个功能。
+#
+# ⚠️ 键名是 `Item.key`（界面上那行的 id）。加了新检查项**必须**在这里登记，
+# 否则会落到默认值 `convert`（保守：宁可让安装程序少拦，也不要多拦）。
+LAUNCH = "launch"
+CONVERT = "convert"
+EXTRA = "extra"
+
+SCOPE_OF = {
+    # —— 能不能打开：解释器、核心依赖、能不能写、有没有地方放 ——
+    "python": LAUNCH,
+    "pkg_faster_whisper": LAUNCH,
+    "pkg_ctranslate2": LAUNCH,
+    "pkg_numpy": LAUNCH,
+    "pkg_huggingface_hub": LAUNCH,
+    "pkg_av": LAUNCH,
+    "pkg_tokenizers": LAUNCH,
+    "disk": LAUNCH,
+    "writable": LAUNCH,
+    # —— 处理歌词才需要：模型权重 + GPU 运行库 ——
+    "whisper": CONVERT,
+    "cuda_cublas64_12.dll": CONVERT,
+    "cuda_cublasLt64_12.dll": CONVERT,
+    "gpu": CONVERT,
+    # —— 可选增强 ——
+    "pkg_pypinyin": EXTRA,
+    "pkg_onnxruntime": EXTRA,
+    "pkg_torch": EXTRA,
+    "pkg_demucs": EXTRA,
+    "gpu_torch": EXTRA,
+    "cuda_cudnn64_9.dll": EXTRA,
+    "campp": EXTRA,
+    "ffmpeg": EXTRA,
+}
+
+
+def scope_of(item) -> str:
+    """这一项属于哪个作用域（没登记的按 `convert` 保守处理）。"""
+    return SCOPE_OF.get(getattr(item, "key", ""), CONVERT)
+
+
+def launch_blockers(items: list) -> list:
+    """**只影响"能不能打开/核心能否启动"**的缺失项 —— 安装程序看这一层。
+
+    ⚠️ 语音识别模型、CUDA 运行库**不在**这里面：它们缺了软件照样打开，
+    要下载请到软件里的「模型」页。
+    """
+    return [i for i in items
+            if not i.ok and scope_of(i) == LAUNCH]
+
+
+def convert_blockers(items: list) -> list:
+    """处理歌词才需要的缺失项（模型/运行库）—— 软件里提示，不在安装程序里。"""
+    return [i for i in items
+            if not i.ok and scope_of(i) == CONVERT]
+
+
 if __name__ == "__main__":
     # 直接跑就是命令行体检
     os.environ.setdefault("HUGGINGFACE_HUB_CACHE",

@@ -335,7 +335,10 @@ class Installer:
                                   state="normal")
             self.log_line("安装位置：" + self.install_dir)
             self.log_line("点「开始安装」，程序会自动解压到上面这个文件夹，")
-            self.log_line("然后检查运行环境、把你缺的东西补上。")
+            # ⚠️ 文案要跟**实际行为**一致（2026-10-14 改）：安装阶段只保证
+            # "装完能打开"，不再在这里要求下语音模型 / GPU 运行库。
+            self.log_line("然后只检查「能不能打开」；语音模型和 GPU 运行库")
+            self.log_line("到软件里的「模型」页下载就行，不用在这儿等。")
 
     # ------------------------------------------------------------ 预览
     def _preview_stage(self, stage: str) -> None:
@@ -357,30 +360,40 @@ class Installer:
             self.sub.configure(text=text, fg=color)
 
         if stage == "install":
-            _sub("正在检查你的电脑…（首次可能要一两分钟，请勿关闭）")
+            _sub("正在安装…（首次可能要一两分钟，请勿关闭）")
             self.log_line("安装位置：" + self.install_dir)
             self.log_line("[1/4] 解压主程序…")
             self.log_line("      已解压 387 个文件（1078 MB）")
-            self.log_line("[2/4] 检查运行环境…")
-            self.log_line("      ✓ 语音识别引擎   ✓ 音频解码")
-            self.log_line("      ! GPU 运行时未安装（约 529 MB）")
-            # 真实进度：百分比 + 字节数（不编数字，这里只是预览用的样例值）
-            self.pb.configure(value=62)
+            # ⚠️ 预览样例要跟新口径一致：安装阶段只检查"能不能打开"，
+            # 语音模型 / GPU 运行库显示为**待下载**（不是"缺失"）。
+            self.log_line("[2/4] 检查能不能打开…")
+            self.log_line("      ✓ 核心依赖齐全   ✓ 目录可写")
+            self.log_line("      ↓ 语音识别模型：待下载（打开后到「模型」页）")
+            self.log_line("      ↓ GPU 运行时：待下载（打开后到「模型」页）")
+            # ⚠️ 预览的进度样例值也要**跟真实流程同口径**：
+            # 安装阶段真实做的是"解压 1078 MB 的载荷"，不是"下载 529 MB 运行时"。
+            # 原来这里放的是 `62% 328/529MB` + "正在下载 GPU 运行时…" ——
+            # 那是第 19 轮的旧口径（安装时下载运行时），会让截图与行为不符。
+            self.pb.configure(value=100)
             self._pb_mode = "bytes"
-            self._pb_total = 554472678
-            self._pb_done = 343773059
-            self.lb_pct.configure(text="62%  328/529MB")
-            self.hint.configure(text="正在下载 GPU 运行时…")
-            self.btn_go.configure(text="开始补全", state="normal",
-                                  command=self.start_install_app)
+            self._pb_total = 1130164224          # 载荷解压后的字节数
+            self._pb_done = 1130164224
+            self.lb_pct.configure(text="100%  1078/1078MB")
+            self.hint.configure(text="已解压完成")
+            self.btn_go.configure(text="▶ 启动软件", state="normal",
+                                  command=self.launch_app)
             self.btn_quit.configure(state="normal")
         elif stage == "done":
-            _sub("安装完成，可以使用了", OK)
+            _sub("安装完成，可以打开了", OK)
             self.log_line("")
             self.log_line("安装位置：" + self.install_dir)
             self.log_line("已创建开始菜单快捷方式")
             self.log_line("")
-            self.log_line("安装完成！点上面的「▶ 启动软件」开始使用。")
+            self.log_line("✅ 影响打开的一项都不缺。")
+            self.log_line("ℹ️ 语音识别模型、GPU 运行时是「处理歌词时」才需要的，")
+            self.log_line("   打开软件后到「模型」页下载（可续传、可取消）。")
+            self.log_line("")
+            self.log_line("点上面的「▶ 启动软件」就能打开了。")
             self.pb.configure(value=100)
             self.lb_pct.configure(text="100%  完成")
             self.hint.configure(text="")
@@ -767,13 +780,19 @@ class Installer:
                     if key not in self.rows:
                         continue
                     icon, det = self.rows[key]
+                    # ⚠️ `todo` = **处理歌词时才要、安装阶段不用下**的那类
+                    # （语音模型 / CUDA 运行库）。用"↓ 待下载"和强调色，
+                    # 与"✕ 缺失"区分开 —— 否则用户会以为装坏了。
                     icon.configure(text={"ok": "✓", "bad": "✕", "skip": "–",
-                                         "wait": "•", "work": "…"}.get(state, "•"),
+                                         "wait": "•", "work": "…",
+                                         "todo": "↓"}.get(state, "•"),
                                    fg={"ok": OK, "bad": BAD, "skip": DIM,
-                                       "wait": DIM, "work": WARN}.get(state, DIM))
+                                       "wait": DIM, "work": WARN,
+                                       "todo": ACCENT}.get(state, DIM))
                     if detail:
-                        det.configure(text=detail,
-                                      fg=BAD if state == "bad" else DIM)
+                        det.configure(
+                            text=detail,
+                            fg={"bad": BAD, "todo": ACCENT}.get(state, DIM))
                 elif kind == "setbtn":
                     _, text, cmd, state = m
                     self.btn_go.configure(text=text, command=cmd, state=state)
@@ -1273,43 +1292,62 @@ class Installer:
                 rows = envcheck.check_all(BASE, cache, frozen=FROZEN)
                 print("[检查] 源码模式：进程内自检", flush=True)
 
+            # ⚠️⚠️ **安装程序只检查"能不能打开"这一层**（2026-10-14 用户要求）。
+            #
+            # 原来这里是 `envcheck.summarize(rows)` —— 按 `level == CRIT` 判"必需"。
+            # 而 CRIT 里混着**两件完全不同的事**：
+            #   * `pkg_faster_whisper` / 写出权限 / 磁盘空间 → 缺了**真跑不动**；
+            #   * `whisper`（语音模型 **3 GB**）、`cuda_*.dll`（**527 MB**）
+            #     → 缺了**软件照样打开**，只是点「开始制作」时做不了。
+            # 后果：**软件还没打开，就先要求下 3.5 GB**。用户明确说不要这样：
+            # 「安装的时候只检查会影响软件打开的，处理歌词要用的东西到软件里的
+            #   模型页去下」。
+            #
+            # 现在用 `envcheck.launch_blockers()`（按 scope 分层）：
+            #   * launch 缺 → 拦住并给补全按钮（这些是打包/权限问题，安装阶段修得动）
+            #   * convert/extra 缺 → **不拦**，到软件里下（模型页 / 运行组件卡）
+            lb = envcheck.launch_blockers(rows)
+            cb = envcheck.convert_blockers(rows)
+            scope = {it.key: envcheck.scope_of(it) for it in rows}
+
             for it in rows:
                 self.q.put(("addrow", it.key, it.name, it.why, it.level))
 
-            # 需要补全的动作映射（envcheck 只负责"诊断"，动作在 install 里）
+            # ⚠️ 补全动作**只对 launch 缺项建**。原来把所有 CRIT 缺项
+            # 都塞进 `self.items`，于是「开始补全」会去下 3 GB 模型。
             actions = {
-                "whisper": lambda: core.fetch_whisper(self.model),
                 "campp": core.fetch_campp,
             }
             # 任何一个 CUDA DLL 缺 → 一次把三个都装齐（同一个 wheel 里）
-            cuda_missing = [it for it in rows
+            cuda_missing = [it for it in lb
                             if it.key.startswith("cuda_") and not it.ok]
             if cuda_missing:
                 actions["cuda_gether"] = core.fetch_cuda
-            # 缺的包合并成一次 pip
-            pkg_missing = [it for it in rows
-                           if it.key.startswith("pkg_") and not it.ok
-                           and it.level == envcheck.CRIT]
+            # 缺的包合并成一次 pip（**只看 launch 层**）
+            pkg_missing = [it for it in lb if it.key.startswith("pkg_") and not it.ok]
 
             for it in rows:
-                self.set_row(it.key, "ok" if it.ok else "bad",
-                             it.detail + ("" if it.ok else
-                                          ("　" + it.fix.splitlines()[0]
-                                           if it.fix else "")))
+                sc = scope.get(it.key, envcheck.CONVERT)
                 if it.ok:
+                    self.set_row(it.key, "ok", it.detail)
                     self.say(f"[OK] {it.name}"
                              + (f"：{it.detail}" if it.detail else ""))
+                elif sc == envcheck.LAUNCH:
+                    self.set_row(it.key, "bad",
+                                 it.detail + ("" if not it.fix else
+                                              ("　" + it.fix.splitlines()[0])))
+                    self.say(f"[缺·影响打开] {it.name}"
+                             + (f"：{it.detail}" if it.detail else ""))
+                    self.items.append(
+                        (it.key, it.name,
+                         actions.get(it.key, getattr(it, "action", None))))
                 else:
-                    self.say(f"[缺] {it.name}" + (f"：{it.detail}" if it.detail else ""))
-                    if it.level == envcheck.CRIT:
-                        # ⚠️ `it` 是从 JSON 建的 SimpleNamespace，**没有 action 字段**
-                        # （doctor --json 只输出 key/name/why/level/ok/detail/fix）。
-                        # 直接取 `it.action` 会 AttributeError —— 真踩过：
-                        # 检查在 CUDA 那一项崩掉，后面的模型/权重没能进待装列表，
-                        # 于是"什么都没装"却报"安装完成"，用户一启动就报模型缺失。
-                        self.items.append(
-                            (it.key, it.name,
-                             actions.get(it.key, getattr(it, "action", None))))
+                    # ⚠️ 这两类**不在安装阶段补**。列表里如实显示"待下载"，
+                    # 并明确写清"打开软件后到哪下" —— 不能让用户以为装坏了。
+                    where = ("「模型」页" if sc == envcheck.CONVERT else "可选功能")
+                    self.set_row(it.key, "todo", f"待下载（{where}）")
+                    self.say(f"[待下载] {it.name}：{it.detail} "
+                             f"→ 打开软件后到{where}下载（安装阶段不需要）")
 
             if pkg_missing:
                 names = [it.name for it in pkg_missing]
@@ -1324,21 +1362,23 @@ class Installer:
                 self.items.append(("cuda_gether", "CUDA 运行库（3 个 DLL）",
                                    actions["cuda_gether"]))
 
-            mc, mo = envcheck.summarize(rows)
-            if not mc and not mo:
-                self.set_sub("全部就绪，可以直接使用", OK)
-                self.say(f"\n✅ 检查了 {len(rows)} 项，什么都不缺。")
-                self.say("   点下面的「▶ 启动软件」就能开始用了。")
-                self.q.put(("done", "normal", "▶ 启动软件", "launch"))
-            elif not mc:
-                self.set_sub(f"核心功能可用（{len(mo)} 项可选未装）", WARN)
-                self.say(f"\n核心功能已就绪；另有 {len(mo)} 项可选未装（不影响使用）。")
-                self.q.put(("done", "normal", "▶ 启动软件", "launch"))
+            if lb:
+                self.set_sub(f"发现 {len(lb)} 项影响打开的问题，可以自动补全", BAD)
+                self.say(f"\n检查了 {len(rows)} 项，其中 {len(lb)} 项**会影响打开**。"
+                         f"点「开始补全」自动修。")
+                self.q.put(("done", "normal", f"开始补全（{len(lb)} 项）"))
             else:
-                self.set_sub(f"发现 {len(mc)} 项必需缺失，可以自动补全", BAD)
-                self.say(f"\n检查了 {len(rows)} 项，缺 {len(mc)} 项必需的。"
-                         f"点「开始补全」，它会自动下载安装。")
-                self.q.put(("done", "normal", f"开始补全（{len(mc)} 项）"))
+                # ✅ **装完就能打开** —— 这是安装程序的目标。
+                self.set_sub("安装完成，可以打开了", OK)
+                self.say(f"\n✅ 检查了 {len(rows)} 项：**影响打开的一项都不缺。**")
+                if cb:
+                    names = "、".join(it.name for it in cb)
+                    self.say(f"\nℹ️ 另有 {len(cb)} 项是**处理歌词时**才需要的"
+                             f"（{names}）——")
+                    self.say("   安装阶段**不用下**，打开软件后到「模型」页"
+                             "（含「运行组件」）点一下就会下，可续传可取消。")
+                self.say("\n点下面的「▶ 启动软件」就能打开了。")
+                self.q.put(("done", "normal", "▶ 启动软件", "launch"))
         except Exception as e:
             import traceback
             self.say(f"[错误] 检查时出问题：{type(e).__name__}: {e}")

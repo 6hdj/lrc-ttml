@@ -73,12 +73,22 @@ print(f"    百分比文字 : {inst.lb_pct.cget('text')}")
 print(f"    主按钮     : {inst.btn_go.cget('text')}")
 check(bool(inst._pbar.winfo_manager()), "第 2 步显示进度条")
 check(bool(inst.wrap.winfo_manager()), "第 2 步显示检查清单")
-check(int(inst.pb.cget("value")) == 62, "进度条值 = 62（真实值，不是编的）",
+# ⚠️⚠️ **2026-10-14 用户要求改了语义**，这里的断言跟着改（原来断言 62%/529MB 下载）：
+# 「安装程序只检查**会影响打开**的东西；处理歌词才用的（语音模型 3 GB、
+#   GPU 运行时 527 MB）到软件里的「模型」页去下。」
+# 所以第 2 步的真实内容 = **解压载荷**（已完成 100%），
+# **不再**是"下载 GPU 运行时 62%"。原来那组断言守的是旧行为。
+check(int(inst.pb.cget("value")) == 100,
+      "第 2 步进度是「解压完成」100%（不是下载运行时的百分比）",
       f"实得 {inst.pb.cget('value')}")
-check("62%" in inst.lb_pct.cget("text"), "百分比文字含 62%",
-      inst.lb_pct.cget("text"))
-check("529" in inst.lb_pct.cget("text"), "百分比文字带总量（不只有百分比）",
-      inst.lb_pct.cget("text"))
+check("1078" in inst.lb_pct.cget("text"),
+      "百分比文字带载荷总量（1078MB，真实值）", inst.lb_pct.cget("text"))
+_logtxt = inst.log.get("1.0", "end")
+check("待下载" in _logtxt,
+      "日志里把模型/运行时标成「待下载」而不是「缺失」",
+      "日志里没有『待下载』字样")
+check("GPU 运行时" in _logtxt and "模型" in _logtxt,
+      "日志写清了这两样到「模型」页下")
 
 # ---- 第 3 步：完成态 ----
 inst._preview_stage("done")

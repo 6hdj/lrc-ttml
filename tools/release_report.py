@@ -105,6 +105,9 @@ CHECKS = [
      "下载入口指向当前版本号、不把旧版流程（part1.bin / 手工合并 /\n"
      "「安装程序需要 UAC」/「安装包已内置 CUDA」）当现行做法\n"
      "（用户明确要求：别让新用户照旧版教程操作）"),
+    ("源码可跑", "安装作用域分层", ["tools/test_install_scope.py"], False,
+     "安装程序只拦「影响打开」的；语音模型(3GB)与 CUDA 运行库(527MB)\n"
+     "属于 convert，**不在安装阶段要求下载**（用户明确要求）"),
     ("源码可跑", "文档同步", ["tools/gen_module_docs.py", "--check"], False,
      "模块说明与源码一致"),
 
@@ -243,7 +246,7 @@ def _needs_qt(cmd: list) -> bool:
     return any(k in s for k in ("uicheck", "test_theme", "test_param_effect",
                                "test_icon", "test_gpu_guard",
                                "test_installer_stages", "test_hidpi",
-                               "test_first_run"))
+                               "test_first_run", "test_install_scope"))
 
 
 def main() -> int:
