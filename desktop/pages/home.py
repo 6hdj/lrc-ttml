@@ -533,6 +533,13 @@ class HomePage(Page):
             self.ctx.tasks.cancel(self._current_task)
             self.lb_stage.setText("取消中...（当前这一步跑完就停）")
 
+    def cancel_current(self) -> bool:
+        """Esc 快捷键的挂钩：有正在跑的任务就取消，返回 True 表示"处理了"。"""
+        if self._current_task:
+            self._cancel()
+            return True
+        return False
+
     # ------------------------------------------------------------ 结果
     def _open_result(self) -> None:
         if self._last_ttml:

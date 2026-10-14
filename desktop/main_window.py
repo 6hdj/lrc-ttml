@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QMessageBox,
                                QPushButton, QStackedWidget, QStatusBar,
                                QVBoxLayout, QWidget)
@@ -136,6 +136,14 @@ class MainWindow(QMainWindow):
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
+        # ---------------- 键盘快捷键（Phase 5：任务书要求"支持 Enter/Esc"）----
+        # Ctrl+1..6 切页：桌面生产力软件的通行做法，不用把手从键盘挪到鼠标。
+        for i, (key, _text, _tip) in enumerate(NAV, 1):
+            QShortcut(QKeySequence(f"Ctrl+{i}"), self,
+                      activated=lambda _=False, k=key: self.show_page(k))
+        # Esc：当前页有"取消"就触发取消，否则切回「开始」页（有处可退）。
+        QShortcut(QKeySequence("Esc"), self, activated=self._on_escape)
+
         self.show_page("welcome" if not self.ctx.config.get("first_run_done")
                        else "home")
         QTimer.singleShot(120, lambda: self._bg_env_check())
@@ -183,6 +191,19 @@ class MainWindow(QMainWindow):
 
     def current_page(self) -> Optional[QWidget]:
         return self.stack.currentWidget()
+
+    # ------------------------------------------------------------ 键盘
+    def _on_escape(self) -> None:
+        """Esc：当前页有可取消的任务 → 取消它；否则退回「开始」页。
+
+        ⚠️ 不弹窗、不关程序 —— Esc 的语义是"退回/取消当前动作"，
+        不是"退出软件"（退出有明确的关闭按钮 + 有任务时的确认）。
+        """
+        page = self.current_page()
+        cancel = getattr(page, "cancel_current", None)
+        if callable(cancel) and cancel():
+            return
+        self.show_page("welcome")
 
     # ------------------------------------------------------------ 任务通知
     def _tick(self) -> None:

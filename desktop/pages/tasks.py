@@ -190,6 +190,15 @@ class TasksPage(Page):
             self.ctx.tasks.cancel(self._selected)
             self._render_detail()
 
+    def cancel_current(self) -> bool:
+        """Esc 快捷键的挂钩：选中任务可取消就取消，返回 True 表示"处理了"。"""
+        # ⚠️ `_selected` 是惰性初始化的（只有选中过任务才有），
+        # 用 getattr 兜底，否则 Esc 在"从没选过任务"时会 AttributeError。
+        if getattr(self, "_selected", "") and self.btn_cancel.isEnabled():
+            self._cancel()
+            return True
+        return False
+
     def _output_path(self) -> str:
         t = self.ctx.tasks.get(self._selected)
         return str(((t.result if t else {}) or {}).get("output_path") or "")
