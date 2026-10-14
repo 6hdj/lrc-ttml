@@ -27,7 +27,9 @@ except ImportError:                                   # 单文件直接跑
 # 默认值（也是"哪些键是我们管的"的白名单）
 DEFAULTS: Dict[str, Any] = {
     # ---- 界面 ----
-    "theme": "dark",                 # dark / light
+    # ⚠️ 2026-10-14 UI 重构：默认观感改成**浅色**（任务书"默认优先浅色主题"）。
+    # 老用户若已存过 dark 会继续 dark（config 落盘后 DEFAULTS 只在首次用）。
+    "theme": "light",                # dark / light
     "first_run_done": False,
     "open_editor_in_browser": True,  # 编辑台用系统浏览器打开（零额外体积）
     # ---- 上次用过的转换参数（记住用户的选择）----

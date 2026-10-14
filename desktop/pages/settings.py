@@ -150,7 +150,7 @@ class SettingsPage(Page):
         # 明明设了浅色，截出来还是深色）。
         _blocked = self.cb_theme.blockSignals(True)
         try:
-            _select(self.cb_theme, c.get("theme", "dark"))
+            _select(self.cb_theme, c.get("theme", "light"))
         finally:
             self.cb_theme.blockSignals(_blocked)
         _select(self.cb_port, int(c.get("web_port") or 8765))
