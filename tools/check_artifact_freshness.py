@@ -78,6 +78,30 @@ def head_time() -> float:
         return 0.0
 
 
+def head_time_packaged() -> float:
+    """**最近一次改动"打进产物的文件"**的提交时间。
+
+    ⚠️⚠️ 为什么不能用 HEAD 的时间（2026-10-15 修，假阳性）：
+    判据 3 原来是"产物 mtime 不早于 **HEAD** 提交时间"。可 HEAD 经常只改了
+    **不进包**的东西 —— `tools/*.py`（测试脚本）、`docs/*.md`、`AGENTS.md`。
+    那些提交一动，守卫就报"产物比 HEAD 更早 → 忘了打包"，于是：
+      * 我每次提交测试/文档都要白重建一遍（一次 10 分钟）；
+      * 更糟的是**"狼来了"**：报得多了就会开始无视它，
+        而真正"改了 `uninstall_core.py` 却没重新打包"那次就会被放过去
+        —— 这个守卫的全部价值就没了。
+    所以：只拿**进包的文件**的最后一次提交时间来比。
+
+    `--` 后面那串路径 = 真正会被打进产物/安装包的东西
+    （与 `dirty_sources()` 用的是同一份清单）。
+    """
+    out = git("log", "-1", "--format=%ct", "--",
+              *ROOT_PY, *SOURCE_DIRS)
+    try:
+        return float(out)
+    except (ValueError, TypeError):
+        return head_time()          # 取不到就退回旧口径（宁可严一点）
+
+
 def dirty_sources() -> list:
     """打进产物的源码里，有哪些**未提交改动**（= 产物不可能包含它们）。"""
     paths = list(ROOT_PY) + SOURCE_DIRS
@@ -120,14 +144,43 @@ def embedded_build_info() -> dict:
     return {}
 
 
+def git_ok(*args) -> bool:
+    """跑一条 git 命令，只看退出码（0 = 成立）。"""
+    r = subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def artifact_covers(pkg_head: str, emb: str) -> bool:
+    """产物（构建于 `emb`）是否**包含了进包文件的最后一次改动**（`pkg_head`）。
+
+    ⚠️⚠️ 这里**不能写成 `emb == pkg_head`**（2026-10-15 修，方向搞反过）：
+    打包之后往往还会为**不进包**的东西再提交几次（测试、文档），
+    这时 `emb` 是 `pkg_head` 的**后代** —— 产物明明包含了全部进包改动，
+    却因为 `emb != pkg_head` 被判"没重建"（假阳性）。
+
+    正确判据是**祖先关系**：`pkg_head` 必须是 `emb` 的祖先（或相等），
+    即"最后一次进包改动已经在这个产物里"。
+    """
+    if not pkg_head or not emb:
+        return False
+    if emb == pkg_head:
+        return True
+    return git_ok("merge-base", "--is-ancestor", pkg_head, emb)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="交付产物新鲜度")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
     dirty = dirty_sources()
-    ht = head_time()
+    # ⚠️ 时间判据用"**进包文件**的最后一次提交"，不是 HEAD（见 head_time_packaged）
+    ht = head_time_packaged()
     head = git("rev-parse", "--short", "HEAD")
+    # ⚠️⚠️ 判据 1（最强判据）也要比"进包文件的最后提交"，不是 HEAD。
+    # 原因同 `head_time_packaged()`：只改了 `tools/test_*.py` / `docs/` 的提交
+    # **不进包**，拿它跟产物里记的 commit 比必然不等 → 每次都假报"没重建"。
+    pkg_head = git("log", "-1", "--format=%h", "--", *ROOT_PY, *SOURCE_DIRS).strip()
     bi = embedded_build_info()
     emb = bi.get("git_short", "")
     rows = []
@@ -138,10 +191,11 @@ def main() -> int:
             continue
         m = os.path.getmtime(p)
         # 判据按可信度排序：先比产物里记的 commit，再退回 git 状态/时间
-        if label == "主程序" and emb and head:
-            if emb != head:
-                ok, why = False, (f"产物里记的 commit 是 {emb}，当前 HEAD 是 "
-                                  f"{head} —— 改了代码没重建主程序")
+        if label == "主程序" and emb and pkg_head:
+            if not artifact_covers(pkg_head, emb):
+                ok, why = False, (f"产物里记的 commit 是 {emb}，"
+                                  f"**最近一次改动进包文件**的提交是 {pkg_head}"
+                                  f"（HEAD {head}） —— 改了代码没重建主程序")
             else:
                 bits = []
                 if dirty:
@@ -152,7 +206,8 @@ def main() -> int:
             ok, why = False, (f"有 {len(dirty)} 个未提交改动，产物不可能包含："
                               f"{', '.join(dirty[:3])}")
         elif ht and m < ht:
-            ok, why = False, "产物比 HEAD 提交更早（改了并提交，但忘了重新打包）"
+            ok, why = False, ("产物比**最近一次改动进包文件**的提交更早"
+                              "（改了并提交，但忘了重新打包）")
         else:
             ok, why = True, ""
         rows.append({"name": label, "path": os.path.relpath(p, HERE), "ok": ok,
