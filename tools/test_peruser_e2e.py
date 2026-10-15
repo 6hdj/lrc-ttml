@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -93,8 +94,18 @@ def main() -> int:
     #
     # 现在断言**真实结果**：装完 → 启动过 → 卸载后目录必须干净。
     # "装完能用"由 e2e 内部步骤自己证明（它会真启动桌面窗口并检查退出码）。
-    app_gone = not os.path.isdir(dest) or not os.path.exists(
-        os.path.join(dest, "Lyric2TTML.exe"))
+    #
+    # ⚠️ 而且要**等**：卸载是"延迟清理"（退出后才删 —— Windows 不允许删
+    # 正在运行的程序），立刻检查必然还在。最多等 25 秒。
+    deadline = time.time() + 25.0
+    app_gone = False
+    while time.time() < deadline:
+        if not os.path.exists(os.path.join(dest, "Lyric2TTML.exe")):
+            app_gone = True
+            break
+        time.sleep(0.5)
+    if app_gone:
+        time.sleep(2.0)          # 让清理 bat 走完自删，别影响下一条用例
     print(f"  退出码                 : {r.returncode}")
     print(f"  卸载后安装目录已清空   : {app_gone}")
     print(f"  全程管理员权限         : {is_admin()}（False = 没有提权）")

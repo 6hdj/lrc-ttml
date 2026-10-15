@@ -87,10 +87,48 @@ def serve(path: str):
             except Exception:
                 pass
 
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H)
+    # ⚠️⚠️ **本文件所有下载都指向 127.0.0.1，必须绕开系统代理**
+    # （2026-10-15 踩到，和 `desktop/selftest.py` 第 14 组同一个根因）：
+    # 这台机器上 `urllib.getproxies()` 返回 `http=http://127.0.0.1:65532`
+    # （注册表里配的本地代理，**不是环境变量**），于是
+    # `urlopen("http://127.0.0.1:<port>/…")` **被发给代理**、代理拒连
+    # → `WinError 10061 目标计算机积极拒绝`。
+    #
+    # 误导性极强：**原始 socket 连同一个端口完全正常**，只有 urllib 失败，
+    # 看着像"产品下载坏了"。产品**不能改** —— 它下真实外网地址，走代理是对的；
+    # 要绕开代理的是**测本地服务的用例**。
+    import urllib.request as _ur
+    _ur.getproxies = lambda: {}
+    # 随机端口在本机"能绑不能连"，所以逐个候选端口**真连一次**再选。
+    srv = _start_local(socketserver.TCPServer, H)
     srv.timeout = 1
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, digest, len(data)
+
+
+def _start_local(cls, handler, ports=(18767, 18768, 28767, 38767, 0)):
+    """绑一个**真能连上**的端口（随机端口在本机不可达，见上）。"""
+    import socket as _socket
+    last = None
+    for port in ports:
+        try:
+            srv = cls(("127.0.0.1", port), handler)
+        except OSError as e:
+            last = e
+            continue
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            c = _socket.create_connection(
+                ("127.0.0.1", srv.server_address[1]), timeout=2)
+            c.close()
+            return srv
+        except OSError as e:
+            last = e
+            try:
+                srv.shutdown()
+                srv.server_close()
+            except Exception:                           # noqa: BLE001
+                pass
+    raise RuntimeError(f"没有可用的本地端口：{last}")
 
 
 def main() -> int:
