@@ -61,20 +61,38 @@ def check_gpu() -> Dict[str, Any]:
     if info.get("ok"):
         name = info.get("gpu_name") or "NVIDIA GPU"
         drv = info.get("driver") or "?"
-        return _item("gpu", "NVIDIA 显卡", True,
-                     f"{name}｜驱动 {drv}｜CUDA {info.get('cuda_version') or '?'}")
+        # 取不到 CUDA 版本就**不写这一项** —— 别显示 "CUDA ?"（看着像坏了）
+        detail = f"{name}｜驱动 {drv}"
+        if info.get("cuda_version"):
+            detail += f"｜CUDA {info['cuda_version']}"
+        # ⚠️ **打包版没有 torch 是设计如此**（PyTorch 是可选组件，主包不带）。
+        # 这条路以前会走到下面的 ❌ 分支，红着说"torch 无法导入"+
+        # "看看显卡驱动是否正常" —— 显卡明明好着，建议还把用户引去查驱动。
+        # 现在：显卡可用照常 ✅，只是补一句"PyTorch 未装（可选）"。
+        if info.get("note"):
+            detail += f"｜{info['note']}"
+        return _item("gpu", "NVIDIA 显卡", True, detail)
     if info.get("reason") == "no_nvidia_dll":
         return _item("gpu", "NVIDIA 显卡", False,
                      "没有找到 NVIDIA 驱动（nvcuda.dll）",
                      "本软件必须用 NVIDIA 显卡做识别。请装好显卡驱动后重试。",
                      level="error")
+    # torch 在、但看不到卡：这通常是驱动/运行时有问题，**降级为提醒**
+    # （识别走 CTranslate2 不是 torch，不该因此拦死）。
     return _item("gpu", "NVIDIA 显卡", False,
-                 info.get("error") or "无法初始化 CUDA", "看看显卡驱动是否正常",
-                 level="error")
+                 info.get("error") or "无法初始化 CUDA",
+                 "先用着试试；若识别报 CUDA 错误，再更新显卡驱动。",
+                 level="warn")
 
 
 def check_cuda_libs() -> Dict[str, Any]:
-    """cuBLAS / cuDNN 能不能真加载（用 ``ctypes.WinDLL`` 实测，不猜）。"""
+    """cuBLAS / cuDNN 能不能真加载（用 ``ctypes.WinDLL`` 实测，不猜）。
+
+    ⚠️ **cuBLAS 是硬要求，cuDNN 可选** —— 判据在 `gpu_probe.cuda_libs()`
+    里已经分开算了（缺 cuDNN 不再判失败，见那里的说明）。
+    这里的 `fix` 也改了：原来写"重新跑安装程序补全"，可**安装程序早就不下
+    cuDNN 了**，用户照做也补不上。
+    """
     try:
         from desktop.services import gpu_probe
         r = gpu_probe.cuda_libs()
@@ -82,9 +100,9 @@ def check_cuda_libs() -> Dict[str, Any]:
         return _item("cuda", "CUDA 运行库", False, f"{type(e).__name__}: {e}",
                      "重装软件", level="error")
     if r.get("ok"):
-        return _item("cuda", "CUDA 运行库", True, r.get("detail") or "cuBLAS / cuDNN 可加载")
+        return _item("cuda", "CUDA 运行库", True, r.get("detail") or "cuBLAS 可加载")
     return _item("cuda", "CUDA 运行库", False, r.get("detail") or "加载失败",
-                 r.get("fix") or "重装软件（安装包内已含 CUDA 运行库）",
+                 r.get("fix") or "到「模型管理」页点「下载并安装」补上 CUDA 运行库",
                  level="error")
 
 

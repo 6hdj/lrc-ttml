@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
+import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -153,23 +155,48 @@ def has_nvidia_gpu() -> bool:
 
 
 def cuda_libs() -> Dict[str, Any]:
-    """cuBLAS / cuDNN 能不能**真的加载**（``ctypes.WinDLL``，不是看文件在不在）。"""
+    """cuBLAS / cuDNN 能不能**真的加载**（``ctypes.WinDLL``，不是看文件在不在）。
+
+    ⚠️⚠️ **cuDNN 是「可选」，缺了不能判失败**（2026-10-15 用户实测的假 ❌）：
+
+    原来把 cuDNN 和 cuBLAS 一起丢进 `missing` —— 于是"cuBLAS ✓、cuDNN ✗"
+    被判成 **ok=False**，欢迎页红着说「CUDA 运行库 ✗」，还建议
+    "重新跑安装程序补全"。可**安装程序早就不下 cuDNN 了**
+    （第 27 轮为了省 1.27 GB 特意移出），用户照做也补不上，只能干着急。
+
+    实测依据：只装 cuBLAS 也能正常识别（cuBLAS-only 1.43-1.59s vs
+    加 cuDNN 1.43-1.50s，差异在噪声里）—— 所以：
+
+    * **cuBLAS**：硬要求（CTranslate2 的 GPU 推理必须它），缺了才 ❌；
+    * **cuDNN**：可选，缺了只在说明里提一句，**不影响 ok**。
+    """
     if os.name != "nt":
         return {"ok": True, "detail": "非 Windows，跳过（由 torch 自己处理）"}
-    missing = []
+    required = [("cuBLAS", ["cublas64_12.dll", "cublas64_11.dll"])]
+    optional = [("cuDNN", ["cudnn64_9.dll", "cudnn64_8.dll"])]
     details = []
-    for label, names in (("cuBLAS", ["cublas64_12.dll", "cublas64_11.dll"]),
-                         ("cuDNN", ["cudnn64_9.dll", "cudnn64_8.dll"])):
-        p = _find_dll(names)
-        if p:
+    missing_req = []
+    missing_opt = []
+    for label, names in required + optional:
+        if _find_dll(names):
             details.append(f"{label} ✓")
         else:
-            missing.append(label)
             details.append(f"{label} ✗")
-    if missing:
-        return {"ok": False, "detail": "、".join(details) + "（缺 " + "/".join(missing) + "）",
-                "fix": "安装包内已含 CUDA 运行库。若你用的是源码版，请重新跑安装程序补全。"}
-    return {"ok": True, "detail": "、".join(details) + f"（{len(cuda_dirs())} 个目录已注册）"}
+            (missing_req if (label, names) in required else missing_opt).append(label)
+
+    n_dirs = len(cuda_dirs())
+    if missing_req:
+        return {"ok": False,
+                "detail": "、".join(details)
+                          + "（缺 " + "/".join(missing_req) + "）",
+                "fix": "CUDA 运行库没就位：到「模型管理」页点「下载并安装」"
+                       "（约 529MB），或把已下好的包放进 runtime\\.wheels 再点安装。"}
+    note = ""
+    if missing_opt:
+        note = f"（{'/'.join(missing_opt)} 未装，**可选**：不影响识别，"
+        note += "只有部分加速路径才用得上）"
+    return {"ok": True,
+            "detail": "、".join(details) + f"（{n_dirs} 个目录已注册）" + note}
 
 
 def probe() -> Dict[str, Any]:
@@ -191,8 +218,28 @@ def probe() -> Dict[str, Any]:
     try:
         import torch
     except Exception as e:                              # noqa: BLE001
+        # ⚠️⚠️ **打包版没有 torch 是"设计如此"，绝不能因此把显卡判成不可用**
+        # （2026-10-15 用户实测的假 ❌）。
+        #
+        # PyTorch 是**可选组件**（只有「声纹分声部」「人声分离」要它），
+        # 主包**故意不带**（省 500MB+，按需下载）。而这里原来直接
+        # `return info`（ok=False），欢迎页就红着说
+        # 「✗ NVIDIA 显卡：torch 无法导入… → 看看显卡驱动是否正常」 ——
+        # **显卡明明好着**（nvcuda.dll 刚才已经加载成功），建议还把用户
+        # 引去查驱动。
+        #
+        # 正确判据：能加载 `nvcuda.dll`（上面那步）就说明**驱动和显卡都在**。
+        # 显卡型号/驱动版本改用 nvidia-smi 取，取不到就留空。
         info["reason"] = "no_torch"
-        info["error"] = f"torch 无法导入：{type(e).__name__}: {e}"
+        info["torch"] = ""
+        info["note"] = ("未安装 PyTorch（可选组件）：只有「声纹分声部」和"
+                        "「人声分离」需要它，不影响识别。")
+        name, drv, cuda_v = _smi_info()
+        info["gpu_name"] = name
+        info["driver"] = drv
+        info["cuda_version"] = cuda_v
+        info["ok"] = True
+        info["error"] = ""          # 不是错误，只是一条说明
         return info
 
     info["torch"] = getattr(torch, "__version__", "")
@@ -222,6 +269,42 @@ def probe() -> Dict[str, Any]:
     if not info["driver"]:
         info["driver"] = _driver_version()
     return info
+
+
+def _smi_info() -> tuple:
+    """用 `nvidia-smi` 取（显卡名, 驱动版本, CUDA 版本）。取不到就返回空串。
+
+    ⚠️ 为什么需要它：**没有 torch 的时候，显卡信息只能从 nvidia-smi 拿**
+    （见 `probe()` 里 no_torch 那条分支）。这不是"额外功能"——
+    打包版本来就不带 torch，缺了它欢迎页就只能显示"NVIDIA GPU｜驱动 ?"。
+    """
+    try:
+        smi = shutil.which("nvidia-smi")
+        if not smi:
+            return "", "", ""
+        r = subprocess.run(
+            [smi, "--query-gpu=name,driver_version", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=20,
+            encoding="utf-8", errors="replace")
+        if r.returncode != 0 or not (r.stdout or "").strip():
+            return "", "", ""
+        parts = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")]
+        name = parts[0] if parts else ""
+        drv = parts[1] if len(parts) > 1 else ""
+        cuda_v = ""
+        try:
+            r2 = subprocess.run([smi], capture_output=True, text=True,
+                                timeout=20, encoding="utf-8", errors="replace")
+            for ln in (r2.stdout or "").splitlines():
+                if "CUDA Version" in ln:
+                    cuda_v = ln.split("CUDA Version")[1].strip(" :|\t")
+                    cuda_v = cuda_v.split()[0] if cuda_v.split() else ""
+                    break
+        except Exception:                               # noqa: BLE001
+            pass
+        return name, drv, cuda_v
+    except Exception:                                   # noqa: BLE001
+        return "", "", ""
 
 
 def _driver_version() -> str:
