@@ -431,8 +431,14 @@ class LyricToTTML:
                 from verify_amll_parse import parse_check
                 r = parse_check(ttml)
                 if r is None:
-                    notes.append("（未准备 AMLL 解析器，跳过「能否显示」检查："
-                                 "python tools/verify_amll_parse.py --setup）")
+                    # ⚠️ 说清**到底缺什么**：打包版以前一律说"未准备 AMLL 解析器"，
+                    # 而真实原因可能是机器上没 node。解析器本体自 2026-10-15 起
+                    # 随包分发，所以"没准备好"基本只剩"没有 node"这一种。
+                    import shutil as _sh
+                    why = ("机器上没有 node（装 Node.js 后即可自动做这个检查）"
+                           if not _sh.which("node")
+                           else "解析器没跑起来（可跑 tools/verify_amll_parse.py --setup）")
+                    notes.append(f"（跳过「播放器能不能显示」检查：{why}）")
                 elif r.get("ok"):
                     self.log(f"      AMLL 解析器：行 {r['lines']} / 字 {r['words']}"
                              f"（平均 {r['perLine']:.1f} 字每行），逐字完整 ✓")

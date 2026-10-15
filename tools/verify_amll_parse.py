@@ -27,7 +27,35 @@ import tarfile
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEPS = os.path.join(ROOT, ".tmp", "amll-parser")
+
+
+def _pick_deps() -> str:
+    """解析器依赖放哪儿。
+
+    ⚠️⚠️ **优先 `.tmp`（开发机、已 setup），否则用随包分发的那份**
+    （2026-10-15 用户实测）：打包版里没有 `.tmp`，`from verify_amll_parse import …`
+    还会直接 `ModuleNotFoundError`，于是每次生成都打印
+    「（AMLL 解析器检查跳过：ModuleNotFoundError）」——
+    而铁律 #16 要求**每次都必须用真解析器验一遍**
+    （这个检查正是用来抓"整行塌成一个词、播放器一片空白"的）。
+
+    现在解析器本体（376 KB，去掉 sourcemap/类型定义）随包放在
+    `desktop/resources/amll-parser/`；冻结后 `__file__` 在 `_internal/tools/`，
+    所以用相对本文件的路径去找，**两种布局都能命中**。
+    """
+    dev = os.path.join(ROOT, ".tmp", "amll-parser")
+    if os.path.isdir(os.path.join(dev, "node_modules")):
+        return dev
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, "..", "desktop", "resources", "amll-parser"),
+                 os.path.join(ROOT, "desktop", "resources", "amll-parser")):
+        cand = os.path.abspath(cand)
+        if os.path.isdir(os.path.join(cand, "node_modules")):
+            return cand
+    return dev                      # 都没有 → 返回开发路径（调用方会去 setup）
+
+
+DEPS = _pick_deps()
 PKG_DIR = os.path.join(DEPS, "node_modules", "@applemusic-like-lyrics", "ttml")
 DOM_DIR = os.path.join(DEPS, "node_modules", "@xmldom", "xmldom")
 DRIVER = os.path.join(DEPS, "run.mjs")

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any, Callable, Dict, Optional
 
@@ -174,6 +175,30 @@ def convert(params: Dict[str, Any],
             log(msg)
             _pipeline_progress(msg, p)
 
+        # ⚠️⚠️ **"输出到"那个输入框以前是纯装饰**（2026-10-15 用户实测：
+        #     "修改输出地址失效"）。
+        # 欢迎页有一个「输出到」目录框 + 「…」按钮，但 `home.params()` 从来没把它
+        # 传下来，而这里又写死 `output_path=None` —— 用户改了地址、程序照旧
+        # 写到默认位置，看起来就是"这个功能坏的"。
+        # 现在：**用户填了就用它**；没填就保持 None（走 pipeline 的默认位置）。
+        output_path = None
+        out_dir = str(params.get("output_dir") or "").strip()
+        if out_dir:
+            try:
+                base = (str(params.get("title") or "").strip()
+                        or os.path.splitext(
+                            os.path.basename(str(params.get("lyrics") or "")))[0]
+                        or "lyrics")
+                # 文件名里不能有 Windows 非法字符
+                safe = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", base).strip(" .")
+                paths.ensure_dir(out_dir)
+                output_path = os.path.join(out_dir, (safe or "lyrics") + ".ttml")
+                log(f"输出目录：{out_dir}")
+            except Exception as e:                      # noqa: BLE001
+                log(f"[警告] 输出目录不可用（{out_dir}）："
+                    f"{type(e).__name__}: {e} —— 改用默认位置")
+                output_path = None
+
         runner = LyricToTTML(options, log=_log)
         result = runner.convert(
             audio_path=params["audio"],
@@ -184,7 +209,7 @@ def convert(params: Dict[str, Any],
             author=str(params.get("author") or ""),
             author_id=str(params.get("author_id") or ""),
             platform_ids=platform,
-            output_path=None,
+            output_path=output_path,
             translation_text=translation_text,
             translation_lang=str(params.get("translation_lang") or ""),
             songwriters=songwriters,

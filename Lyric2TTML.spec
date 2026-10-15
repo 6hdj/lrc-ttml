@@ -135,6 +135,23 @@ else:
 # 状态机独立、提示文案独立（需求第 9 条：不得互相误报）。
 datas += [('desktop/resources/model_manifest.json', 'desktop/resources'),
           ('desktop/resources/runtime_manifest.json', 'desktop/resources')]
+
+# ⚠️⚠️ **AMLL 解析器要随包分发**（2026-10-15 用户实测）：
+# 打包版里那行是「（AMLL 解析器检查跳过：ModuleNotFoundError）」——
+# `tools/` 不在包里 ⇒ `import verify_amll_parse` 直接失败，于是
+# **每次生成都跳过**「播放器里能不能显示」的检查。
+# 而 AGENTS.md 铁律 #16 要求每次都必须用**真解析器**验一遍
+# （自己写的校验器查不出"整行塌成一个词、播放器一片空白"）。
+# 解析器本体只有 376 KB（去掉了 sourcemap / 类型定义），`node` 用户机器上有。
+# 两样都打进去：脚本 + `desktop/resources/amll-parser/`。
+if os.path.isdir('desktop/resources/amll-parser/node_modules'):
+    datas += [('desktop/resources/amll-parser', 'desktop/resources/amll-parser')]
+    print('[amll] 随包分发 AMLL 解析器（生成后做"能不能显示"检查）')
+else:
+    print('[amll] ⚠️ 没有 desktop/resources/amll-parser —— '
+          '打包版会跳过 AMLL 解析器检查（先跑 tools/verify_amll_parse.py --setup）')
+if os.path.isfile('tools/verify_amll_parse.py'):
+    datas += [('tools/verify_amll_parse.py', 'tools')]
 # ⚠️ 图标也要**随包分发**（不只是嵌进 exe 的资源段）：
 # `desktop/app.py::_app_icon()` 会去 `_internal/desktop/resources/app.ico` 找它，
 # 用来设**窗口与任务栏**图标。只嵌 exe 资源段的话，窗口图标仍然是 Qt 默认的。
