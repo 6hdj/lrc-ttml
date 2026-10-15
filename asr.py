@@ -56,6 +56,40 @@ _REPO_MAP = {
 }
 
 
+def norm_model(name: str) -> str:
+    """把"友好名/模型清单 id"归一成 faster-whisper 认识的**尺寸名**。
+
+    ⚠️⚠️ **这是 2026-10-15 用户实测"每次转换都失败"的直接原因。**
+
+    模型清单（`desktop/resources/model_manifest.json`）里的 id 是
+    ``whisper-large-v3`` / ``whisper-medium`` / ``whisper-small``（带前缀），
+    而 faster-whisper / CTranslate2 只认 ``large-v3`` / ``medium`` / ``small``。
+    界面「识别模型」下拉直接把清单 id 当参数传下去，于是：
+
+        ValueError: Invalid model size 'whisper-large-v3',
+                    expected one of: tiny.en, …, large-v3, …
+
+    更糟的是这个 ValueError 被判成"显卡初始化失败"，界面上给的是
+    "装 cublas/cudnn DLL" 的指引 —— **把用户引到完全无关的方向**。
+
+    规则：
+    * 是本地目录（用户自己放的模型）→ 原样返回；
+    * 带 ``whisper-`` 前缀 → 去掉前缀；
+    * 其它（``large-v3`` / ``medium`` / ``tiny`` …）→ 原样返回。
+    """
+    s = (name or "").strip()
+    if not s:
+        return s
+    try:
+        if os.path.isdir(s):
+            return s
+    except OSError:
+        pass
+    if s.lower().startswith("whisper-"):
+        s = s[len("whisper-"):]
+    return s
+
+
 @dataclass
 class AsrWord:
     """一个识别词/字，带时间戳（秒）"""
@@ -77,7 +111,10 @@ class WhisperASR:
         cpu_threads: Optional[int] = None,
         log: Callable[[str], None] = print,
     ):
-        self.model_name = model
+        # ⚠️ **必须归一化**：界面传下来的是模型清单的 id（`whisper-large-v3`），
+        # 而 faster-whisper 只认尺寸名（`large-v3`）。不归一化 → 每次转换
+        # `ValueError: Invalid model size`（见 `norm_model()` 的说明）。
+        self.model_name = norm_model(model)
         # ⚠️ **一定要认 `HUGGINGFACE_HUB_CACHE`**，不能只用 DEFAULT_CACHE_DIR。
         # 冻结打包后 `__file__` 指向 `_internal/`，于是默认缓存变成
         # `<安装目录>\_internal\.hf_cache` —— 藏在包内部：
@@ -295,7 +332,24 @@ class WhisperASR:
 
         本项目**强制用 GPU**（CPU 跑一首歌要几分钟，体验不可接受），
         所以这里不降级，只负责把"怎么修"说清楚。
+
+        ⚠️⚠️ **不能把"模型名不对"也算成显卡问题**（2026-10-15 实测踩到）：
+        用户界面传了清单 id `whisper-large-v3`，CTranslate2 抛
+        `ValueError: Invalid model size 'whisper-large-v3'` —— 这个错**跟显卡
+        毫无关系**，但原来一律落到"显卡初始化失败"，然后给一屏
+        "装 cublas/cudnn DLL"的指引，**把用户引到完全无关的方向**去折腾。
+        现在先把这类"参数/模型问题"单独认出来，直接说清是什么问题。
         """
+        low = (msg or "").lower()
+        if "invalid model size" in low or "no such model" in low:
+            return (
+                "语音识别模型名不对（不是显卡问题）。\n"
+                f"  原始报错：{msg[:200]}\n"
+                f"  程序拿到的模型名是「{name}」，faster-whisper 只认 "
+                "tiny / base / small / medium / large-v1 / large-v2 / large-v3。\n"
+                "  到「歌词工作台」页把「识别模型」重新选一次即可；"
+                "若仍不行，请把这条报错发给我。"
+            )
         tip = (
             "CUDA 运行库缺失（cublas/cudnn）"
             if self._is_cuda_runtime_error(Exception(msg)) else "显卡初始化失败"
