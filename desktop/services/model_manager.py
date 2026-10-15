@@ -592,10 +592,18 @@ class ModelManager:
         # （真踩过；`.tmp/t_http_dl.py` 的"断点续传"用例就是守这条的。）
         # 只有"校验不通过"时才删 —— 那种 .part 的内容是**错的**，
         # 留着只会让下一次继续拼出一个永远过不了校验的文件。
+        # ⚠️ 若是"配了代理但代理没开"造成的，补一句**能照做**的说明
+        # （用户实测：五个站点全报"积极拒绝"，看着像我们的源挂了，
+        # 实际是本机代理没在跑。判据/提示见 `desktop/netdiag.py`）。
+        try:
+            from desktop import netdiag
+            hint = netdiag.proxy_hint(last_err)
+        except Exception:                               # noqa: BLE001
+            hint = ""
         raise RuntimeError(
             f"所有下载地址都失败了（最后：{type(last_err).__name__}: "
             f"{str(last_err)[:160]}）。已下好的部分保留在 {tmp}，"
-            f"重试会**接着下**。")
+            f"重试会**接着下**。" + (("\n\n" + hint) if hint else ""))
 
     # ------------------------------------------------------------- 清理
     def cleanup(self, model_id: str, log: Callable[[str], None] = print) -> ModelState:

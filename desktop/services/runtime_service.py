@@ -453,12 +453,21 @@ class RuntimeManager:
                     except Exception:                   # noqa: BLE001
                         tried.append(u2)
             last_err = locals().get("last_err_all") or locals().get("last_err")
+            # ⚠️ 若是"配了代理但代理没开"造成的，补一句**能照做**的说明 ——
+            # 否则用户看到五个站点都"积极拒绝"，只会以为是我们下载源挂了。
+            # 判据与提示都在 `desktop/netdiag.py`（只证明确实是代理问题才提示）。
+            try:
+                from desktop import netdiag
+                hint = netdiag.proxy_hint(last_err)
+            except Exception:                           # noqa: BLE001
+                hint = ""
             raise RuntimeError(
                 f"{rid}: 所有下载来源都失败了"
                 f"（试过 {len(tried)} 个：{', '.join(dict.fromkeys(tried))}）。"
                 f"最后错误：{type(last_err).__name__}: {str(last_err)[:140]}。"
                 f"已下好的部分保留在缓存目录，重试会**接着下**。"
-                f"也可手动下载后用离线导入。")
+                f"也可手动下载后用离线导入。"
+                + (("\n\n" + hint) if hint else ""))
 
         # ⚠️⚠️ **下载完、还没解压，这里必须再查一次取消** —— 这是阴性对照逼出来的真 bug。
         # 原流程是：文件下载循环结束 → **直接进入解压**。
