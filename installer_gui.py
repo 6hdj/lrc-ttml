@@ -1853,7 +1853,98 @@ def _declare_dpi_aware() -> bool:
             return False
 
 
+def _installer_log_paths() -> list:
+    """崩溃/启动日志该往哪写（**多个候选，取第一个写得进去的**）。
+
+    ⚠️ 为什么要有这个（2026-10-15 用户实测"安装程序双击闪退"）：
+    安装程序是 `--onefile` 打包的，**双击时只有一个黑框一闪**，
+    什么提示都没有；用户只能回一句"还是闪退"，我这边完全拿不到信息。
+    一个**静默死亡的安装程序**是不可接受的 —— 至少要留下一份能发回来的日志。
+
+    候选顺序（都写不进去就放弃，绝不因此再抛异常）：
+      1. exe 旁边（用户最容易找到，也最好发给我）；
+      2. `%LOCALAPPDATA%\\Lyric2TTML\\`（exe 在只读目录时也能写）；
+      3. `%TEMP%`。
+    """
+    cands = []
+    try:
+        cands.append(os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])),
+                                  "安装日志.txt"))
+    except Exception:                                   # noqa: BLE001
+        pass
+    la = os.environ.get("LOCALAPPDATA")
+    if la:
+        cands.append(os.path.join(la, "Lyric2TTML", "安装日志.txt"))
+    t = os.environ.get("TEMP") or os.environ.get("TMP")
+    if t:
+        cands.append(os.path.join(t, "Lyric2TTML-安装日志.txt"))
+    return cands
+
+
+def _installer_log(text: str) -> None:
+    """把一行诊断信息写进**所有**写得进去的候选日志（尽力而为，不抛异常）。
+
+    写全部而不是只写第一个：用户可能只找得到 exe 旁边那份，
+    而权限受限时又只有 `%LOCALAPPDATA%` 那份能写。
+    """
+    import datetime
+    try:
+        line = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {text}\n"
+    except Exception:                                   # noqa: BLE001
+        line = text + "\n"
+    for p in _installer_log_paths():
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "a", encoding="utf-8", errors="replace") as fh:
+                fh.write(line)
+        except Exception:                               # noqa: BLE001
+            pass
+
+
+def _install_startup_trace() -> None:
+    """任何未捕获异常都写进日志，并额外记一段环境信息。
+
+    ⚠️ 这是"闪退可诊断"的兜底：tkinter 起不来、tcl 数据缺失、
+    DPI 接口异常、临时目录不可写…… 都会在这里留下痕迹。
+    """
+    import platform
+    _installer_log("=" * 60)
+    _installer_log(f"安装程序启动  argv={sys.argv!r}")
+    _installer_log(f"  frozen={getattr(sys, 'frozen', False)}  "
+                   f"exe={os.path.abspath(sys.argv[0])}")
+    _installer_log(f"  cwd={os.getcwd()}")
+    _installer_log(f"  python={sys.version.split()[0]}  os={platform.platform()}")
+    _installer_log(f"  TEMP={os.environ.get('TEMP')!r}  "
+                   f"TMP={os.environ.get('TMP')!r}")
+    _installer_log(f"  LOCALAPPDATA={os.environ.get('LOCALAPPDATA')!r}")
+    try:
+        import tkinter as _tk
+        _installer_log(f"  tkinter={_tk.TkVersion} 导入 OK")
+    except Exception as e:                              # noqa: BLE001
+        _installer_log(f"  ✗ tkinter 导入失败：{type(e).__name__}: {e}")
+
+    def _hook(exc_type, exc, tb):
+        import traceback
+        _installer_log("✗✗ 未捕获异常：")
+        try:
+            for ln in traceback.format_exception(exc_type, exc, tb):
+                for sub in ln.rstrip().split("\n"):
+                    _installer_log("    " + sub)
+        except Exception:                               # noqa: BLE001
+            _installer_log(f"    {exc_type}: {exc}")
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _hook
+
+
 def main() -> int:
+    # ⚠️ 第一件事：装日志钩子。**必须在任何可能抛异常的东西之前** ——
+    # 用户在双击时只能看到黑框一闪，没有这份日志就永远是"还是闪退"。
+    try:
+        _install_startup_trace()
+    except Exception:                                   # noqa: BLE001
+        pass
+
     # ---- 卸载：`卸载程序.bat` 和主程序的 `--uninstall` 都走这里 ----
     # ⚠️ 必须放在**提权之前**：卸载不需要管理员（删自己安装的目录），
     # 而且提权会让"双击卸载"多弹一次 UAC，用户会以为要装东西。
