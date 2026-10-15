@@ -335,8 +335,30 @@ def apply_runtime_path() -> list:
                 sys.path.insert(0, import_dir)
             added.append(import_dir)
             # 原生库目录：`lib`（torch 用这个）/ `Lib` / `bin` / 顶层
-            for sub in ("lib", "Lib", "bin", ""):
-                libdir = os.path.join(import_dir, sub) if sub else d
+            #
+            # ⚠️⚠️ **还要扫"包自己的 lib"**（2026-10-15，我自己修 sys.path 时踩的）：
+            # `sys.path` 的正确项是 **site 目录**（`<site>/torch/__init__.py`），
+            # 而 torch 的 DLL 在 **`<site>/torch/lib`** —— 包里面那一层。
+            # 只按 `import_dir` 拼 `<site>/lib` 会**注册一个不存在的目录**，
+            # `<site>/torch/lib` 反而漏掉 ⇒ 冻结版里 torch 的 `_C.pyd`
+            # 找不到自己的依赖 → 导入中途炸 → 报
+            #   `partially initialized module 'torch' … has no attribute 'autograd'`。
+            # （AGENTS.md 早记过这个坑："在 import torch 之前把 `<runtime>/torch/lib`
+            #   插到搜索路径最前面"——就是这里。）
+            _libs = [os.path.join(import_dir, s)
+                     for s in ("lib", "Lib", "bin")] + [import_dir]
+            try:
+                for _sub in sorted(os.listdir(import_dir)):
+                    _p = os.path.join(import_dir, _sub)
+                    if not os.path.isdir(_p):
+                        continue
+                    for _s in ("lib", "Lib", "bin"):
+                        _q = os.path.join(_p, _s)
+                        if os.path.isdir(_q):
+                            _libs.append(_q)
+            except OSError:
+                pass
+            for libdir in _libs:
                 if not os.path.isdir(libdir):
                     continue
                 try:

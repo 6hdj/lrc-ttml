@@ -277,25 +277,33 @@ _excludes = ['tkinter', 'matplotlib', 'PyQt5', 'PyQt6', 'PySide2',
              'IPython', 'pytest', 'notebook', 'torch.distributed', 'scipy',
              'pandas', 'PIL', 'setuptools', 'pip', 'wheel', 'functorch',
              'nvidia', 'demucs', 'sympy', 'networkx', 'mpmath']
-# ❌❌ **不要**把 `torch` / `torchgen` 加进 `_excludes`（2026-10-15 试过，**回退了**）。
+# ❌❌ **不要**把 `torch` / `torchgen` 加进 `_excludes` —— **两次实测都失败，已定论**。
 #
-# 动机没错：只要构建期有任何东西 import 到 torch，PyInstaller 就会把它的纯 Python
-# 部分收进 PYZ，而 **PYZ 的导入器排在 `sys.path` 之前**，于是运行时组件里那份完整
-# torch 永远赢不了（报 `No module named 'torch._C'`）。
+# 问题本身是真的：构建期只要有东西 import 到 torch，PyInstaller 就把它的
+# **纯 Python 部分**收进 PYZ；而 **PYZ 的导入器排在 `sys.path` 之前** ⇒
+# 运行时组件里那份完整 torch（用户专门下了 118MB）**永远赢不了**：
 #
-# 但**排除之后更糟**：普通转换（**根本没开人声分离**）也会在某处 import torch，
-# 于是去加载运行时那份，而它在这个冻结环境里直接自爆：
+#     ModuleNotFoundError: No module named 'torch._C'
+#
+# 但把它排除之后**更糟**：`import torch` 改走运行时那份，而它在冻结进程里
+# 一加载就自爆：
 #
 #     AttributeError: partially initialized module 'torch' from
 #       <runtime>\torch\torch\__init__.py has no attribute 'autograd'
 #       (most likely due to a circular import)
 #
-# ——**基本功能（做歌词）被搞坏了**，这比"人声分离不可用"严重得多。
-# 实测对比（同一个音频/歌词/参数）：
-#   * 不排除 torch（当前）：转换 ✓ 91.0% 匹配率；人声分离 ✗ 但**提示会说清原因**
-#   * 排除 torch：转换 ✗ 直接失败
-# ⇒ 先保住基本功能。人声分离在冻结版里的最后一公里（torch 与 PyInstaller 的
-#   导入顺序）留待专门处理，**不要**再用"排除 torch"这种会伤到主路径的改法。
+# **两次**尝试的记录：
+#   ① 第一次：直接排除 → 连普通转换都失败（当时以为是 DLL 目录没注册）
+#   ② 第二次：先把 `<site>/torch/lib` 注册好（`paths.apply_runtime_path()` 的
+#      包内 lib 扫描）**再**排除 → 普通转换**仍然**失败，同样那句循环导入
+# ⇒ 与 DLL 搜索路径无关，是 torch 2.14.1(cp314) 与 PyInstaller 冻结环境的
+#   导入顺序冲突。**别再试了**，除非有人真的去啃 torch 的 `__init__` 顺序。
+#
+# 实测对比（同一音频/歌词/参数）：
+#   * 不排除 torch（当前做法）：转换 ✓ 91.0% 匹配率、AMLL 检查 ✓、v1/v2 ✓；
+#     人声分离 ✗ 但**提示会说清具体原因**
+#   * 排除 torch：**转换直接失败** —— 为了一个可选功能赌上主功能，不值
+_excludes += []
 # ⚠️⚠️ **demucs 依旧"不分析"，但要作为数据随包分发**（2026-10-15）。
 #
 # 用户实测：勾了「先做人声分离」，日志却只有一行
