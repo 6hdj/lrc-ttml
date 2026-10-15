@@ -181,6 +181,53 @@ def _run() -> int:
         return 1
     win = holder["win"]
 
+    # ---------------------------------------------------- 1b **真实路径**（不手动构建）
+    from PySide6.QtWidgets import QLabel as _QLbl
+
+    def t_real_path():
+        """**真实路径**：只调 `show_page()`，**绝不**自己 `ensure_built()`。
+
+        ⚠️⚠️ 这条是 2026-10-15 补的，起因是一个**致命 bug**：
+
+        页面是懒构建的 —— `_page()` 只造实例，`build()` 由 `ensure_built()` 调。
+        而 `show_page()` 原来**没有**调 `ensure_built()`，直接走
+        `on_show()` → `refresh()`，而 `refresh()` 开头是
+        `if not self._built: return` ⇒ **页面永远是空的**。
+
+        后果：**v1.1.0 起的每一个发布版，内容区都是空白的**
+        （侧边栏在、底部状态栏有页面名，用户描述成"界面空白、卡片没了"）。
+
+        ⚠️ 这个 bug 能活这么久，正是因为下面 `t_rendered` / `t_pages` 里那句
+        `page.ensure_built()` —— 自检**自己**把页面建出来了，
+        测的是"页面能构建"，而不是"真实运行时会构建"。差的就是这一步。
+
+        所以这条用例的价值在于它的**做法**：用**全新窗口**、只调产品代码
+        真正会调的那一个方法，然后断言"内容真的出来了"。
+        """
+        from desktop.context import AppContext as _Ctx
+        from PySide6.QtWidgets import QWidget as _QW2
+        ctx2 = _Ctx(mgr=TaskManager(state_path=os.path.join(_SANDBOX, "rp.json")))
+        w2 = MainWindow(ctx2)
+        w2.resize(1180, 820)
+        w2.show()
+        app.processEvents()
+        try:
+            for key, title, _tip in NAV:
+                pg = w2.show_page(key)
+                app.processEvents()
+                assert getattr(pg, "_built", False), \
+                    f"页面 {key} 在真实路径下没有被构建（_built=False）"
+                kids = pg.findChildren(_QW2)
+                assert len(kids) > 5, \
+                    f"页面 {key} 真实路径下是空的（子控件只有 {len(kids)} 个）"
+                texts = [x.text() for x in pg.findChildren(_QLbl) if x.text()]
+                assert any(title in t for t in texts), \
+                    f"页面 {key} 没画出标题 {title!r}（现有：{texts[:3]}）"
+        finally:
+            w2.close()
+
+    check("真实路径（只调 show_page，不手动构建）下六页都有内容", t_real_path)
+
     # ---------------------------------------------------- 2 每页能构建
     def t_pages():
         for key, text, tip in NAV:

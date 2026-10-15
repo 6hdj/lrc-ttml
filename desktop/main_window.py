@@ -104,7 +104,23 @@ class MainWindow(QMainWindow):
 
         # ---------------- 右侧 ----------------
         self.stack = QStackedWidget()
-        self.stack.setStyleSheet("background: transparent;")
+        # ⚠️⚠️ **这里绝不能写 `setStyleSheet("background: transparent;")`**
+        # （2026-10-15 查出的真 bug，靠"看截图"才发现的）：
+        #
+        # Qt 的规则是——**控件级样式表对该控件及其子树，优先级高于应用级样式表**。
+        # 那句没有选择器的 `background: transparent` 会命中**栈里每一个后代**，
+        # 于是页面里**所有按钮的底色都被强制透明**：
+        #   * 主按钮 → `#primary` 的蓝底失效，只剩白字 → **白字画在浅灰页面上，
+        #     整条"开始制作"看不见**（截图里一眼就能看到，任何属性断言都测不出）；
+        #   * 普通按钮 → 只剩边框、没有填充，看着像"禁用态"。
+        #
+        # 正确做法：**样式只由设计系统（应用级 QSS）管**，不要在任何容器控件上
+        # 再挂一条会外溢的样式表。栈的底色本来就被
+        # `QWidget { background: {{bg}} }` 覆盖成页面底色，不需要额外处理。
+        #
+        # 同类风险：**容器**（QWidget/QFrame/QStackedWidget/QScrollArea）上的
+        # setStyleSheet 都会外溢到孩子；叶子控件（QLabel）上的才安全。
+        # `tools/test_design_consistency.py` 现在会强制检查这一条。
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -169,6 +185,30 @@ class MainWindow(QMainWindow):
         page = self._page(key)
         if self.stack.indexOf(page) < 0:
             self.stack.addWidget(page)
+        # ⚠️⚠️⚠️ **必须先 `ensure_built()`，再 `on_show()`**（2026-10-15 修的**致命 bug**）。
+        #
+        # 页面是**懒构建**的：`_page()` 只造实例，`build()` 由 `ensure_built()` 调。
+        # 而 `on_show()` → `refresh()` 开头有 `if not self._built: return` 的保护。
+        #
+        # 原来的顺序是"直接 on_show()" —— 于是：
+        #   * 第一次进某页：`_built=False` → `refresh()` 立刻返回 → 页面**空白**；
+        #   * 而**没有任何生产代码路径**会再调 `ensure_built()`（`app.py` 只建
+        #     `MainWindow()`）→ 页面**永远**是空的。
+        #
+        # 后果（用户实测报告的症状）：**侧边栏在、内容区一片空白**，
+        # 底部状态栏那行 `欢迎使用 Lyric2TTML` 是 `page.TITLE`，
+        # 用户会把它当成"页面标题在、卡片没了"。
+        #
+        # ⚠️ 为什么自检 14 项全过、却漏了它（**本仓最典型的假绿**）：
+        # `desktop/uicheck.py` 里**自己**调了 `page.ensure_built()` ——
+        # 测的是"页面能构建"，**不是**"真实运行时会构建"。两者差一步，
+        # 而这一步正是产品能不能用。现在 `uicheck` 里加了"真实路径"专项检查，
+        # `tools/test_design_consistency.py` 也会断言"不手动构建也有内容"。
+        try:
+            page.ensure_built()
+        except Exception:                                # noqa: BLE001
+            from desktop.services import log_service
+            log_service.get().exception("页面 %s 构建失败", key)
         if self.stack.currentWidget() is not page or force:
             self.stack.setCurrentWidget(page)
         for k, b in self._nav_buttons.items():

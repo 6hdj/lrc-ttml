@@ -702,6 +702,52 @@ def t_consistency():
 
 # ========================================================== 14 真下载（本地 HTTP）
 
+
+def _start_local_server(handler_cls, ports=(18765, 18766, 28765, 38765, 0)):
+    """起一个**真的能连上**的本地 HTTP 服务，返回 server 对象。
+
+    ⚠️⚠️ 为什么不能直接 `TCPServer(("127.0.0.1", 0), H)`（2026-10-15 踩到）：
+    在本机（受限/带防火墙的环境）实测 —— 绑 `127.0.0.1:0` **报成功**、
+    `server_address[1]` 也给出一个正常端口号，但**连过去是
+    `WinError 10061 目标计算机积极拒绝`**；而绑**固定端口**（18765）则完全正常。
+    于是这条"真下载"用例在**这台机器上必然失败**，
+    而它测的是 HTTP 下载/续传/校验/取消，**跟端口怎么选毫无关系** ——
+    属于测试基础设施问题，不是产品问题（不能靠"跳过"来掩盖）。
+
+    做法：逐个候选端口**绑上并真连一次**，第一个连得通的才用它；
+    连不通就关掉换下一个。都不行才抛异常（如实报错，不静默跳过）。
+    """
+    import socket as _socket
+    # ⚠️ `socketserver` / `threading` 原来是在 `t_http_download()` **函数内部**
+    # 导入的，模块级 helper 看不到 —— 所以这里自己导一次（我第一版漏了，
+    # 直接 NameError）。
+    import socketserver
+    import threading
+    last = None
+    for port in ports:
+        try:
+            srv = socketserver.TCPServer(("127.0.0.1", port), handler_cls)
+        except OSError as e:
+            last = e
+            continue
+        p = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            c = _socket.create_connection(("127.0.0.1", p), timeout=2)
+            c.close()
+            srv.timeout = 1
+            return srv
+        except OSError as e:
+            last = e
+            try:
+                srv.shutdown()
+                srv.server_close()
+            except Exception:                           # noqa: BLE001
+                pass
+            continue
+    raise RuntimeError(f"没有可用的本地端口：{last}")
+
+
 @group(14, "model_manager：真下载（本地 HTTP）—— 续传 / 校验 / 取消")
 def t_http_download():
     """起一个本地 HTTP 服务，把"下载"这条路径**真跑一遍**。
@@ -712,7 +758,31 @@ def t_http_download():
 
     ⚠️ **失败时删掉 .part** 曾把"下载中断→重试"变成"永远从 0 开始"，
     3GB 的模型能白下好几次。所以这条用例是**守着报错信息的**。
+
+    ⚠️⚠️ **必须绕开系统代理**（2026-10-15 踩到，查了三轮）：
+    这台机器上 `urllib.getproxies()` 返回
+    `http=http://127.0.0.1:65532`（注册表里配的本地代理，不是环境变量），
+    于是 `urlopen("http://127.0.0.1:18765/…")` **被发给那个代理**，
+    代理拒连 → `WinError 10061 目标计算机积极拒绝`。
+    症状极具误导性：**原始 socket 连 `127.0.0.1:18765` 完全正常**，
+    只有走 urllib 的下载失败，看着像产品下载坏了。
+    产品**不该改** —— 它下的是真实外网地址，走代理是**对的**；
+    要绕开代理的是**这个测本地服务的用例**。
     """
+    import http.server
+    import socketserver
+    import threading
+    import urllib.request as _ur
+
+    _orig_getproxies = _ur.getproxies
+    _ur.getproxies = lambda: {}          # 本组全部是 127.0.0.1，直接连
+    try:
+        return _http_download_body()
+    finally:
+        _ur.getproxies = _orig_getproxies
+
+
+def _http_download_body():
     import http.server
     import socketserver
     import threading
@@ -763,9 +833,14 @@ def t_http_download():
             self.end_headers()
             self.wfile.write(body)
 
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H)
-    srv.timeout = 1
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    # ⚠️⚠️ **不能直接用 `("127.0.0.1", 0)`（随机端口）**（2026-10-15 修）：
+    # 在本机（受限/带防火墙的环境）实测：绑 `127.0.0.1:0` **报成功**、
+    # 拿到的端口号看着正常，但**连过去是 `WinError 10061 目标计算机积极拒绝`**；
+    # 换成固定端口（18765）则完全正常。
+    # 原写法让这条用例在**这台机器上必然失败**，而它测的是"HTTP 下载/续传"，
+    # 跟端口选法无关 —— 属于**测试基础设施**的问题，不是产品问题。
+    # 现在：逐个候选端口**真连一次**验证可用，再用它起服务。
+    srv = _start_local_server(H)
     url = f"http://127.0.0.1:{srv.server_address[1]}/model.bin"
 
     root = os.path.join(_SANDBOX, "httpdl")

@@ -24,6 +24,10 @@ from desktop.services import model_manager
 
 
 class WelcomePage(Page):
+    # ⚠️ 这一页的标题**故意不等于导航名**（导航是「开始」）：
+    # 它是首次使用时的欢迎页，标题写成问候语更自然；导航名是"动作"。
+    # 这是**唯一一个例外**，`tools/test_design_consistency.py` 里显式豁免，
+    # 其它页面必须严格"标题 = 导航名"。
     TITLE = "欢迎使用 Lyric2TTML"
     SUBTITLE = "普通歌词（TXT/LRC）+ 音频 → Apple Music / AMLL 逐字歌词。"
 

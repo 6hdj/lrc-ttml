@@ -35,7 +35,8 @@ KIND_LABEL = {
 
 
 class TasksPage(Page):
-    TITLE = "任务"
+    # 标题 = 导航项名字（见 home.py 的同款说明）
+    TITLE = "任务中心"
     SUBTITLE = "转换和模型下载都在这里；关了软件再打开，历史还在。"
 
     def build(self) -> QWidget:

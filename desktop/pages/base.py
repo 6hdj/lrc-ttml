@@ -117,12 +117,24 @@ _QSS_TEMPLATE = """
       颜色走调色板（随主题变）。**不要在页面里另写一套数字** ——
       那正是重构前"每个页面各写一套、拼在一起不像一套软件"的根源。
    ============================================================================ */
+/* ⚠️⚠️ 容器控件默认**必须透明**（2026-10-15 靠"看截图"查出的真 bug）。
+   Phase 1 的模板写的是 `QWidget { background: {{bg}}; }` —— 那是**通配**规则，
+   会命中**每一个**控件，包括 `row()` / `col()` 造出来的匿名容器。
+   后果（截图里一眼就能看到、任何属性断言都测不出来）：
+   · 白色卡片内部出现一条条**灰色横带**（容器自己在画页面底色），
+     输入行、按钮行、提示行全都被"贴"了灰底，界面看着像拼出来的；
+   · 主按钮的蓝色底也被盖掉（后来查明主因是 `QStackedWidget` 上的
+     控件级样式表，见 main_window.py，但这条通配规则同样在放大问题）。
+   现在：**只有明确要画底的那几层**负责背景 —— 窗口、页面栈、侧边栏、卡片。
+   所有交互控件（输入框/下拉/进度条/表格/文本域…）都有自己的规则，不受影响。 */
 QWidget {
-    background: {{bg}};
+    background: transparent;
     color: {{text}};
     font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
     font-size: {{FS_BODY}};
 }
+/* 真正"画底"的层（其余一律透明，靠这层透出来） */
+QMainWindow, QDialog, QStackedWidget { background: {{bg}}; }
 QLabel { background: transparent; }
 QLabel#h1 { font-size: {{FS_H1}}; font-weight: 600; }
 QLabel#h2 { font-size: {{FS_H2}}; font-weight: 600; }

@@ -35,7 +35,8 @@ CATEGORY_ORDER = [
 
 
 class ModelsPage(Page):
-    TITLE = "模型"
+    # 标题 = 导航项名字（见 home.py 的同款说明）
+    TITLE = "模型管理"
     SUBTITLE = "安装包不含模型权重：这里按需下载，下完会校验，之后完全离线。"
 
     def build(self) -> QWidget:

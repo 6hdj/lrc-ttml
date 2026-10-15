@@ -183,6 +183,144 @@ for key, _t, _tip in NAV:
     else:
         check(True, f"{key}: 无 Enter 语义（不接）")
 
+# ================================================================
+# 以下三条是 2026-10-15 **靠"看截图"查出来的真 bug** 的回归守卫。
+# 它们都属于"属性断言测不出来、只有渲染出来才看得见"的那一类。
+# ================================================================
+print("\n[7] 页面标题必须**等于**导航项名字（否则就是「拼接感」）")
+# ⚠️ 起因：导航叫「歌词工作台」，页面标题却写「制作逐字歌词」；
+# 「任务」/「模型」同样对不上 —— 用户点了一个名字、页面写着另一个名字。
+# 任务书把这种叫"页面拼接感"。唯一豁免：欢迎页（标题是问候语）。
+EXEMPT = {"welcome"}
+for key, label, _tip in NAV:
+    page = w._pages.get(key)
+    title = getattr(page, "TITLE", "")
+    if key in EXEMPT:
+        check(True, f"{key}: 豁免（欢迎页标题故意是问候语）")
+    else:
+        check(title == label, f"{key}: 标题 == 导航名（{title!r} vs {label!r}）")
+
+print("\n[8] 容器控件不许挂 setStyleSheet（会外溢到子树、盖掉设计系统）")
+# ⚠️⚠️ 起因（真 bug，主按钮因此**不可见**）：
+# `main_window.py` 写过 `self.stack.setStyleSheet("background: transparent;")`。
+# Qt 的规则是**控件级样式表对该控件及其子树优先级高于应用级样式表** ——
+# 于是页面里所有按钮的底色被强制透明：主按钮只剩白字画在浅灰页面上，
+# 整条「开始制作」看不见（截图里一眼可见，任何属性断言都测不到）。
+#
+# ⚠️ **判据必须是"运行时的控件树"，不能是扫源码文本**（我自己第一版写错过）：
+# 源码里那行是 `self.stack.setStyleSheet(...)` —— **变量名看不出类型**，
+# 文本匹配 `QStackedWidget` 根本匹配不到，于是变异验证显示"没抓到"。
+# 正确做法：真去遍历控件树 —— **凡是有非空 styleSheet 且还有子控件的，
+# 就是外溢源**（叶子控件如 QLabel 上挂样式表是安全的）。
+from PySide6.QtWidgets import QWidget as _QW  # noqa: E402
+from desktop.pages.base import Page as _Page  # noqa: E402
+
+_containers_with_ss = []
+_ss_build_errs = []
+_roots = [w] + [w._pages.get(k) for k, _t, _tip in NAV]
+for _root in _roots:
+    if _root is None:
+        continue
+    # ⚠️⚠️ **不能"构建失败就 continue"**（我第一版就这么写，导致整条检查空过）：
+    # `MainWindow` **不是** `Page`，没有 `ensure_built()` —— 抛 AttributeError
+    # 被 `except: continue` 吞掉，于是**主窗口从来没被扫过**，
+    # 我要抓的那个 `self.stack.setStyleSheet(...)` 正好挂在主窗口上 → 变异验证
+    # 显示"没抓到"。这正是本项目最怕的"假绿"：异常被吞、检查静默通过。
+    # 现在：只有 `Page` 才需要 ensure_built，失败**记为错误**（不静默跳过）。
+    if isinstance(_root, _Page):
+        try:
+            _root.ensure_built()
+        except Exception as e:                          # noqa: BLE001
+            _ss_build_errs.append(f"{type(e).__name__}: {str(e)[:60]}")
+            continue
+    for _wd in _root.findChildren(_QW):
+        _ss = _wd.styleSheet()
+        if not _ss:
+            continue
+        if _wd.findChildren(_QW):           # 有子控件 ⇒ 是容器 ⇒ 会外溢
+            _containers_with_ss.append(
+                f"{type(_wd).__name__}"
+                f"{'#' + _wd.objectName() if _wd.objectName() else ''}"
+                f"({len(_ss)}字符)")
+check(not _ss_build_errs, "样式表扫描时页面都能构建（否则会空过）",
+      str(_ss_build_errs[:2]))
+for _k, _l, _t in NAV:
+    _pg = w._pages.get(_k)
+    if _pg is not None and _pg.styleSheet():
+        _containers_with_ss.append(f"{_k} 页根控件")
+check(not _containers_with_ss,
+      "容器控件上没有 setStyleSheet（样式只由设计系统管）",
+      str(_containers_with_ss[:3]))
+
+print("\n[9] 卡片内部不许出现「灰条带」（容器必须透明）")
+# ⚠️ 起因：`QWidget { background: {{bg}} }` 是**通配**规则，会命中
+# `row()`/`col()` 造出来的匿名容器 → 白卡片内部出现一条条灰色横带。
+# 现在 QWidget 默认 transparent，只有 窗口/页面栈/侧边栏/卡片 负责画底。
+from PySide6.QtCore import QPoint  # noqa: E402
+from PySide6.QtWidgets import QWidget as _QW  # noqa: E402
+
+_bands = []
+for key, _t, _tip in NAV:
+    pg = w.show_page(key)
+    for _ in range(8):
+        app.processEvents()
+    pg.ensure_built()
+    for _ in range(6):
+        app.processEvents()
+    img = w.grab().toImage()
+
+    def _in_card(x):
+        p = x.parentWidget()
+        while p is not None:
+            if p.objectName() in ("card", "cardFlat"):
+                return p
+            p = p.parentWidget()
+        return None
+
+    for holder in pg.findChildren(_QW):
+        if holder.objectName() not in ("", None):
+            continue
+        # ⚠️⚠️ **必须跳过隐藏控件**（否则全是误报，真踩到）：
+        # 「③ 高级选项」和「⑥ 平台 ID」两张卡片默认 `setVisible(False)`，
+        # 它们内部的布局容器也被隐藏 —— 但 `findChildren` 照样能找到。
+        # 拿它们的坐标去采样，采到的其实是**页面底色**（那里画的是别的卡片），
+        # 于是被误判成"灰条带"（我第一版就误报了 2 个，白查一轮）。
+        if not holder.isVisible():
+            continue
+        lay = holder.layout()
+        if lay is None or lay.count() == 0:
+            continue
+        g = holder.geometry()
+        if g.width() < 40 or g.height() < 20:
+            continue
+        card = _in_card(holder)
+        if card is None or not card.isVisible():
+            continue
+        # ⚠️ 采样点必须**不被子控件覆盖**，否则采到按钮/边框的颜色，
+        # 会把"正常"误判成"条带"（第一版就误报了 4 个）。
+        kids = [c.geometry() for c in holder.children()
+                if isinstance(c, _QW) and c.isVisible()]
+        pt = None
+        for yy in range(2, max(g.height() - 2, 3), 4):
+            for xx in range(2, max(g.width() - 2, 3), 6):
+                if any(k.contains(xx, yy) for k in kids):
+                    continue
+                pt = QPoint(xx, yy)
+                break
+            if pt:
+                break
+        if pt is None:
+            continue
+        wp = holder.mapTo(w, pt)
+        if not (0 <= wp.x() < img.width() and 0 <= wp.y() < img.height()):
+            continue
+        col = img.pixelColor(wp.x(), wp.y()).name()
+        expect = b.C["panel"] if card.objectName() == "card" else b.C["panel2"]
+        if col != expect:
+            _bands.append(f"{key}:{col}≠{expect}")
+check(not _bands, "卡片内没有「灰条带」（容器透明，显示卡片底色）",
+      str(_bands[:3]))
+
 print()
 print("=" * 76)
 print(f"  通过 {_ok} 项，失败 {_fail} 项")
