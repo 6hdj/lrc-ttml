@@ -244,6 +244,28 @@ def apply_env() -> str:
     return hub
 
 
+def apply_vendor_path() -> list:
+    """把**随包分发的纯 Python 依赖**目录加到 `sys.path`，返回加进去的目录。
+
+    2026-10-15 加：`demucs`（人声分离）是纯 Python，和 `einops` / `julius`
+    一起放在 `<程序目录>/vendor/`（冻结后 = `_internal/vendor/`，靠
+    `resource_roots()` 找）。**不能**让 PyInstaller 把它当模块分析 ——
+    那样会顺着 `import torch` 把 2.5GB 的 torch 拖进包（这正是当初
+    `--exclude-module demucs` 的原因）。
+
+    torch 由"按需运行时"提供（`apply_runtime_path()`），两者都必须在
+    **任何 import 之前**接好。
+    """
+    import sys
+    added = []
+    for root in resource_roots():
+        d = os.path.join(root, "vendor")
+        if os.path.isdir(d) and d not in sys.path:
+            sys.path.insert(0, d)
+            added.append(d)
+    return added
+
+
 def apply_runtime_path() -> list:
     """把已就绪的运行时组件目录加到 `sys.path`，返回加进去的目录。
 
@@ -286,18 +308,28 @@ def apply_runtime_path() -> list:
                         continue
                 except Exception:                       # noqa: BLE001
                     continue
-            # ⚠️ 兼容"包名目录"这种布局：有的解包会解出 `<id>/<id>/…`
-            # （wheel 里已经是 `torch/` 顶层，再套一层就变成
-            # `<id>/torch/`）。这时要加的是**里面那一层**，
-            # 否则 `import torch` 找不到（而且 `torch/lib` 也不对）。
-            # ⚠️ 但那只解决 `import torch`，**子模块**（`torch._C` 之类）
-            # 仍会因为路径多一层而报 `ModuleNotFoundError` ——
-            # 所以真正的修法是 `runtime_service._flatten_site()` 在安装时摊平。
+            # ⚠️⚠️ **默认就是 site 目录本身**，别再"往里钻一层"
+            # （2026-10-15 用户实测的真 bug）：
+            #
+            #   实际情况：site = `<数据目录>/runtime/torch`
+            #             包    = `<site>/torch/__init__.py`   ← 包在 site 下面一层
+            #   ⇒ `sys.path` 要加的是 **site**，这样 `import torch` 才命中
+            #     `<site>/torch/__init__.py`。
+            #
+            # 老判据是"`<site>/torch` 里有 `__init__.py` 就加里层" ——
+            # 可那**正是包自己的目录**，于是 `sys.path` 被指到 `<site>/torch`，
+            # `import torch` 去找 `<site>/torch/torch/__init__.py` ⇒
+            # `ModuleNotFoundError`（用户看到的是
+            # "人声分离用不了：缺少 torch._C"），
+            # 而 `--runtime-cli --status` 的加载自检走的是另一条路，
+            # 照样报"已就绪" —— **状态显示 ready、实际用不了**。
+            #
+            # 只有**双重嵌套**（`<site>/<name>/<name>/__init__.py`，
+            # 即包里又套了一层）才需要加里层。
             import_dir = d
             inner = os.path.join(d, name)
-            if os.path.isdir(inner) and (
-                    os.path.isfile(os.path.join(inner, "__init__.py"))
-                    or os.path.isfile(os.path.join(inner, "version.py"))):
+            if (not os.path.isfile(os.path.join(inner, "__init__.py"))
+                    and os.path.isfile(os.path.join(inner, name, "__init__.py"))):
                 import_dir = inner
             if import_dir not in sys.path:
                 sys.path.insert(0, import_dir)

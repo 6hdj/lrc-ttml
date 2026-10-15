@@ -53,6 +53,13 @@ def _rehome() -> str:
         try:
             from desktop import paths as _paths
             _paths.apply_runtime_path()
+            # ⚠️ **随包分发的"厂商目录"也要接上**（2026-10-15）：
+            # demucs（人声分离）是**纯 Python**，我们把它和 einops/julius 一起
+            # 放进 `<程序目录>/vendor/` 随包分发（不是作为 PyInstaller 模块，
+            # 否则分析会顺藤摸到 2.5GB 的 torch）。
+            # 它 `import torch` 时由上面的运行时路径提供 —— 所以两处都要在
+            # **任何 import 之前**接好。
+            _paths.apply_vendor_path()
         finally:
             if base in sys.path:
                 sys.path.remove(base)

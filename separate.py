@@ -23,7 +23,29 @@ from typing import Callable, Optional
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR = os.path.join(_HERE, "models", "demucs")
+
+
+def _cache_dir() -> str:
+    """Demucs 权重目录 —— **必须与模型清单的落盘位置一致**。
+
+    ⚠️⚠️ 2026-10-15 用户实测踩到：原来是 `os.path.join(_HERE, "models", "demucs")`，
+    而**冻结后 `__file__` 在 `_internal/` 里** ⇒ 跑到
+    `<程序目录>/_internal/models/demucs/hub/checkpoints` 找权重；
+    可模型清单（`model_manifest.json` 的 demucs 条目）是按
+    `verify.target` 落到 **`<程序目录>/models/demucs/hub/checkpoints`** 的。
+    两边差一层 `_internal` ⇒ **明明装好了，运行时还去重下 80MB**。
+
+    现在走 `desktop.paths.app_dir()`（冻结 = exe 旁边，源码 = 仓库根），
+    与清单、与 CAM++ 那三处资源根保持同一个口径。
+    """
+    try:
+        from desktop import paths as _p          # 不导入 Qt，安全
+        return os.path.join(_p.app_dir(), "models", "demucs")
+    except Exception:                            # noqa: BLE001
+        return os.path.join(_HERE, "models", "demucs")
+
+
+CACHE_DIR = _cache_dir()
 
 # demucs 用 torch.hub 下权重，把 TORCH_HOME 指到项目里，避免写到用户目录（沙箱会拦）
 os.environ.setdefault("TORCH_HOME", CACHE_DIR)
@@ -38,12 +60,26 @@ _lock = threading.Lock()
 
 def available() -> bool:
     """demucs 是否可用（装了包即可；权重首次使用时下载）"""
+    return why_unavailable() == ""
+
+
+def why_unavailable() -> str:
+    """demucs 用不了时返回**具体原因**（可用时返回空串）。
+
+    ⚠️ 为什么要分开：`available()` 只给 True/False，上层只能笼统说
+    "没内置 demucs" —— 而真实原因可能是**缺 torch**（按需运行时没装）、
+    缺 `einops`/`julius`/`tqdm`，或者别的导入错误。用户看到的提示必须
+    指对方向，否则又是一次"软件在说谎"（2026-10-15 实测踩过）。
+    """
     try:
         import demucs.pretrained  # noqa: F401
         import demucs.apply       # noqa: F401
-        return True
-    except Exception:
-        return False
+        return ""
+    except Exception as e:                          # noqa: BLE001
+        name = type(e).__name__
+        if isinstance(e, ModuleNotFoundError):
+            return f"缺少 {getattr(e, 'name', '') or '依赖'}（{name}）"
+        return f"{name}: {str(e)[:120]}"
 
 
 def weights_present(model_name: str = DEFAULT_MODEL) -> bool:

@@ -262,10 +262,13 @@ class LyricToTTML:
 
         # 1.8 人声分离（可选）：后续识别/声纹都用干净的人声轨 ----------------
         work_audio = audio_path
+        # ⚠️ "为什么没有干净人声轨"——**照实记下来**，留给 5.7 的提示用。
+        self._sep_reason = "没开「先做人声分离」"
         if self.opt.separate_vocals:
             vocals = self._separate_vocals(audio_path, song_title, notes)
             if vocals:
                 work_audio = vocals
+                self._sep_reason = ""
 
         # 2. 语音识别 ------------------------------------------------------
         lang = whisper_language_code(self.opt.language)
@@ -365,9 +368,14 @@ class LyricToTTML:
                 else:
                     self.log("[尾音] 没有检测到需要补的拖音")
             else:
-                self.log("[尾音/起音] 跳过：没开 --separate-vocals，"
-                         "原始混音无法可靠区分人声与伴奏（开分离后可启用）")
-                notes.append("句尾拖音补全与首字起音对齐已跳过（未分离人声轨）")
+                # ⚠️ **原因必须照实说**（用户 2026-10-15 实测踩到）：
+                # 原来一律写"没开 --separate-vocals"，可用户**明明勾了** ——
+                # 真实原因是分离没跑起来（打包版没内置 demucs / 分离失败）。
+                # 误导性提示比没有提示更糟：用户会反复去点那个已经勾上的开关。
+                why = getattr(self, "_sep_reason", "") or "人声分离没有生效"
+                self.log(f"[尾音/起音] 跳过：{why}，"
+                         f"没有干净人声轨就没法可靠区分人声与伴奏")
+                notes.append(f"句尾拖音补全与首字起音对齐已跳过（{why}）")
 
         # 5.8 同歌手行不许重叠（铁律 4）--------------------------------------
         # 放在尾音补全**之后**：补全本身已按"同歌手不越过下一行"设了上限，
@@ -781,10 +789,27 @@ class LyricToTTML:
         try:
             from separate import VocalSeparator, available
         except Exception as e:
+            self.log(f"[分离] ✗ 人声分离模块不可用：{type(e).__name__}: {e}")
             notes.append(f"⚠ 人声分离不可用（{type(e).__name__}），改用原始音频")
+            self._sep_reason = f"人声分离模块不可用（{type(e).__name__}）"
             return None
         if not available():
-            notes.append("⚠ 未安装 demucs，跳过人声分离")
+            # ⚠️⚠️ **必须说出来，而且要说准**（2026-10-15 用户实测）：
+            # 打包版以前**没有内置 demucs**，`available()` 恒为 False；
+            # 这里以前只往 notes 里塞一句（要翻到最后才看得到），
+            # 日志里一个 `[分离]` 都没有 —— 结果拖音那步把原因说成
+            # "**没开 --separate-vocals**"，而用户明明勾了。
+            # 现在：用 `why_unavailable()` 报**具体**原因
+            # （缺 torch？缺 einops？），并同时进日志与 notes。
+            try:
+                from separate import why_unavailable as _why
+                reason = _why() or "demucs 不可用"
+            except Exception:                            # noqa: BLE001
+                reason = "demucs 不可用"
+            self.log(f"[分离] ✗ 人声分离用不了：{reason} —— 已改用原始音频；"
+                     f"句尾拖音补全依赖人声轨，本次会跳过")
+            notes.append(f"⚠ 人声分离不可用（{reason}），跳过")
+            self._sep_reason = f"人声分离不可用（{reason}）"
             return None
 
         out_path = vocals_cache_path(audio_path, self.opt.demucs_model)
@@ -809,6 +834,7 @@ class LyricToTTML:
         except Exception as e:
             self.log(f"[分离] ✗ 失败：{type(e).__name__}: {str(e)[:150]}")
             notes.append(f"⚠ 人声分离失败（{type(e).__name__}），改用原始音频")
+            self._sep_reason = f"人声分离失败（{type(e).__name__}）"
             return None
 
     # ------------------------------------------------------------ 风格准则

@@ -182,6 +182,12 @@ else:
           '--version 里不会有 commit；先跑 tools/make_build_info.py')
 binaries = []
 hiddenimports = ['doctor', 'envcheck', 'install', 'download_model',
+                 # ⚠️ **动态导入的标准库要显式列**（2026-10-15）：
+                 # 人声分离（vendored demucs → torch）在**运行时**才 import
+                 # `timeit` / `pickletools` 之类，静态分析看不到 ⇒ 不打包 ⇒
+                 # 冻结版报 `ModuleNotFoundError: No module named 'timeit'`。
+                 # 这些是无害的补充（都在标准库里，几十 KB），留着不影响主路径。
+                 'timeit', 'pickletools', 'copyreg', 'ctypes.util',
                  # 卸载逻辑在 uninstall_core（**故意不放在 installer_gui**：
                  # 后者开头 import tkinter，而主程序的构建排除了 tkinter）。
                  # launcher 里是延迟导入，静态分析看不到。
@@ -271,6 +277,65 @@ _excludes = ['tkinter', 'matplotlib', 'PyQt5', 'PyQt6', 'PySide2',
              'IPython', 'pytest', 'notebook', 'torch.distributed', 'scipy',
              'pandas', 'PIL', 'setuptools', 'pip', 'wheel', 'functorch',
              'nvidia', 'demucs', 'sympy', 'networkx', 'mpmath']
+# ❌❌ **不要**把 `torch` / `torchgen` 加进 `_excludes`（2026-10-15 试过，**回退了**）。
+#
+# 动机没错：只要构建期有任何东西 import 到 torch，PyInstaller 就会把它的纯 Python
+# 部分收进 PYZ，而 **PYZ 的导入器排在 `sys.path` 之前**，于是运行时组件里那份完整
+# torch 永远赢不了（报 `No module named 'torch._C'`）。
+#
+# 但**排除之后更糟**：普通转换（**根本没开人声分离**）也会在某处 import torch，
+# 于是去加载运行时那份，而它在这个冻结环境里直接自爆：
+#
+#     AttributeError: partially initialized module 'torch' from
+#       <runtime>\torch\torch\__init__.py has no attribute 'autograd'
+#       (most likely due to a circular import)
+#
+# ——**基本功能（做歌词）被搞坏了**，这比"人声分离不可用"严重得多。
+# 实测对比（同一个音频/歌词/参数）：
+#   * 不排除 torch（当前）：转换 ✓ 91.0% 匹配率；人声分离 ✗ 但**提示会说清原因**
+#   * 排除 torch：转换 ✗ 直接失败
+# ⇒ 先保住基本功能。人声分离在冻结版里的最后一公里（torch 与 PyInstaller 的
+#   导入顺序）留待专门处理，**不要**再用"排除 torch"这种会伤到主路径的改法。
+# ⚠️⚠️ **demucs 依旧"不分析"，但要作为数据随包分发**（2026-10-15）。
+#
+# 用户实测：勾了「先做人声分离」，日志却只有一行
+# 「[尾音/起音] 跳过：没开 --separate-vocals」—— 他明明勾了。
+# 真因：打包版**没有 demucs**（`available()` 恒 False）→ 静默跳过分离 →
+# 拖音补全也就没得做，而提示把责任推给了用户。
+#
+# demucs 是**纯 Python**，实测它只需要 `einops` / `julius`
+# （**不需要 torchaudio / soundfile**，`separate.py` 自己写 wav），
+# `torch` 由"按需运行时"提供。所以：不进 Analysis（避免顺着 import torch
+# 把 2.5GB 拖进来），而是按**数据**放进 `<程序目录>/vendor/`，
+# 由 `paths.apply_vendor_path()` 接上 `sys.path`。
+# 实测（`.venv` 里真 import 一遍，看新加载的三方模块）：
+#   demucs, einops, julius, tqdm, colorama, torch, numpy, yaml, typing_extensions
+# 其中 torch 走"按需运行时"，numpy / yaml 已在包里，其余**都得随包带**。
+_VENDOR_PKGS = ('demucs', 'einops', 'julius', 'colorama', 'tqdm',
+                'typing_extensions')
+
+
+def _pkg_dir(name: str) -> str:
+    """用 find_spec 定位包目录 —— **不会真的 import**（import demucs 会拉 torch）。"""
+    try:
+        import importlib.util as _iu
+        _spec = _iu.find_spec(name)
+        for _p in list(getattr(_spec, 'submodule_search_locations', None) or []):
+            if os.path.isdir(_p):
+                return _p
+    except Exception:                                    # noqa: BLE001
+        pass
+    return ''
+
+
+for _v in _VENDOR_PKGS:
+    _vd = _pkg_dir(_v)
+    if _vd:
+        datas += [(_vd, f'vendor/{_v}')]
+        print(f'[vendor] 随包分发 {_v} ← {_vd}')
+    else:
+        print(f'[vendor] ⚠️ 打包环境里没有 {_v}（人声分离在打包版里会不可用）')
+
 if not WITH_QT:
     _excludes.append('PySide6')                          # 不带 Qt 的构建要排除掉
 
