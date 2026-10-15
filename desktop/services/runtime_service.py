@@ -376,14 +376,28 @@ class RuntimeManager:
             for url in urls:
                 _stop()
                 log(f"下载 {fn}（{human(want)}）← {url.split('/')[2]}")
+                # ⚠️⚠️ **`_http_get_to_file` 的回调传的是"百分比"，不是字节**
+                # （2026-10-15 用户实测"下载显示 9.0B/528.8MB 卡着不动"）。
+                # 这里原来写成 `_b + pct`，等于把 9% 当成 9 字节：
+                #   * 消息显示 `human(9)` = "9.0B" → 用户以为是"9 字节"；
+                #   * 进度条算 `(0+9)*100/528.8MB` ≈ 0.000002% → **永远 0%**，
+                #     看着完全卡死（其实在下，只是显示全错）。
+                # 现在按"本文件的百分比"折回字节。
+                def _mk(base, want, total, p=p):
+                    def _cb(pct, msg):
+                        if pct is None:
+                            p(None, msg or "下载中…")
+                            return
+                        done = base + int(want * max(0.0, min(100.0, pct)) / 100.0)
+                        p((done * 100.0 / total) if total else None,
+                          f"下载中 {human(done)}/{human(total)}"
+                          + (f"　{msg.split('(')[-1].rstrip(')')}"
+                             if "(" in (msg or "") else ""))
+                    return _cb
                 try:
                     _http_get_to_file(
                         url, part, log=log, stop=stop, label=fn,
-                        p=lambda pct, msg, _b=base: p(
-                            ((_b + (pct or 0)) * 100.0 / total)
-                            if (total and pct is not None) else None,
-                            f"下载中 {human(int(_b + (pct or 0)))}"
-                            f"/{human(total)}"))
+                        p=_mk(done_bytes, want, total))
                 except DownloadCancelled:
                     raise
                 except Exception as e:                 # noqa: BLE001

@@ -108,6 +108,10 @@ CHECKS = [
     ("源码可跑", "安装作用域分层", ["tools/test_install_scope.py"], False,
      "安装程序只拦「影响打开」的；语音模型(3GB)与 CUDA 运行库(527MB)\n"
      "属于 convert，**不在安装阶段要求下载**（用户明确要求）"),
+    ("源码可跑", "下载进度换算", ["tools/test_progress_math.py"], False,
+     "进度的**字节数**必须和载荷同量级 —— 用户实测「下载中 9.0B/528.8MB」\n"
+     "其实是把 9% 当成了 9 字节，进度条按 9×100/528.8M 算**恒为 0%**，\n"
+     "看着像卡死（用限速的本地 HTTP 服务真下 2MB，断言语节数涨到接近全量）"),
     ("源码可跑", "设计一致性", ["tools/test_design_consistency.py"], False,
      "**用断言代替肉眼看图**：QSS 无残留占位符 + 状态齐全、\n"
      "页面无硬编码 font-size/border-radius、所有卡片内边距同源、\n"

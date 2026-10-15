@@ -104,14 +104,6 @@
       ],
       "archives": [
         {
-          "filename": "cuda-runtime-win-x64-cu12.zip",
-          "size": 554472678,
-          "sha256": "8372ad034553778cbf9d554b6b4fb397426232ef710448bcc8213c477056c9ec",
-          "urls": [
-            "https://github.com/6hdj/lrc-ttml/releases/download/cuda-runtime-cu12/cuda-runtime-win-x64-cu12.zip"
-          ]
-        },
-        {
           "_comment": "⚠️ 中国大陆备用源（第 28 轮加）。用户实测『连接被拒』（WinError 10061）时，GitHub 直链完全不可用，所以必须有国内可达的源。这一份是阿里云 PyPI 镜像上的 nvidia-cublas-cu12 wheel —— 里面就是同样两个 DLL（nvidia/cublas/bin/），解包后由 runtime_service._hoist_dlls 统一挪到 bin/。实测（本机 2026-10-14）：阿里云 0.17 MB/s（抖动大）、腾讯云 3.91 MB/s（更快）。两者都写进来，逐个回退。",
           "filename": "nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl",
           "size": 553162896,
@@ -119,6 +111,14 @@
           "urls": [
             "https://mirrors.aliyun.com/pypi/web/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl",
             "https://mirrors.cloud.tencent.com/pypi/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl"
+          ]
+        },
+        {
+          "filename": "cuda-runtime-win-x64-cu12.zip",
+          "size": 554472678,
+          "sha256": "8372ad034553778cbf9d554b6b4fb397426232ef710448bcc8213c477056c9ec",
+          "urls": [
+            "https://github.com/6hdj/lrc-ttml/releases/download/cuda-runtime-cu12/cuda-runtime-win-x64-cu12.zip"
           ]
         }
       ],

@@ -176,6 +176,19 @@ def uninstall(install_dir: str, keep_models: bool = True,
     elif os.path.isdir(hf_in_data):
         print(f"  模型缓存保留在：{data_dir}")
 
+    # ---- ②.5 运行组件（CUDA 运行库 / PyTorch）----
+    # ⚠️ 这是**用户下载的**东西（CUDA 529 MB + PyTorch 509 MB），
+    # 2026-10-15 实测：旧逻辑把它当垃圾删了 → 重装后软件认为 CUDA 没装 →
+    # 在约 0.5 MB/s 的链路上重下 529 MB。所以这里明确保留并**告诉用户它在哪**，
+    # 让想彻底删的人自己删（不能替他决定花掉这 1 GB 流量）。
+    rt = os.path.join(install_dir, "runtime")
+    if not keep_models:
+        print(f"  正在删除运行组件（CUDA / PyTorch）：{human(dir_size(rt))}")
+        shutil.rmtree(rt, ignore_errors=True)
+    elif os.path.isdir(rt) and dir_size(rt) > 0:
+        print(f"  [OK] 运行组件已保留（CUDA / PyTorch，{human(dir_size(rt))}）：{rt}")
+        print("        重装时会自动复用，不必重新下载；想彻底删掉请手动删除该目录。")
+
     # ---- ③ 桌面 / 开始菜单快捷方式 + 卸载注册表项 ----
     # ⚠️⚠️ **必须与安装用同一份逻辑**（`win_integration`），否则必然漂移：
     # 安装时写进去的开始菜单项和注册表项，卸载时漏删就成了
@@ -296,8 +309,13 @@ def _preserve_paths(install_dir: str) -> set:
       （实测 `Failed to import encodings module`），
       于是用户按提示重试也会失败 —— 必须保住。
     * 任何 PyInstaller 运行库目录（老版本布局可能不同名）。
+    * ⚠️⚠️ **`runtime/`：用户下载的运行组件（CUDA 529 MB + PyTorch 509 MB）**。
+      这是 2026-10-15 用户实测的**真事故**：他重装一次，`runtime/` 被清空，
+      软件于是认为"CUDA 没装"，**在一条约 0.5 MB/s 的链路上重下 529 MB**
+      （界面显示"下载中 9.0B/528.8MB"卡了 638 秒以上）。
+      `runtime/` 和模型缓存一样是**用户花流量换来的**，不能当垃圾删。
     """
-    keep = {EXE_NAME, "_internal"}
+    keep = {EXE_NAME, "_internal", "runtime"}
     # 兼容"onedir 但把运行库放在别处"的情况：凡是 exe 旁边的 dll 也留下
     return keep
 
@@ -460,18 +478,36 @@ def _schedule_cleanup(target: str) -> str:
     script = os.path.join(tmp, f"l2t-cleanup-{os.getpid()}.bat")
     log = os.path.join(tmp, f"l2t-cleanup-{os.getpid()}.log")
     # timeout /t 2 等 2 秒让本进程退出；然后最多重试 10 次（每次 1 秒）
+    #
+    # ⚠️⚠️ **不能直接 `rmdir /s /q "<target>"`** —— 那会把 `runtime/`
+    # （用户下的 CUDA 529 MB + PyTorch 509 MB）一起收掉，下一次装完又要重下。
+    # 2026-10-15 用户实测就是这么丢的（重装 → 认为 CUDA 没装 → 重下 529 MB，
+    # 在约 0.5 MB/s 的链路上卡了 10 分钟以上）。
+    # 所以这里**逐项删，跳过 runtime**：
+    #   * 先删所有子目录（`runtime` 除外）；
+    #   * 再删目录下的散文件（exe / bat / 说明…）；
+    #   * `runtime` 与目录本身留着 —— 下次安装直接复用。
+    # 想彻底删的用户按结尾提示删一次即可（不能替用户做，那是 1 GB 流量）。
     lines = [
         "@echo off",
-        "rem Lyric2TTML 卸载收尾：等主进程退出后删除安装目录",
+        "rem Lyric2TTML 卸载收尾：等主进程退出后清空安装目录（保留 runtime 运行组件）",
         f'echo cleanup start > "{log}"',
         "ping -n 3 127.0.0.1 > nul",
         "for /L %%i in (1,1,10) do (",
         f'  if not exist "{target}" goto done',
-        f'  rmdir /s /q "{target}" 2>nul',
+        f'  for /d %%D in ("{target}\\*") do (',
+        '    if /i not "%%~nxD"=="runtime" rd /s /q "%%D" 2>nul',
+        "  )",
+        f'  del /q "{target}\\*.*" 2>nul',
+        # ⚠️ **不带 /s**：目录空了才删得掉；还留着 runtime 时它会失败（正是我们要的）。
+        # 少了这一句，`runtime` 不存在的普通机器上目录会**残留** ——
+        # `tools/test_uninstall.py` 的"安排了清理助手但目录没被清掉"当场抓出来了。
+        f'  rd "{target}" 2>nul',
         "  ping -n 2 127.0.0.1 > nul",
         ")",
         ":done",
-        f'if exist "{target}" (echo leftover >> "{log}") else (echo clean >> "{log}")',
+        f'if exist "{target}\\Lyric2TTML.exe" (echo leftover >> "{log}") else (echo clean >> "{log}")',
+        f'if exist "{target}\\runtime" (echo kept-runtime >> "{log}")',
         'del "%~f0"',
     ]
     try:

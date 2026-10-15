@@ -74,7 +74,14 @@ def main() -> int:
     if not os.path.isfile(z):
         print("       （跳过：先跑 python tools/make_cuda_pack.py 生成 zip）")
     else:
-        a = (spec.get("archives") or [{}])[0]
+        # ⚠️ **按文件名找，不能拿 `archives[0]`** —— 顺序是"先试哪个源"，
+        # 会随网络策略调整（2026-10-15 就把国内镜像提到了第一位，
+        # 因为 github 在大陆只有约 0.5 MB/s）。这里要验的是
+        # "登记的这个 zip 和本地产物一致"，跟它排第几无关。
+        _want_zip = "cuda-runtime-win-x64-cu12.zip"
+        a = next((w for w in (spec.get("archives") or [])
+                  if w.get("filename") == _want_zip), {})
+        check(bool(a), f"清单里有 `{_want_zip}` 这一项")
         real_size = os.path.getsize(z)
         real_sha = sha256_file(z)
         check(int(a.get("size") or 0) == real_size,
