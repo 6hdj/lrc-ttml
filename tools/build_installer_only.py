@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ⚠️ 不要依赖"调用者的当前目录"：脚本可能从任何地方被调用。
@@ -161,6 +162,31 @@ else:
     print("[version] ⚠️ 没有 build/version_info.txt（先跑 tools/make_version_info.py）")
 cmd += [
        "--add-data", f"{payload_abs}{os.pathsep}payload",
+       # ⚠️⚠️ **不要用 `--runtime-tmpdir` 指到自建子目录**（2026-10-15 试过又撤掉）
+       #
+       # 背景：用户报"安装程序闪退"，抓到的原始错误是
+       #     [PYI-9588:ERROR] Could not create temporary directory!
+       # （onefile **必须**先把自己解压到 `_MEIxxxx` 才能跑；这一步失败连
+       # Python 都起不来，所以用户看不到任何提示，只有一闪）。
+       #
+       # 我一度按这个思路改成 `--runtime-tmpdir %LOCALAPPDATA%\Lyric2TTML\tmp`，
+       # 实测该选项**确实会展开环境变量**，但**又撤掉了**，原因：
+       #   * PyInstaller 只会创建 `_MEIxxxx` **最后一层**，父目录必须已存在；
+       #   * `%LOCALAPPDATA%\Lyric2TTML\tmp` 在**全新机器上是两层都不存在**的
+       #     ⇒ 会把安装程序**在正常机器上也弄坏**，而且我在这台机器上
+       #     无法验证"正常机器"（见下），不能拿用户的安装包赌。
+       #
+       # 这台机器上的实测结论（都用**计划任务**启动，脱离我的会话沙箱，避免自欺）：
+       #   * 同一环境里 `cmd` / `Python` 都能在 `%TEMP%`、`%LOCALAPPDATA%`
+       #     建目录并写文件（`icacls` 显示用户 FullControl）；
+       #   * 但**任何 PyInstaller onefile**（连 7 MB 的 hello world、
+       #     不带 runtime-tmpdir、放 E: 或 C: 都一样）都报
+       #     "Could not create temporary directory!"；
+       #   * `_MEI` 这个名字本身没被拦（cmd 能建同名目录）；
+       #   * **主程序（onedir）在用户环境里完全正常** —— 界面自检 15/15 通过。
+       # ⇒ 结论：**这台机器上 onefile 的解压环节不可用**（bootloader 层面），
+       #    与我们的代码无关。**保持默认**（用系统 TEMP）——
+       #    正常机器上本来就好用，不要为了这台机器把所有人的安装包搭进去。
        "--hidden-import", "install",
        "--hidden-import", "download_model",
        "--hidden-import", "asr",
@@ -182,6 +208,55 @@ cmd += [
 print("开始打安装程序（onefile，几分钟）…")
 rc = br.run(cmd)
 print("pyinstaller rc =", rc)
+
+# ⚠️⚠️ **onefile 在某些机器上根本起不来**（2026-10-15 用户实测"安装程序闪退"）。
+#
+# 症状：双击 → 黑框一闪就没。原始错误：
+#     [PYI-xxxx:ERROR] Could not create temporary directory!
+# onefile **必须**先把自身解压到 `_MEIxxxx` 才能跑；这一步失败连 Python 都起不来，
+# 所以用户看不到任何提示。
+#
+# 实测（都用**计划任务**启动，脱离我的会话沙箱，避免自欺）：
+#   * 同一环境里 cmd / Python 都能在 `%TEMP%`、`%LOCALAPPDATA%` 建目录写文件；
+#   * **但任何 PyInstaller onefile**（连 7 MB 的 hello world、放 E: 或 C: 都一样）
+#     都报 "Could not create temporary directory!"；
+#   * **同代码改成 onedir → 一切正常**（安装程序能起来、能真装出主程序）。
+# ⇒ 这台机器上 onefile 的解压环节不可用（bootloader 层面），与我们的代码无关。
+#   onefile 在**正常机器**上是好的（别动默认），但必须给用户一条**能走通的路**：
+#   所以额外产出一个 **onedir + ZIP** 版（解压后双击 `安装程序.exe`）。
+#   用法：`python tools/build_installer_only.py --onedir`
+_ONEDIR = "--onedir" in sys.argv
+if _ONEDIR:
+    print("")
+    print("=" * 70)
+    print("  额外产出：onedir 版安装程序（给 onefile 起不来的机器用）")
+    print("=" * 70)
+    od_dir = os.path.join(root, "build", "_installer_onedir")
+    od_name = "安装程序"
+    od_out = os.path.join(root, "build", "_installer_onedir_dist")
+    cmd2 = [a for a in cmd]
+    cmd2[cmd2.index("--onefile")] = "--onedir"
+    cmd2[cmd2.index("--name") + 1] = od_name
+    cmd2[cmd2.index("--distpath") + 1] = od_out
+    cmd2[cmd2.index("--workpath") + 1] = od_dir + "_work"
+    cmd2[cmd2.index("--specpath") + 1] = od_dir + "_spec"
+    rc2 = br.run(cmd2)
+    print("onedir pyinstaller rc =", rc2)
+    src = os.path.join(od_out, od_name)
+    if os.path.isdir(src):
+        zip_path = os.path.join(root, "dist", f"{name}-解压即用.zip")
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for base, _dirs, files in os.walk(src):
+                for f in files:
+                    p = os.path.join(base, f)
+                    zf.write(p, os.path.relpath(p, src))
+        print(f"→ {zip_path}  "
+              f"（{os.path.getsize(zip_path) / 1024 ** 2:.1f} MB，解压后双击 "
+              f"{od_name}.exe）")
+    else:
+        print(f"⚠️ onedir 产物没找到：{src}")
 
 # ⚠️ PyInstaller 6 在 `--specpath` 指向别处时，**产物可能跑到 spec 旁边**
 # 而不是 `--distpath`（实测：同名变体写到了当前工作目录、
