@@ -576,14 +576,26 @@ class RuntimeManager:
         # zip 归档是我们自己排的目录结构，flatten 反而会把 `bin/` 打平。
         if any(f.lower().endswith(".whl") for f in files):
             _flatten_site(tmp_site, log=log)
-        # ⚠️⚠️ **把所有 .dll 提到 `bin/` 下**（真踩到，第 28 轮加镜像源时发现）。
+        # ⚠️⚠️ **只有"按文件布局校验"的组件才整理 DLL，python 包绝对不行**。
         # 两种来源的目录深度**不一样**：
         #   * 我们自己的 `archives` zip     → `bin/*.dll`
         #   * PyPI 的 `nvidia-cublas-cu12`  → `nvidia/cublas/bin/*.dll`
         # 而 `_verify_files_present()` 只在 `<site>/bin/xxx` 和 `<site>/xxx` 两处找，
         # 镜像解出来的 DLL 在 `nvidia/cublas/bin/` ⇒ **明明下好了却判"缺少文件"**，
         # 然后又去重下 528 MB。统一挪到 `bin/` 下，两边口径就一致了。
-        _hoist_dlls(tmp_site, log=log)
+        #
+        # ❌❌ **但 pip 包（torch）搬不得** —— 2026-10-15 用户实测的真 bug：
+        #     torch 装完 `import torch` 报
+        #       ImportError: DLL load failed while importing _C: 找不到指定的模块
+        #     原因正是这里把 `torch/lib/` 里的 9 个依赖 DLL
+        #     （c10.dll / torch_cpu.dll / libiomp5md.dll / uv.dll …）
+        #     搬到了 `<site>/bin/`，而 `torch/_C.pyd` 是按**相对自己**的
+        #     `torch/lib/` 找它们的 → 一个都找不到。
+        #     日志里那句 `[整理] 9 个 DLL 统一放到 bin/` 就是现场证据。
+        # ⇒ 判据：**声明了 `verify_files`（按 bin/ 布局校验）的才整理**；
+        #   torch 声明的是 `verify_load`（导入校验），不该走这一步。
+        if spec.get("verify_files"):
+            _hoist_dlls(tmp_site, log=log)
 
     def _activate(self, spec: dict, tmp_site: str, site: str, why: str,
                   log=print) -> None:

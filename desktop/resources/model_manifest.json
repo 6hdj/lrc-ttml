@@ -178,16 +178,17 @@
       "license": "MIT（Demucs）",
       "note": "只有打开「人声分离」时才需要。",
       "source": {
-        "kind": "hf",
-        "repository": "adefossez/HTDemucs",
-        "cache_key": "hub/checkpoints",
-        "hub_dir": "models/demucs"
+        "kind": "http",
+        "urls": [
+          "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th"
+        ],
+        "note": "官方权重站（Meta CDN）。实测国内 4.13 MB/s；HF 上的 adefossez/HTDemucs 是 safetensors 且布局不同，**不是** demucs 包要的那份，别再指过去。"
       },
       "verify": {
-        "kind": "hf_presence",
-        "must_have": [
-          "955717e8-8726e21a.th"
-        ]
+        "kind": "file_sha256",
+        "target": "models/demucs/hub/checkpoints/955717e8-8726e21a.th",
+        "size": 84141911,
+        "sha256": "8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4"
       }
     }
   ]
