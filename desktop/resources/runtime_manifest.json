@@ -45,8 +45,8 @@
           "size": 124110781,
           "sha256": "d02a4c48a2ca5fb7654e36e71f710f74494d83f1f10aaff8e059dd554adca956",
           "urls": [
-            "https://files.pythonhosted.org/packages/d9/dc/a36a4431ab5e3ad168a75f341e24677a4bbbf0c5dda59c97a7079262bb94/torch-2.14.1-cp314-cp314-win_amd64.whl",
-            "https://mirrors.aliyun.com/pypi/packages/d9/dc/a36a4431ab5e3ad168a75f341e24677a4bbbf0c5dda59c97a7079262bb94/torch-2.14.1-cp314-cp314-win_amd64.whl"
+            "https://mirrors.aliyun.com/pypi/packages/d9/dc/a36a4431ab5e3ad168a75f341e24677a4bbbf0c5dda59c97a7079262bb94/torch-2.14.1-cp314-cp314-win_amd64.whl",
+            "https://files.pythonhosted.org/packages/d9/dc/a36a4431ab5e3ad168a75f341e24677a4bbbf0c5dda59c97a7079262bb94/torch-2.14.1-cp314-cp314-win_amd64.whl"
           ]
         }
       ],

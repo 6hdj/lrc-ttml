@@ -413,18 +413,34 @@ class ModelManager:
 
         if kind == "files_exist":
             rel = verify["target"]
-            base = None
+            need = verify.get("must_have") or []
+            # ⚠️⚠️ **要按"文件齐不齐"挑根，不能按"目录在不在"挑**（2026-10-15 用户实测的假缺失）：
+            #
+            # 原来是"遇到第一个存在的目录就停下"，于是：
+            #   * 程序目录下 `models/campplus/` 是**声纹权重**下载放的地方
+            #     （用户下过 `campplus_cn_common.bin`，所以这个目录**存在**）；
+            #   * 而 `campplus.onnx`（随安装包提供）在 `_internal/models/campplus/`；
+            #   * 循环先命中程序目录那个 → 里面没有 onnx → 判"缺文件：campplus.onnx"，
+            #     **根本不看 `_internal`**。
+            # 后果：明明装着 ONNX 图，界面却报缺失，还让用户去"下载"；
+            # 而这张图正是「**免 PyTorch** 分声部」的关键 —— 它被判缺失后，
+            # 用户以为必须再下 500MB 的 PyTorch。
+            #
+            # 现在：把**所有**存在该目录的根都收集起来，优先选"必须文件都齐"的那个；
+            # 一个都没齐时，用第一个根如实报缺什么（并列出它在别的根里有没有）。
+            bases = []
             for root in self._model_roots():
                 cand = os.path.join(root, *rel.replace("\\", "/").split("/"))
                 if os.path.isdir(cand):
-                    base = cand
-                    break
-            need = verify.get("must_have") or []
-            if not base:
+                    bases.append(cand)
+            if not bases:
                 st.status = NOT_INSTALLED
                 st.detail = f"没有找到 {rel}"
                 st.missing = list(need)
                 return st
+            base = next((b for b in bases
+                         if all(os.path.isfile(os.path.join(b, n)) for n in need)),
+                        bases[0])
             st.location = base
             missing = [n for n in need if not os.path.isfile(os.path.join(base, n))]
             st.missing = missing

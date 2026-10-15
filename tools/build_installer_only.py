@@ -144,6 +144,22 @@ variant_dir = os.path.join(root, "build", "_installer_ship")
 cmd = [sys.executable, "-m", "PyInstaller",
        "--noconfirm", "--clean", "--onefile", "--name", name,
        ]
+# ⚠️⚠️ **双击时不能弹出控制台黑窗**（2026-10-15 用户实测："软件运行和安装的时候
+# 不能有这个命令窗口"）。
+#
+# 安装程序原来只有 `--onefile`，**没有** `hide_console` —— exe 是控制台子系统的，
+# 双击就弹一个黑框，里面滚着 `[检查] 程序目录…`、huggingface 的下载进度条，
+# 甚至把**它启动的主程序**的输出也一起显示在里面（子进程继承了那个控制台）。
+# 用户看到的就是"装个软件还开个命令行"。
+#
+# `--hide-console hide-early` 是两全的做法（主程序已经用它跑了很久）：
+#   * **双击**（程序自己拥有控制台窗口）→ bootloader 立刻把窗口隐藏 ⇒ 看不到黑框；
+#   * **从已有控制台 / 带着管道启动**（我们的 `--e2e` 自动化测试、`--version`、
+#     用户自己在 cmd 里跑）→ 控制台**不属于它**，所以**不隐藏**，
+#     stdout/stderr 照常可用 ⇒ 测试仍然抓得到输出（`test_peruser_e2e` /
+#     `accept_frozen` 都靠这个）。
+# ⇒ **不要**改成 `--windowed`：那样 `sys.stdout` 会是 None，自动化全瞎。
+_HIDE_CONSOLE = "hide-early"
 # `--uac-admin` 已移除：见上面的说明。**不要**加回来。
 # ⚠️ 安装程序**自己也要带图标** —— 它是用户双击/下载的那个文件。
 # 没有图标的话用户在资源管理器里看到的是一张白板，"第一印象"就废了。
@@ -161,6 +177,8 @@ if os.path.isfile(_vi):
 else:
     print("[version] ⚠️ 没有 build/version_info.txt（先跑 tools/make_version_info.py）")
 cmd += [
+       # 双击不弹黑窗；从控制台/管道启动时不隐藏（见上面 _HIDE_CONSOLE 的说明）
+       "--hide-console", _HIDE_CONSOLE,
        "--add-data", f"{payload_abs}{os.pathsep}payload",
        # ⚠️⚠️ **不要用 `--runtime-tmpdir` 指到自建子目录**（2026-10-15 试过又撤掉）
        #
