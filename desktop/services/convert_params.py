@@ -75,6 +75,7 @@ _FIELDS = [
     ("explicit_policy", _as_str, "keep"),
     ("detect_muted", _as_bool, False),
     ("separate_vocals", _as_bool, False),
+        ("allow_same_agent_overlap", _as_bool, False),
     ("demucs_model", _as_str, "htdemucs"),
     ("extend_tails", _as_bool, True),
     ("verify_amll", _as_bool, True),

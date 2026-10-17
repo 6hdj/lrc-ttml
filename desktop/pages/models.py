@@ -90,6 +90,27 @@ class ModelsPage(Page):
                  "和「人声分离」才需要。"),
         )
 
+        # ---------------------------------------------------------------
+        # 可选运行库：Demucs 人声分离 Worker（**多组件**，走运行组件那套机制）
+        # ---------------------------------------------------------------
+        # 为什么要单列一块：Worker 是"可选组件"，主程序**永不 import 它的 torch**，
+        # 只通过子进程调用。它被拆成多个 ≤700MB 的组件包，装完还要跑自检才算数，
+        # 所以状态比普通运行组件复杂（下载中/暂停/校验中/安装中/自检失败/版本不兼容…）。
+        self._wk_rows: Dict[str, Dict[str, Any]] = {}
+        self.lb_wk = hint("正在读取人声分离运行库状态…")
+        self._wk_body = QWidget()
+        self._wk_lay = QVBoxLayout(self._wk_body)
+        self._wk_lay.setContentsMargins(0, 0, 0, 0)
+        self._wk_lay.setSpacing(8)
+        wk_card = self.card_with(
+            h2("人声分离运行库（可选）"),
+            self.lb_wk,
+            self._wk_body,
+            hint("装了这个才有「先做人声分离」和依赖它的人声轨句尾拖音补全。"
+                 "不装也不影响其他功能：歌词识别、时间轴对齐、TTML 导出照常。"
+                 "它是**独立进程**，不会把 PyTorch 拖进主程序。"),
+        )
+
         inner = QWidget()
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(22, 18, 22, 22)
@@ -97,10 +118,13 @@ class ModelsPage(Page):
         lay.addWidget(page_header(self))
         lay.addWidget(head)
         lay.addWidget(rt_card)
+        lay.addWidget(wk_card)
         lay.addWidget(self.body)
         lay.addStretch(1)
 
         self._build_rows()
+        self._build_rt_rows()
+        self._build_wk_rows()
         self._build_rt_rows()
         # 第一眼就要是真实状态，不能停在 build() 里写的那句占位文字
         try:
@@ -201,6 +225,173 @@ class ModelsPage(Page):
         n = len(states)
         self.lb_rt.setText(f"{ready}/{n} 个运行组件已就绪"
                           if n else "清单里没有运行组件")
+
+    # ------------------------------------------------- 人声分离 Worker（可选运行库）
+    def _build_wk_rows(self) -> None:
+        """画 Worker 那一行（**单行**：它是一组组件，对用户就是一个东西）。"""
+        while self._wk_lay.count():
+            item = self._wk_lay.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._wk_rows.clear()
+        try:
+            from desktop.services import worker_service as ws
+            m = ws.load_manifest()
+        except Exception as e:                                # noqa: BLE001
+            self.lb_wk.setText(f"读运行库清单失败：{type(e).__name__}: {e}")
+            return
+        total = int(m.get("total_compressed_bytes") or 0)
+        lb_state = QLabel("…")
+        lb_state.setObjectName("dim")
+        lb_detail = QLabel(f"约 {total / 1048576:.0f} MB（{len(m.get('components') or [])} 个组件包）")
+        lb_detail.setObjectName("faint")
+        lb_src = QLabel("")
+        lb_src.setObjectName("faint")
+        # 「各组件大小 + 总下载量」（用户要求进模型管理页就能看到要下多大）
+        # 组件多且名字长，用一行列表 + tooltip 给全量，不占版面。
+        comps = m.get("components") or []
+        parts = [f"{c.get('id')} {int(c.get('bytes') or 0) / 1048576:.0f}MB"
+                 for c in comps]
+        lb_comps = QLabel("组件：" + " · ".join(parts)
+                          if parts else "组件清单为空")
+        lb_comps.setObjectName("faint")
+        lb_comps.setWordWrap(True)
+        lb_comps.setToolTip("\n".join(
+            f"{c.get('id')}：{int(c.get('bytes') or 0) / 1048576:.1f} MB"
+            f"（解压后 {int(c.get('uncompressed_bytes') or 0) / 1048576:.0f} MB，"
+            f"{c.get('files')} 个文件）" for c in comps))
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setValue(0)
+        bar.setTextVisible(True)
+        bar.setVisible(False)
+        btn = button("下载并安装", on_click=lambda _=False: self._install_worker())
+        btn_cancel = button("取消", on_click=lambda _=False: self._cancel_worker())
+        btn_retry = button("重试", on_click=lambda _=False: self._install_worker())
+        btn_check = button("校验", on_click=lambda _=False: self._check_worker())
+        btn_remove = button("删除", on_click=lambda _=False: self._remove_worker())
+        for b in (btn_cancel, btn_retry, btn_check, btn_remove):
+            b.setVisible(False)
+        box = QWidget()
+        row_lay = QVBoxLayout(box)
+        row_lay.setContentsMargins(0, 2, 0, 2)
+        top = QWidget()
+        tl = QHBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(lb_state)
+        tl.addWidget(lb_detail)
+        tl.addStretch(1)
+        for b in (btn, btn_cancel, btn_retry, btn_check, btn_remove):
+            tl.addWidget(b)
+        row_lay.addWidget(top)
+        row_lay.addWidget(bar)
+        row_lay.addWidget(lb_comps)
+        row_lay.addWidget(lb_src)
+        row_lay.addWidget(hint("Demucs 人声分离（htdemucs，GPU/CUDA）。装完会自动"
+                               "跑一次自检（torch._C / CUDA 是否可用），自检不过"
+                               "就不启用、也不覆盖已装的旧版本。"))
+        self._wk_rows["worker"] = {
+            "state": lb_state, "detail": lb_detail, "src": lb_src, "bar": bar,
+            "dl": btn, "cancel": btn_cancel, "retry": btn_retry,
+            "check": btn_check, "remove": btn_remove}
+
+    @property
+    def _wk_svc(self):
+        """进程内单例（界面 400ms 轮询要复用同一个，否则取消按不到）。"""
+        svc = getattr(self, "_wk_svc_obj", None)
+        if svc is None:
+            from desktop.services import worker_service as ws
+            svc = ws.WorkerService()
+            self._wk_svc_obj = svc
+        return svc
+
+    def _refresh_worker(self) -> None:
+        r = self._wk_rows.get("worker")
+        if not r:
+            return
+        try:
+            snap = self._wk_svc.snapshot()
+        except Exception as e:                                # noqa: BLE001
+            self.lb_wk.setText(f"读运行库状态失败：{type(e).__name__}: {e}")
+            return
+        from desktop.pages.base import STATUS_COLOR
+        st = snap.get("state", "")
+        label = {
+            "not_installed": "未安装", "downloading": "下载中", "paused": "已暂停",
+            "failed": "下载失败", "verifying": "校验中", "installing": "安装中",
+            "selftest_failed": "自检失败", "installed": "已安装",
+            "incompatible": "版本不兼容",
+        }.get(st, st or "未知")
+        color = {"installed": STATUS_COLOR.get("ready", "#2e9e5b"),
+                 "not_installed": C["dim"],
+                 "failed": STATUS_COLOR.get("failed", "#c0392b"),
+                 "selftest_failed": STATUS_COLOR.get("failed", "#c0392b"),
+                 "incompatible": "#c07f00"}.get(st, C["dim"])
+        r["state"].setText(f"Demucs 人声分离运行库：{label}")
+        r["state"].setStyleSheet(f"color: {color}; font-weight: 600;")
+        busy = st in ("downloading", "verifying", "installing")
+        if snap.get("installed_version") or snap.get("want_version"):
+            v = snap.get("installed_version") or snap.get("want_version")
+            r["detail"].setText(f"版本 {v}")
+        # 进度 + 当前源 + 速度（用户要求界面显示这些）
+        if busy:
+            pct = float(snap.get("progress") or 0) * 100
+            r["bar"].setVisible(True)
+            r["bar"].setValue(int(pct))
+            got, tot = int(snap.get("downloaded") or 0), int(snap.get("total") or 0)
+            sp = float(snap.get("speed_bps") or 0)
+            r["bar"].setFormat(f"{pct:.0f}%　{got/1048576:.1f}/{tot/1048576:.1f} MB"
+                               + (f"　{sp/1048576:.2f} MB/s" if sp else ""))
+            r["src"].setText(f"下载源：{snap.get('source') or '—'}")
+            r["src"].setVisible(True)
+        else:
+            r["bar"].setVisible(False)
+            r["src"].setVisible(bool(snap.get("detail")))
+            r["src"].setText(str(snap.get("detail") or ""))
+        # ⚠️ **没有可用下载源就不让点**：按钮点了必然失败，不如当场说明
+        #    （用户要求"不得把未经验证的地址写成已支持"）。
+        s_ready = bool(snap.get("sources_ready", True))
+        r["dl"].setVisible(st in ("not_installed", "incompatible"))
+        r["dl"].setEnabled(s_ready)
+        r["dl"].setToolTip("" if s_ready else str(snap.get("sources_reason") or ""))
+        r["cancel"].setVisible(st == "downloading")
+        r["retry"].setVisible(st in ("failed", "paused", "selftest_failed"))
+        r["check"].setVisible(st in ("installed", "incompatible"))
+        r["remove"].setVisible(st in ("installed", "incompatible"))
+        self.lb_wk.setText("已安装：人声分离可用" if st == "installed"
+                           else "未安装（不影响其他功能）" if st == "not_installed"
+                           else label)
+
+    def _install_worker(self) -> None:
+        import threading
+        svc = self._wk_svc
+        r = self._wk_rows.get("worker")
+
+        def work():
+            try:
+                res = svc.install()
+            except Exception as e:                            # noqa: BLE001
+                res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            if not res.get("ok"):
+                self.say("人声分离运行库安装失败", str(res.get("error") or "")[:400])
+        threading.Thread(target=work, daemon=True).start()
+        self.say("已开始下载", "下载在后台进行，可随时点「取消」；"
+                  "已下载的部分会保留，重试时断点续传。")
+
+    def _cancel_worker(self) -> None:
+        self._wk_svc.cancel()
+
+    def _check_worker(self) -> None:
+        res = self._wk_svc.verify_installed()
+        self.say("自检通过 ✓" if res.get("ok") else "自检未通过",
+                 str(res.get("detail") or res.get("error") or "")[:400])
+
+    def _remove_worker(self) -> None:
+        if self.ask("删除人声分离运行库？", "删除后「先做人声分离」与尾音延长会不可用，"
+                                          "其他功能不受影响。已下载的组件包会保留"
+                                          "（下次安装不用重下）。"):
+            self._wk_svc.uninstall(remove_cache=False)
 
     def _build_rows(self) -> None:
         while self.body_lay.count():
@@ -310,6 +501,12 @@ class ModelsPage(Page):
         except Exception:                                 # noqa: BLE001
             from desktop.services import log_service
             log_service.get().exception("运行组件状态刷新失败")
+        # 人声分离运行库（可选组件）同样独立刷新：出问题不能拖垮整页
+        try:
+            self._refresh_worker()
+        except Exception:                                 # noqa: BLE001
+            from desktop.services import log_service
+            log_service.get().exception("人声分离运行库状态刷新失败")
 
     def _download_rt(self, rid: str) -> None:
         """下载并安装一个运行组件（走任务中心，可取消、可续传）。"""

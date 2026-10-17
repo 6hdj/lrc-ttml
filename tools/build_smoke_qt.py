@@ -23,8 +23,10 @@ from PyInstaller.utils.hooks import collect_all
 ROOT = r"%s"
 WORK = os.getcwd()
 
-datas = [(os.path.join(ROOT, "desktop/resources/model_manifest.json"),
-          "desktop/resources")]
+# 自动收集 desktop/resources/*.json（避免新增清单被漏掉）
+import glob as _glob
+datas = [(_f, "desktop/resources") for _f in
+         sorted(_glob.glob(os.path.join(ROOT, "desktop/resources/*.json")))]
 binaries = []
 hidden = ["desktop", "desktop.app", "desktop.main_window", "desktop.context",
           "desktop.paths", "desktop.config", "desktop.fileguess",

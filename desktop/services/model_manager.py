@@ -247,7 +247,19 @@ class ModelManager:
         if hub_dir:
             rel = hub_dir.replace("\\", "/").split("/")
             return os.path.join(self.app_dir, *rel)
-        return self.hf_cache
+        base = self.hf_cache
+        # ⚠️ 数据目录（可写）里没有这个模型时，回退到**程序目录下的旧 .hf_cache**（只读复用）。
+        # 本机限制导致 LocalAppData 不可写 ⇒ 数据缓存换到程序目录；但老用户已下好的 3GB 大模型
+        # 还在 backend\.hf_cache 里（junction），不回退就会显示"未安装"。
+        ck = (spec.get("source") or {}).get("cache_key")
+        if ck and not os.path.isdir(os.path.join(base, ck)):
+            try:
+                legacy = paths.legacy_hf_cache()
+            except Exception:
+                legacy = ""
+            if legacy and os.path.isdir(os.path.join(legacy, ck)):
+                return legacy
+        return base
 
     def hf_snapshot_dir(self, cache_key: str, spec: Optional[dict] = None) -> Optional[str]:
         """这个仓库的权重目录（有内容才算）。
@@ -338,6 +350,10 @@ class ModelManager:
             if not files:
                 st.status = NOT_INSTALLED
                 st.detail = "缓存里没有这个模型"
+                # ⚠️ 必须给可下载：HF 型模型以前只在 file_sha256 分支置 can_download，
+                # 结果界面里 whisper-medium/small 的「下载」永远是灰的（用户实测）。
+                st.can_download = True
+                st.download_hint = "点「下载」补齐"
                 return st
             want = verify.get("files") or {}
             missing = [n for n in want if n not in files]
@@ -366,12 +382,18 @@ class ModelManager:
             if not files:
                 st.status = NOT_INSTALLED
                 st.detail = "缓存里没有这个模型"
+                st.can_download = True
+                st.download_hint = "点「下载」补齐"
             elif missing:
                 st.status = FAILED
                 st.detail = "缺文件：" + "、".join(missing)
+                st.can_download = True
+                st.download_hint = "重新下载"
             elif st.present_bytes < 10 * 1024 * 1024:
                 st.status = FAILED
                 st.detail = f"体积异常（只有 {human(st.present_bytes)}）"
+                st.can_download = True
+                st.download_hint = "重新下载"
             else:
                 st.status = READY
                 st.detail = f"文件齐全（{human(st.present_bytes)}）"
@@ -503,6 +525,16 @@ class ModelManager:
             if kind == "bundled":
                 return self.check(model_id)
             if kind == "hf":
+                # ① 先试官方直链源（魔搭 ModelScope）：国内可直连、支持 Range 续传，
+                #    实测 HF 会 ConnectTimeout / peer closed 时它仍然正常。
+                direct = spec.get("direct") or {}
+                if direct.get("base") and direct.get("files"):
+                    try:
+                        return self._download_direct(spec, log, p, _stop)
+                    except DownloadCancelled:
+                        raise
+                    except Exception as e:                 # noqa: BLE001
+                        log(f"[官方源][失败] {type(e).__name__}: {str(e)[:200]}，改用 HuggingFace…")
                 return self._download_hf(spec, log, p, _stop)
             if kind == "http":
                 return self._download_http(spec, log, p, _stop)
@@ -539,6 +571,16 @@ class ModelManager:
                 last_err = e
                 log(f"[失败] {type(e).__name__}: {str(e)[:200]}")
         else:
+            # ⚠️ HF 两个端点都失败时不立刻放弃：如果有 GitHub Release 镜像（用户建议的方案），
+            # 改走镜像直链下载（同样支持断点续传、sha256 校验）。
+            if (spec.get("mirror") or {}).get("kind") == "github_release":
+                log(f"[HF] 两个端点都失败（{type(last_err).__name__}），改试 GitHub 镜像源…")
+                try:
+                    return self._download_mirror(spec, log, p, stop)
+                except DownloadCancelled:
+                    raise
+                except Exception as e:                 # noqa: BLE001
+                    log(f"[GitHub 镜像][失败] {type(e).__name__}: {str(e)[:200]}")
             raise RuntimeError(
                 f"两个端点都下载失败，最后错误：{type(last_err).__name__}: "
                 f"{str(last_err)[:200]}。可以挂代理后重试（支持断点续传），"
@@ -549,6 +591,114 @@ class ModelManager:
         st = self.check(spec["id"])
         if st.status != READY:
             raise RuntimeError(f"下载完成但校验没过：{st.detail}")
+        return st
+
+    # ------------------------------------------------------------ 官方直链源
+    def _download_direct(self, spec: dict, log, p, stop) -> ModelState:
+        """从模型官方托管源（魔搭 ModelScope）按文件直链下载。
+
+        manifest: "direct": {"kind": "modelscope",
+                             "base": "https://modelscope.cn/models/<org>/<repo>/resolve/master/",
+                             "files": {"model.bin": 3087284237, ...}}
+        每个文件用 ``_http_get_to_file`` 下载（支持 Range 续传），大小校验通过才落位，
+        落到 HF 缓存的 snapshot 目录里，这样 check() 与 HF 下载的产物完全同一套判据。
+        """
+        direct = spec.get("direct") or {}
+        base = str(direct.get("base") or "")
+        files = direct.get("files") or {}
+        if not base or not files:
+            raise RuntimeError("没有配置官方直链源")
+        hub = self.hf_cache
+        paths.ensure_dir(hub)
+        snap = os.path.join(hub, spec["source"]["cache_key"], "snapshots", "modelscope-v1")
+        paths.ensure_dir(snap)
+        log(f"官方源：{base.split('/models/')[-1].split('/resolve')[0]}")
+        for name, want in files.items():
+            stop()
+            url = base + name
+            dst = os.path.join(snap, name)
+            tmp = dst + ".part"
+            if os.path.isfile(dst) and os.path.getsize(dst) == int(want):
+                log(f"  已存在 {name}（{human(int(want))}）")
+                continue
+            log(f"  下载 {name}（{human(int(want))}）")
+            got = _http_get_to_file(url, tmp, log=log, p=p, stop=stop, label=name)
+            if int(want) and got != int(want):
+                _safe_remove(tmp)
+                raise RuntimeError(f"{name} 大小不对：应为 {want}，实际 {got}")
+            atomic_replace(tmp, dst)
+        self.invalidate(spec["id"])
+        st = self.check(spec["id"], use_cache=False)
+        if st.status != READY:
+            raise RuntimeError(f"官方源安装完成但校验没过：{st.detail}")
+        log(f"官方源安装完成 ✓（{human(st.present_bytes)}）")
+        return st
+
+    # ------------------------------------------------------------ GitHub 镜像
+    MIRROR_URL = "https://github.com/{repo}/releases/download/{tag}/{name}"
+
+    def _download_mirror(self, spec: dict, log, p, stop) -> ModelState:
+        """从 GitHub Release 资产安装模型（HF 不可用时的备用下载源）。
+
+        manifest 里每个模型可写：
+          "mirror": {"kind": "github_release", "repo": "owner/name", "tag": "models-v1",
+                     "archive": "whisper-large-v3.tar", "files": ["whisper-large-v3.tar.part1", ...],
+                     "sha256": "<整包 sha256>", "size": 123}
+        · files 按顺序下载后拼接成整包（>2GB 的资产 GitHub 不收，所以必须分卷）
+        · 整包校验 sha256/size 通过后才解包到 HF 缓存目录
+        """
+        import shutil
+        import tarfile
+
+        mirror = spec.get("mirror") or {}
+        if mirror.get("kind") != "github_release":
+            raise RuntimeError("没有配置 GitHub 镜像源")
+        repo, tag = str(mirror.get("repo") or ""), str(mirror.get("tag") or "")
+        names = [str(x) for x in (mirror.get("files") or [])]
+        if not repo or not tag or not names:
+            raise RuntimeError("GitHub 镜像缺 repo/tag/files")
+        hub = self.hf_cache
+        paths.ensure_dir(hub)
+        stage = os.path.join(hub, "_mirror")
+        paths.ensure_dir(stage)
+        archive = os.path.join(stage, str(mirror.get("archive") or (spec["id"] + ".tar")))
+        parts = []
+        for name in names:
+            url = self.MIRROR_URL.format(repo=repo, tag=tag, name=name)
+            dst = os.path.join(stage, name)
+            log(f"GitHub 镜像：{url.split('/')[2]} / {name}")
+            p(None, f"下载 {name} …")
+            _http_get_to_file(url, dst, log=log, p=p, stop=stop, label=name)
+            parts.append(dst)
+        stop()
+        if len(parts) > 1:
+            p(None, "合并分卷…")
+            with open(archive, "wb") as out:
+                for part in parts:
+                    with open(part, "rb") as f:
+                        shutil.copyfileobj(f, out, 1024 * 1024)
+        else:
+            os.replace(parts[0], archive)
+        want_size = mirror.get("size")
+        if want_size and os.path.getsize(archive) != int(want_size):
+            raise RuntimeError(f"镜像包大小不对：应为 {want_size}，实际 {os.path.getsize(archive)}")
+        if mirror.get("sha256"):
+            log("校验镜像包 SHA256 …")
+            digest = sha256_file(archive)
+            if digest.lower() != str(mirror["sha256"]).lower():
+                _safe_remove(archive)
+                raise RuntimeError(f"镜像包 SHA256 不匹配（{digest[:16]}…）")
+            log("镜像包 SHA256 一致 ✓")
+        p(None, "解包到模型缓存…")
+        with tarfile.open(archive, "r") as tf:
+            tf.extractall(hub)
+        for part in parts:
+            _safe_remove(part)
+        self.invalidate(spec["id"])
+        st = self.check(spec["id"], use_cache=False)
+        if st.status != READY:
+            raise RuntimeError(f"镜像安装完成但校验没过：{st.detail}")
+        log(f"GitHub 镜像安装完成 ✓（{human(st.present_bytes)}）")
         return st
 
     # ------------------------------------------------------------ 直链 HTTP

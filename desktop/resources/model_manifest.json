@@ -30,6 +30,18 @@
           "tokenizer.json": 2480617,
           "vocabulary.json": 1068114
         }
+      },
+      "direct": {
+        "_comment": "官方/国内官方托管源（魔搭 ModelScope）直链；优先于 HF，支持 Range 续传",
+        "kind": "modelscope",
+        "base": "https://modelscope.cn/models/pengzhendong/faster-whisper-large-v3/resolve/master/",
+        "files": {
+          "config.json": 2394,
+          "model.bin": 3087284237,
+          "preprocessor_config.json": 340,
+          "tokenizer.json": 2480617,
+          "vocabulary.json": 1068114
+        }
       }
     },
     {
@@ -55,6 +67,17 @@
           "model.bin",
           "config.json"
         ]
+      },
+      "direct": {
+        "_comment": "官方/国内官方托管源（魔搭 ModelScope）直链；优先于 HF，支持 Range 续传",
+        "kind": "modelscope",
+        "base": "https://modelscope.cn/models/pengzhendong/faster-whisper-medium/resolve/master/",
+        "files": {
+          "config.json": 2257,
+          "model.bin": 1527906378,
+          "tokenizer.json": 2203239,
+          "vocabulary.txt": 459861
+        }
       }
     },
     {
@@ -80,6 +103,17 @@
           "model.bin",
           "config.json"
         ]
+      },
+      "direct": {
+        "_comment": "官方/国内官方托管源（魔搭 ModelScope）直链；优先于 HF，支持 Range 续传",
+        "kind": "modelscope",
+        "base": "https://modelscope.cn/models/pengzhendong/faster-whisper-small/resolve/master/",
+        "files": {
+          "config.json": 2370,
+          "model.bin": 483546902,
+          "tokenizer.json": 2203239,
+          "vocabulary.txt": 459861
+        }
       }
     },
     {

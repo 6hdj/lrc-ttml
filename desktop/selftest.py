@@ -68,7 +68,12 @@ def t_paths():
     from desktop import paths
 
     eq(paths.data_dir(), _SANDBOX, "L2T_DATA_DIR 必须被尊重")
-    eq(paths.frozen(), False, "源码模式不该是 frozen")
+    # ⚠️ 这一条**不能写死**（2026-10-16 冻结版实测踩到）：
+    # 原来硬断言 `frozen() == False`，但冻结版 `--selftest` 里它**本来就是 True**，
+    # 于是第 1 组在打包版永远失败（`AssertionError: 源码模式不该是 frozen`）。
+    # 正确的断言是"**与运行环境一致**"：冻结 exe ⇒ True；源码 python ⇒ False。
+    eq(paths.frozen(), bool(getattr(sys, "frozen", False)),
+       f"frozen() 与实际运行环境不符（sys.frozen={getattr(sys, 'frozen', False)}）")
     eq(paths.portable(), False, "没放 portable.txt 就不是便携模式")
 
     # 所有子目录都必须落在数据目录下（不能跑到 Program Files / 仓库根）
@@ -88,7 +93,14 @@ def t_paths():
     # 模型缓存：程序目录下有内容时要**就地复用**（用户升级后不用重下 3GB）
     legacy = paths.legacy_hf_cache()
     ok(legacy.endswith(".hf_cache"), f"旧版缓存路径不对：{legacy}")
-    real = os.path.join(_ROOT, ".hf_cache")
+    # ⚠️ 这里**不能再用模块级 `_ROOT`**（2026-10-16 冻结版实测踩到）：
+    # `_ROOT` 是"包内目录"（源码 = 仓库根；冻结 = `_internal` 的上一级），
+    # 而这条断言要验的是**程序目录**（`app_dir()`）下的 `.hf_cache` 在不在探测列表里。
+    # 冻结版两者不是一回事 ⇒ 该组在打包版永远失败：
+    # `AssertionError: 探测列表里必须包含旧版缓存位置`。
+    # `legacy_hf_cache()` 本来就定义为"程序目录/.hf_cache"，直接用它，两种模式都对，
+    # 且检查强度不变（仍然是"必须在这个列表里"）。
+    real = legacy
     if os.path.isdir(real):
         eq(paths.hf_cache_dir(), real,
            "程序目录下已有 .hf_cache 时必须复用，不能让用户重下")
@@ -102,8 +114,23 @@ def t_paths():
     hub = paths.apply_env()
     eq(os.environ["HUGGINGFACE_HUB_CACHE"], hub, "HF 缓存环境变量没对齐")
 
-    # default_workspace：源码模式 = 仓库根（产物能直接看到）
-    eq(paths.default_workspace(), _ROOT, "源码模式的默认工作目录应是仓库根")
+    # default_workspace：源码模式 = 仓库根（产物能直接看到）；安装版 = `<数据目录>`
+    # ⚠️ 原来写死 `eq(paths.default_workspace(), _ROOT, "源码模式的默认工作目录应是仓库根")`，
+    # 冻结版必然失败（`_ROOT` 是包内的 `_internal`）。2026-10-16 冻结版实测报
+    # `期望 '<exe>/_internal'，实际 '<exe>'`。
+    # 按 `paths.default_workspace()` 自己的契约分环境断言；**"可写"这条真实要求不放松**
+    # （工作目录不可写 = 转换结果存不下，这才是这个函数要保证的东西）。
+    _ws = paths.default_workspace()
+    ok(os.path.isdir(_ws), f"默认工作目录不存在：{_ws}")
+    if getattr(sys, "frozen", False):
+        ok(_ws in (paths.app_dir(), paths.data_dir()),
+           f"冻结版的默认工作目录应是程序目录或数据目录，实际 {_ws}")
+    else:
+        eq(_ws, _ROOT, "源码模式的默认工作目录应是仓库根")
+    _probe2 = os.path.join(_ws, "probe_ws.txt")
+    with open(_probe2, "w", encoding="utf-8") as fh:
+        fh.write("hi")
+    os.remove(_probe2)
 
     # ---- 打包版的"资源在哪"（这条是真踩出来的）----
     # 冻结时 app_dir() = exe 旁边，_source_dir() = PyInstaller 的 _internal，
@@ -676,16 +703,48 @@ def t_backend_guard():
 
 @group(13, "版本号 / 文档 / 打包脚本一致性")
 def t_consistency():
+    """版本号一致性。
+
+    ⚠️⚠️ 冻结环境要**换一种取法**（2026-10-16 冻结版实测踩到）：
+    原来直接 `open(desktop/__init__.py)` 读源码 —— 冻结之后**纯 Python 模块在
+    PYZ 归档里，磁盘上没有这个文件**，于是冻结版 `--selftest` 第 13 组报
+    `FileNotFoundError: <exe>/_internal/desktop/__init__.py`。
+    正确做法（**不是跳过**）：冻结时用 **import 拿 `__version__`**，
+    并额外校验**打包进去的 `build_info.json`** 里版本一致 —— 这比对源码更贴近产物。
+    `CHANGELOG.md` 属仓库文件，冻结版没有，保持"有才查"（源码模式仍全量查）。
+    """
     import re
-    ver = None
-    init = os.path.join(_HERE, "__init__.py")
-    with open(init, encoding="utf-8") as fh:
-        m = re.search(r'__version__\s*=\s*"([^"]+)"', fh.read())
+    from desktop import paths as _paths
+
+    frozen = bool(getattr(sys, "frozen", False))
+    if frozen:
+        import desktop as _d
+        ver = getattr(_d, "__version__", "")
+        ok(ver, "冻结版拿不到 desktop.__version__（PYZ 里的模块应可 import）")
+    else:
+        init = os.path.join(_HERE, "__init__.py")
+        with open(init, encoding="utf-8") as fh:
+            m = re.search(r'__version__\s*=\s*"([^"]+)"', fh.read())
         ok(m, "desktop/__init__.py 里没有 __version__")
         ver = m.group(1)
     ok(re.match(r"^\d+\.\d+\.\d+$", ver), f"版本号格式：{ver}")
 
-    # 仓库里其它地方的版本号不能各说各话
+    # 打包产物里的 build_info.json 与代码版本必须一致（冻结时这条尤其有意义：
+    # 用户报问题时我们靠它判断"装的是哪一次构建"）
+    for _root in _paths.resource_roots():
+        bi = os.path.join(_root, "desktop", "resources", "build_info.json")
+        if os.path.isfile(bi):
+            import json as _json
+            with open(bi, encoding="utf-8") as fh:
+                info = _json.load(fh)
+            eq(str(info.get("version")), ver,
+               f"build_info.json 版本 {info.get('version')} 与 desktop 版本 {ver} 不一致")
+            if frozen:
+                # 冻结版必须真的带上了 build_info（否则上面的 eq 不会执行）
+                ok(info.get("built_at"), "build_info.json 缺 built_at")
+            break
+
+    # 仓库里其它地方的版本号不能各说各话（仓库文件；冻结版没有就跳过）
     cl = os.path.normpath(os.path.join(_HERE, "../CHANGELOG.md"))
     if os.path.isfile(cl):
         with open(cl, encoding="utf-8", errors="replace") as fh:

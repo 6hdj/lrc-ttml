@@ -186,6 +186,7 @@ def extend_line_tails(lines: Sequence, audio: np.ndarray, sr: int = SR_DEFAULT, 
                       last_line_max: float = 8.0,
                       short_thresh: Optional[float] = 0.30,
                       use_pitch: bool = True,
+                      allow_same_agent_overlap: bool = False,
                       log=None) -> List[dict]:
     """就地延伸每行的尾音。返回改动清单（便于日志/复核）。
 
@@ -220,6 +221,10 @@ def extend_line_tails(lines: Sequence, audio: np.ndarray, sr: int = SR_DEFAULT, 
             f0 = conf = None
 
     for i, line in enumerate(lines):
+        try:
+            line.overlap_with_next = False   # 复位：防重入/重跑留下陈旧标记
+        except Exception:
+            pass
         units = [u for u in (line.units or [])
                  if not getattr(u, "is_bg", False) and u.end is not None
                  and u.start is not None]
@@ -271,6 +276,15 @@ def extend_line_tails(lines: Sequence, audio: np.ndarray, sr: int = SR_DEFAULT, 
             ext = max(ext_e, ext_p)
         elif f0 is not None and ext_p >= min_extend:
             ext = ext_p
+        elif allow_same_agent_overlap and same_agent:
+            # ⚠️ 收紧（2026-10-17）：**同歌手 opt-in 只接受音高判据**，禁止能量兜底。
+            # 能量分不清"还在拖音"和"下一句已起唱"（两者都是高能量）。实测 L56
+            # 「吗 在某一天」：音高在 +0.10s 已跳到另一个音（ext_p=0），却因为尾字
+            # 0.207s<short_thresh 落到能量兜底 → 延伸 1.50s（撞 1.5s 上限），
+            # 完整盖住下一行前 3 个字 —— 旧结论里"能量会吞下一句"的复现。
+            # 所以 opt-in 下同歌手的边只信"音高在同一口气上"，没有音高证据就不延长；
+            # 跨歌手、末行、以及默认路径（flag=False）都不走这个分支。
+            ext = 0.0
         elif f0 is None:
             ext = ext_e
         elif short_thresh is not None and dur < short_thresh:
@@ -284,20 +298,37 @@ def extend_line_tails(lines: Sequence, audio: np.ndarray, sr: int = SR_DEFAULT, 
         overlap = False
         if nxt is not None:
             same_agent = (getattr(nxt, "agent", None) or "") == (getattr(line, "agent", None) or "")
-            if same_agent:
-                hard = min(hard, float(nxt.begin))      # 同歌手：不许重叠
+            if same_agent and not allow_same_agent_overlap:
+                hard = min(hard, float(nxt.begin))      # 同歌手：不许重叠（旧行为）
+            elif same_agent:
+                # 实验开关：允许**单人连唱/拖音的跨行重叠**
+                # （收紧后只有音高判据能走到这里；见上面的判据选择）
+                # 上限仍受 cross_agent_max 约束，避免无限吞掉下一句
+                hard = min(t0 + ext, float(nxt.begin) + cross_agent_max)
             else:
                 # 不同歌手：允许重叠（双人叠唱），但不能盖掉下一行太多
                 hard = min(hard, float(nxt.begin) + cross_agent_max,
                            float(nxt.end) if nxt.end else hard)
-                overlap = True
 
         new_end = min(t0 + ext, hard)
         if new_end - t0 < min_extend:
             continue
+        # 边级证据语义**统一为"实际越过下一行 begin"**（同歌手/跨歌手同一规则）：
+        # 只有真的越界才置 overlap。旧实现里跨歌手分支无条件 overlap=True，
+        # 导致 summarize()/日志把"允许重叠"误报成"发生了重叠"（计数虚高）。
+        overlap = bool(nxt is not None and new_end > float(nxt.begin) + 1e-6)
+        if overlap:
+            try:
+                line.overlap_next_begin = float(nxt.begin)
+            except Exception:
+                pass
 
         old = t0
         last.end = new_end
+        try:
+            line.overlap_with_next = bool(overlap)   # 边级证据：(本行, 下一行) 这一对允许重叠
+        except Exception:
+            pass
         if line.end < new_end:
             line.end = new_end
         fixes.append({"line": i, "text": getattr(line, "text", ""),
@@ -318,4 +349,4 @@ def summarize(fixes: Sequence[dict]) -> str:
     tot = sum(f["extend"] for f in fixes)
     return (f"补了 {len(fixes)} 处尾音，共 {tot:.2f}s"
             f"（平均 {tot / len(fixes):.2f}s/处"
-            f"{'，其中 ' + str(ov) + ' 处与下一行重叠（跨歌手叠唱）' if ov else ''}）")
+            f"{'，其中 ' + str(ov) + ' 处与下一行时间重叠（需人工复核是否侵占了下一句）' if ov else ''}）")

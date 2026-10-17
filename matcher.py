@@ -25,6 +25,8 @@ from asr import AsrWord
 # 时间轴后处理的三个算法与编辑台共用同一份实现（见 ttml_normalize 模块头）
 from ttml_normalize import clamp_units_into_line, normalize_group, overlap_pair
 
+import snapshot
+
 # --------------------------------------------------------------------------
 # 可选：有声调的拼音辅助（装了 pypinyin 精度更高，没装也能正常工作）
 # --------------------------------------------------------------------------
@@ -470,13 +472,19 @@ class LyricMatcher:
             for idx, line in enumerate(lines):
                 units = unit_lines[idx]
                 self._interpolate(units, 0.0, total_duration or (asr_units[-1].end if asr_units else 0.0))
+                snapshot.dump_units("align_interpolate_head", units, source="matcher.py",
+                                    function="LyricMatcher._interpolate", note="整曲回退路径：头部插值之后")
                 al = self._finalize_line(line, units, 0.0, total_duration or 0.0, anchored=False)
                 aligned.append(al)
                 matched_total += al.matched
                 unit_total += al.total
 
         self._fix_cross_line_overlaps(aligned)
+        snapshot.dump_lines("align_cross_line_fix", aligned, source="matcher.py",
+                            function="LyricMatcher._fix_cross_line_overlaps", note="overlap_pair 收紧行尾之后")
         self._clamp_units_into_lines(aligned)
+        snapshot.dump_lines("clamp_into_line", aligned, source="matcher.py",
+                            function="LyricMatcher._clamp_units_into_lines", note="clamp_units_into_line 之后")
 
         report = AlignReport(lines=aligned, total_units=unit_total, matched_units=matched_total,
                              anchored=anchored, warnings=warnings)
@@ -543,6 +551,8 @@ class LyricMatcher:
             return
 
         self._interpolate(units, lo, hi)
+        snapshot.dump_units("align_interpolate", units, source="matcher.py",
+                            function="LyricMatcher._interpolate", note="行内插值之后（align() 内部改写点）")
 
     def _trustworthy(self, units: List[Unit], sources: List[Unit], sims: List[float],
                      lo: float, hi: float) -> bool:
@@ -710,6 +720,8 @@ class LyricMatcher:
         「时间轴自动修复」**共用同一份实现**，避免"自动生成允许、手动改就报错"。
         """
         normalize_group(group, lo, hi, self.min_unit_duration, self.max_unit_duration)
+        snapshot.dump_units("align_normalize_group", group, source="matcher.py",
+                            function="normalize_group", note="行内归一化之后（align() 内部改写点）")
 
     def _fix_cross_line_overlaps(self, lines: List[AlignedLine]):
         """同一演唱者的相邻行不得重叠（同时保证字不越出行的 begin/end）。
@@ -719,6 +731,9 @@ class LyricMatcher:
         """
         for a, b in zip(lines, lines[1:]):
             if a.agent != b.agent:
+                continue
+            if getattr(a, "overlap_with_next", False):
+                # 边级证据：本行与紧邻下一行**实际**发生有证据的延长 → 不回收
                 continue
             new_a_end = overlap_pair(a.units, b.units, a.begin, self.min_unit_duration)
             if new_a_end is not None:

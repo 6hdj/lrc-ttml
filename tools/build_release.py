@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import glob
 import os
 import shutil
 import subprocess
@@ -253,7 +254,13 @@ def clean(keep_dist: bool = True) -> None:
     附件删掉（真踩过：跑完 --portable，94MB 的 lite zip 没了）。
     只清 PyInstaller 的中间目录和 spec；dist 里各变体的子目录由各自函数清。
     """
-    for d in ("build", f"{APP}.spec"):
+    # ⚠️⚠️ **不要删 `Lyric2TTML.spec`**（2026-10-16 实测踩到）：
+    # 它是**受 git 管理的手写项目文件**（539 行，带 L2T_WITH_QT 处理与大量设计说明），
+    # 不是 PyInstaller 的临时产物。原来这里 `for d in ("build", f"{APP}.spec")`
+    # 会把它整个删掉 —— 我实测把仓库里的 spec 删没了（`git status` 显示 ` D`）。
+    # 现在生成的 spec 落在 `build/<APP>_spec/`（见 build_exe 的 --specpath），
+    # 删 `build/` 就够，仓库文件一个都不碰。
+    for d in ("build",):
         if os.path.isdir(d):
             shutil.rmtree(d, ignore_errors=True)
         elif os.path.exists(d):
@@ -274,9 +281,16 @@ def build_exe(full: bool) -> str:
     cmd = [sys.executable, "-m", "PyInstaller",
            "--noconfirm", "--clean", "--onedir",
            "--name", APP,
+           # ⚠️⚠️ **必须给 `--specpath`**（2026-10-16 实测踩到，属自伤）：
+           # 这里传的是 `launcher.py`（脚本）而不是 `.spec` ⇒ PyInstaller 会**自动
+           # 生成** `<name>.spec` 并写到**当前目录** ⇒ 把仓库里**手写的 539 行
+           # `Lyric2TTML.spec`**（含 L2T_WITH_QT 处理与大量设计说明）**整个覆盖掉**，
+           # 只剩 70 行自动生成内容（我实测把 spec 从 539 行打成 70 行）。
+           # 指到构建中间目录后，生成物只落在 `build/` 里，仓库文件不会被碰。
+           "--specpath", os.path.join("build", APP + "_spec"),
            # index.html 也要进包（冻结后 launcher 会把 HERE 指到 exe 旁边，
            # 那里会再放一份"用户可见"的；包里这份是兜底）
-           "--add-data", "index.html;.",
+           "--add-data", os.path.join(HERE, "index.html") + ";.",
            # 这些包带数据/二进制，PyInstaller 的自动收集不一定全
            "--collect-data", "pypinyin",
            "--collect-data", "faster_whisper",
@@ -320,9 +334,21 @@ def build_exe(full: bool) -> str:
         cmd += ["--hidden-import", m]
     # 模型清单必须随包带上（第一次启动就按它检查模型；不带的话
     # 模型页一行都显示不出来）
-    cmd += ["--add-data",
-            os.path.join("desktop", "resources", "model_manifest.json")
-            + os.pathsep + os.path.join("desktop", "resources")]
+    #
+    # ⚠️⚠️ **改成自动收集 `desktop/resources/*.json`**（2026-10-16 冻结版实测踩到）：
+    # 之前这里只手写了 `model_manifest.json` 一个；我新增的
+    # `worker_manifest.json`（人声分离运行库组件清单）与既有的
+    # `runtime_manifest.json` **都没进包** ⇒ 冻结版里
+    #   * 运行库页显示"清单里没有组件"（下载按钮永远不可用）
+    #   * `--runtime-cli` 因缺 runtime_manifest.json **未捕获异常直接崩**
+    # 源码模式全绿、只有冻结版暴露。靠人记清单名必然再漏，所以用 glob。
+    _res_dir = os.path.join(HERE, "desktop", "resources")
+    for _rp in sorted(glob.glob(os.path.join(_res_dir, "*.json"))):
+        # ⚠️ 源路径**必须绝对**：本函数现在带 `--specpath`，相对源路径会按
+        #    spec 所在目录解析（实测报 `Unable to find 'build/.../index.html'`）。
+        cmd += ["--add-data", _rp + os.pathsep
+                + os.path.join("desktop", "resources")]
+    print(f"  带上资源清单 {len(glob.glob(os.path.join(_res_dir, '*.json')))} 个")
     if WITH_QT:
         # ⚠️ 只收我们真的用的三个模块。`--collect-all PySide6` 会把
         # Essentials + Addons 全拖进来（实测多约 90MB 无用 DLL）。
@@ -370,17 +396,19 @@ def build_exe(full: bool) -> str:
     #   构建期直接放进 `_internal/nvidia/`，`asr._register_cuda_dlls()` 会扫到。
     # 之前让安装程序自己 HTTP 下这 2GB，既慢又容易被网络截断（BadZipFile），
     # 纯属自找麻烦。
-    nv = os.path.join(".venvpack", "Lib", "site-packages", "nvidia")
+    # ⚠️ 源路径必须**绝对**（本函数带 `--specpath`，相对路径会按 spec 目录解析）
+    nv = os.path.join(HERE, ".venvpack", "Lib", "site-packages", "nvidia")
     if not os.path.isdir(nv):
-        nv = os.path.join(".venv", "Lib", "site-packages", "nvidia")
+        nv = os.path.join(HERE, ".venv", "Lib", "site-packages", "nvidia")
     if os.path.isdir(nv):
         cmd += ["--add-data", f"{nv}{os.pathsep}nvidia"]
         print(f"  带上 CUDA 运行库：{nv}")
     else:
         print("  ⚠ 没找到 nvidia 包，GPU 推理会失败（先 pip install "
               "nvidia-cublas-cu12 nvidia-cudnn-cu12）")
-    if os.path.isdir(os.path.join("models", "campplus_src")):
-        cmd += ["--add-data", f"models{os.pathsep}models"]
+    _models = os.path.join(HERE, "models")
+    if os.path.isdir(os.path.join(_models, "campplus_src")):
+        cmd += ["--add-data", f"{_models}{os.pathsep}models"]
     cmd.append("launcher.py")
 
     rc = run(cmd)

@@ -1,0 +1,14 @@
+<Page
+    x:Class="Lyric2TTML.Shell.Pages.PageHost"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
+    <Grid Margin="{StaticResource PageMargin}" RowSpacing="12">
+        <StackPanel Spacing="8" VerticalAlignment="Top">
+            <TextBlock x:Name="LbTitle" FontSize="{StaticResource TitleSize}" FontWeight="SemiBold" />
+            <muxc:InfoBar IsOpen="True" Severity="Informational" IsClosable="False"
+                          Title="此页尚未迁移"
+                          Message="本页在阶段 3 / 4 逐个落地。当前不提供任何假数据或假按钮。" />
+        </StackPanel>
+    </Grid>
+</Page>

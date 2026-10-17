@@ -152,6 +152,8 @@ class HomePage(Page):
         self.chk_refine = _check("低匹配率的行自动二次精修", True)
         self.chk_credits = _check("跳过「作词/作曲/演唱：」等制作人员行", True)
         self.chk_tails = _check("补全句尾拖音（避免最后一个字被硬切）", True)
+        self.chk_same_agent = _check(
+            "允许同歌手拖音跨行重叠（实验：拖音更长；部分工具/商店可能不接受；需开启人声分离）", False)
         self.chk_amll = _check("用真正的 AMLL 解析器复检一遍（推荐）", True)
         self.ed_pause = QLineEdit("0")
         self.ed_pause.setMaximumWidth(70)
@@ -177,6 +179,7 @@ class HomePage(Page):
                                self.chk_tails, self.chk_amll)):
             adv_grid.addWidget(c, 4 + i // 2, (i % 2) * 2, 1, 2)
         adv_grid.addWidget(self.chk_separate, 6, 0, 1, 4)
+        adv_grid.addWidget(self.chk_same_agent, 7, 0, 1, 4)
 
         self.adv_box = self.card_with(h2("③ 高级选项（一般不用动）"), _grid(adv_grid))
         self.adv_box.setVisible(False)
@@ -306,6 +309,7 @@ class HomePage(Page):
         self.chk_refine.setChecked(bool(c.get("refine", True)))
         self.chk_credits.setChecked(bool(c.get("skip_credits", True)))
         self.chk_tails.setChecked(bool(c.get("extend_tails", True)))
+        self.chk_same_agent.setChecked(bool(c.get("allow_same_agent_overlap", False)))
         self.chk_amll.setChecked(bool(c.get("verify_amll", True)))
         self.ed_album.setText(str(c.get("album") or ""))
         self.ed_output.setText(self.ctx.config.outputs_dir())
@@ -324,6 +328,7 @@ class HomePage(Page):
             "refine": self.chk_refine.isChecked(),
             "skip_credits": self.chk_credits.isChecked(),
             "extend_tails": self.chk_tails.isChecked(),
+            "allow_same_agent_overlap": self.chk_same_agent.isChecked(),
             "verify_amll": self.chk_amll.isChecked(),
             "album": self.ed_album.text().strip(),
             "asr_model": self._model_id(),
@@ -447,6 +452,7 @@ class HomePage(Page):
             refine=self.chk_refine.isChecked(),
             skip_credits=self.chk_credits.isChecked(),
             extend_tails=self.chk_tails.isChecked(),
+            allow_same_agent_overlap=self.chk_same_agent.isChecked(),
             verify_amll=self.chk_amll.isChecked(),
             # ⚠️ **必须传**（2026-10-15 用户实测"修改输出地址失效"）：
             # 这个框以前是纯装饰，用户改了不起作用。见 `backend_service` 里的说明。
@@ -474,11 +480,13 @@ class HomePage(Page):
         # 用户看到的就是"这个功能没用"。
         # 现在：**自动把「人声分离」勾上**并当场说明 —— 用户的意图就是要它生效，
         # 而不是要一个被静默忽略的选项。
-        if self.chk_tails.isChecked() and not self.chk_separate.isChecked():
+        if (self.chk_tails.isChecked() or self.chk_same_agent.isChecked()) \
+                and not self.chk_separate.isChecked():
             self.chk_separate.setChecked(True)
             self.log_box.appendPlainText(
-                "提示：补全句尾拖音需要先分出人声轨（伴奏会干扰拖音判断），"
-                "已自动开启「人声分离」。首次会下载 Demucs 权重（约 80MB）。")
+                "提示：补全句尾拖音 / 同歌手拖音重叠都需要先分出人声轨"
+                "（伴奏会干扰拖音判断），已自动开启「人声分离」。"
+                "首次会下载 Demucs 权重（约 80MB）。")
 
         p = self.params()
         self._save_selection()

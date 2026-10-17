@@ -23,6 +23,7 @@ os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(HERE, ".hf_cache"))
 sys.path.insert(0, HERE)
 
 from pipeline import ConvertOptions, LyricToTTML  # noqa: E402
+import audio_proxy  # noqa: E402
 import edit_api  # noqa: E402
 import edit_text  # noqa: E402
 import textread  # noqa: E402
@@ -35,6 +36,12 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 TASKS: dict = {}
 MAX_UPLOAD_MB = 300
 
+# 代理音频的后台生成状态（源路径 → {"state","note","ts"}）。
+# 为什么不直接在请求里同步转码：用户点播放时**不能等**，先发原始音频立刻出声，
+# 转码在后台做，下次打开就用上小文件了。前端可查 /api/audio_proxy 显示进度。
+_PROXY_STATE: dict = {}
+_PROXY_LOCK = threading.Lock()
+
 # 阶段 → 进度百分比（与 pipeline 的日志前缀对应）
 STAGE_PROGRESS = {
     "[1/6]": 4,
@@ -43,6 +50,11 @@ STAGE_PROGRESS = {
     "[5/6]": 84,
     "[6/6]": 94,
 }
+
+
+class TaskCancelled(Exception):
+    """用户取消（web 端）。复用桌面版已验证的模式：在 log 回调里检查标志并抛出，
+    管线的 log 调用很频繁（每个乐句/阶段都调）⇒ 取消能真正传到正在跑的任务。"""
 
 
 class Task:
@@ -58,11 +70,28 @@ class Task:
         self.result_path = None
         self.ttml = None
         self.summary = {}
+        # 本任务的输出目录（用户在界面里可改）；None = 全局 OUTPUT_DIR
+        self.out_dir = None
         # 编辑台（P1）
         self.doc = None                 # EditDoc（内存态）
         self.edit_path = None           # outputs/<id>.edit.json
+        # 取消：默认 False；用户点取消后置位，管线下次 log 时抛出
+        self.cancelled = False
+
+    def cancel(self) -> bool:
+        """请求取消。返回是否**这次调用真的改变了状态**（幂等，可重复点）。"""
+        if self.status in ("done", "error", "cancelled"):
+            return False
+        self.cancelled = True
+        self.stage = "正在取消…"
+        return True
 
     def log(self, msg: str):
+        # ⚠️ **取消检查点**：放这里而不是另开线程去杀 —— log 是管线唯一的高频回调，
+        # 覆盖 ASR 每个乐句、对齐、精修、导出，取消因此能真正中断任务，
+        # 而不是只关掉界面上的进度条（桌面版同一模式，已验收）。
+        if self.cancelled:
+            raise TaskCancelled("用户取消")
         with self.log_lock:
             self.logs.append({"t": time.strftime("%H:%M:%S"), "m": str(msg)})
             if len(self.logs) > 800:
@@ -94,6 +123,10 @@ class Task:
             "error": self.error,
             "summary": self.summary,
             "has_result": bool(self.ttml),
+            # 列表页显示用（音频文件名）；纯增量字段
+            "title": os.path.basename(str(self.params.get("audio") or "")) or self.id,
+            # 产物路径（客户端"打开 TTML / 打开所在文件夹"要用；纯增量字段）
+            "result_path": self.result_path,
         }
         if with_ttml:
             data["ttml"] = self.ttml
@@ -158,6 +191,16 @@ class Handler(BaseHTTPRequestHandler):
             self._file(os.path.join(HERE, "index.html"), "text/html; charset=utf-8")
         elif path == "/api/lookup":
             self._lookup(q)
+        elif path == "/api/tasks":
+            # 任务列表（**新增端点，纯增量**）：给新 UI 的任务中心用。
+            # 不返回 logs（体积大）；要日志就再按 id 查 /api/task。
+            # 倒序 = 最新的在前（dict 保持插入顺序）。
+            items = []
+            for t in reversed(list(TASKS.values())):
+                d = t.public()
+                d.pop("logs", None)
+                items.append(d)
+            self._json({"tasks": items, "count": len(items)})
         elif path == "/api/task":
             task = TASKS.get(q.get("id", [""])[0])
             self._json(task.public() if task else {"error": "任务不存在"}, 200 if task else 404)
@@ -182,8 +225,28 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(404)
         elif path == "/api/edit":
             self._get_edit(q.get("id", [""])[0])
+        elif path == "/api/audio-path":
+            # 给桌面版编辑台用：直接拿**本地绝对路径**（本地磁盘直读，比 HTTP 流快得多）。
+            # 安全性与 /api/audio 完全一致：只放行"该任务自己记录过的音频"。
+            self._audio_path(q.get("id", [""])[0])
         elif path == "/api/audio":
             self._audio(q.get("id", [""])[0])
+        elif path == "/api/audio_proxy":
+            # 代理缓存管理：stats=看占用，purge=清空（用户要求"缓存必须能删掉"）
+            act = (q.get("act", [""])[0] or "stats").lower()
+            if act == "purge":
+                n = audio_proxy.purge_all()
+                self._json({"ok": True, "removed": n, **_proxy_status()})
+            elif act == "build":
+                # 显式预热：编辑台打开时就提前转，别等用户点播放
+                src, err = self._resolve_audio(q.get("id", [""])[0])
+                if err:
+                    self._json(err[1], err[0])
+                else:
+                    _kickoff_proxy_build(src)
+                    self._json({"ok": True, **_proxy_status()})
+            else:
+                self._json({"ok": True, **_proxy_status()})
         elif path == "/api/info":
             import platform
             self._json({"python": platform.python_version(), "cwd": HERE})
@@ -195,30 +258,65 @@ class Handler(BaseHTTPRequestHandler):
                    ".m4a": "audio/mp4", ".aac": "audio/aac", ".ogg": "audio/ogg",
                    ".opus": "audio/opus", ".wma": "audio/x-ms-wma"}
 
-    def _audio(self, task_id: str):
-        """把该任务的**原始音频**发给浏览器，供编辑台试听/点字跳转。
-
-        必须支持 HTTP Range：`<audio>` 拖动进度条和 `currentTime = x` 都靠它，
-        否则 50MB 的 wav 每次 seek 都要重新下载。
-        ⚠️ 路径必须校验落在 uploads/ 内，防止 `?id=` 被拿来做目录穿越。
-        """
+    def _resolve_audio(self, task_id: str):
+        """任务 → 可播放的音频绝对路径。返回 ``(路径, None)`` 或 ``(None, (码, 错误体))``。"""
         task = TASKS.get(task_id)
         raw = (task.params.get("audio") if task else "") or ""
+        trusted = _audio_from_sidecar(task_id) or ""     # 本任务自己记录的路径（可信）
         if not raw:
             # 服务重启后 TASKS 是空的，但编辑态还在盘上 → 从 sidecar 取音频路径
-            raw = _audio_from_sidecar(task_id)
+            raw = trusted
         if not raw:
-            self._json({"error": "这个任务没有音频", "where": task_id,
-                        "hint": "编辑台试听只对本次转换的任务可用"}, 404)
+            return None, (404, {"error": "这个任务没有音频", "where": task_id,
+                                "hint": "编辑台试听只对本次转换的任务可用"})
+        return safe_audio_path(raw, trusted)
+
+    def _audio_path(self, task_id: str):
+        """返回该任务音频的本地绝对路径（客户端用它做本地直读）。"""
+        task = TASKS.get(task_id)
+        trusted = _audio_from_sidecar(task_id) or ""
+        raw = (task.params.get("audio") if task else "") or trusted
+        if not raw:
+            self._json({"error": "这个任务没有音频", "where": task_id}, 404)
             return
-        path, err = safe_audio_path(raw)
+        path, err = safe_audio_path(raw, trusted)
+        if err:
+            self._json(err[1], err[0])
+            return
+        self._json({"path": path})
+
+    def _audio(self, task_id: str):
+        """把该任务的音频发给播放器，供编辑台试听/点字跳转。
+
+        **优先发"小体积代理"**（见 ``audio_proxy`` 模块）：
+        用户的音频是无损 FLAC（实测 22.7~60.5 MB），直接把原始文件喂给
+        MediaPlayer 会让它为了时长/seek 索引解析整个无损流 ——
+        这正是用户说的"加载好半天"。代理只有 1~2 MB，打开快得多。
+        代理还没生成好时**立刻回退原始音频**（不能让编辑台没声音），
+        并在后台把它转出来，下次就快了。
+
+        仍然支持 HTTP Range：`<audio>` 拖进度条和 `currentTime = x` 都靠它。
+        ⚠️ 路径必须校验（sidecar 可信 / 否则收敛在 uploads/ 内），防目录穿越。
+        """
+        path, err = self._resolve_audio(task_id)
         if err:
             self._json(err[1], err[0])
             return
 
+        serve = path
         ctype = self.AUDIO_TYPES.get(os.path.splitext(path)[1].lower(),
                                      "application/octet-stream")
-        self._serve_range(path, ctype)
+        try:
+            pp = audio_proxy.proxy_path(path)
+            if os.path.isfile(pp) and os.path.getsize(pp) > 1024:
+                serve, ctype = pp, "audio/mpeg"
+            else:
+                # 首次：先发原始音频（马上有声），后台生成代理
+                _kickoff_proxy_build(path)
+        except Exception:                      # noqa: BLE001
+            pass                               # 代理出任何问题都不该影响试听
+
+        self._serve_range(serve, ctype)
 
     def _serve_range(self, path: str, ctype: str):
         """带 Range 的静态文件响应（支持 `bytes=a-b` / `bytes=a-` / `bytes=-n`）"""
@@ -329,6 +427,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._post_validate()
             elif path == "/api/text":
                 self._post_text()
+            elif path == "/api/save":
+                self._post_save()
+            elif path == "/api/task/cancel":
+                self._post_cancel()
             else:
                 self.send_error(404)
         except edit_text.TextEditError as e:
@@ -338,12 +440,31 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # pragma: no cover
             self._json({"error": f"{type(e).__name__}: {e}"}, 500)
 
+    def _post_cancel(self):
+        """取消一个任务：`{"id": "<task id>"}`。
+
+        语义（**不假装**）：
+          * 任务不存在 → 404 + 明确错误；
+          * 已结束（done/error/cancelled）→ 200 + `changed: false`（幂等，不报假成功）；
+          * 已请求取消 → 200 + `changed: true`，真正的中断由管线在下一个 log 点完成，
+            之后 `GET /api/task?id=` 会变成 `status: "cancelled"`。
+        """
+        body = self._read_json()
+        tid = str(body.get("id") or "").strip()
+        task = TASKS.get(tid)
+        if task is None:
+            self._json({"error": "任务不存在", "id": tid}, 404)
+            return
+        changed = task.cancel()
+        self._json({"id": tid, "changed": changed, "status": task.status,
+                    "stage": task.stage})
+
     # ------------------------------------------------------- 编辑台（P1）
     def _get_edit(self, task_id: str):
         task = TASKS.get(task_id)
         ttml = task.ttml if task else None
         edit_path = (task.edit_path if task and task.edit_path
-                     else edit_api.edit_path_for(task_id, OUTPUT_DIR))
+                     else edit_api.edit_path_for(task_id, (task.out_dir if task else None) or OUTPUT_DIR))
         if task and task.doc is not None:
             self._json({"doc": task.doc.to_dict(), "version": task.doc.version,
                         "source": "memory", "stats": task.doc.stats()})
@@ -355,7 +476,15 @@ class Handler(BaseHTTPRequestHandler):
         # 现在退回读产物 TTML（load_doc 会走 draft 分支重建）。
         if not ttml and not os.path.exists(edit_path):
             safe = "".join(c for c in task_id if c.isalnum() or c in "-_")
-            cand = os.path.join(OUTPUT_DIR, f"{safe}.ttml")
+            # 任务可能把产物写到了用户选的目录（output_dir）⇒ 两处都找
+            _od = (task.out_dir if task else None) or OUTPUT_DIR
+            cand = os.path.join(_od, f"{safe}.ttml")
+            if not os.path.exists(cand):
+                try:
+                    _meta = json.loads(textread.read_text(os.path.join(_od, f"{safe}.result.json")))
+                    cand = str(_meta.get("ttml") or cand)
+                except Exception:
+                    pass
             if safe and os.path.exists(cand):
                 ttml = textread.read_text(cand)
         doc, source = edit_api.load_doc(ttml, edit_path)   # 损坏会降级为 draft
@@ -369,7 +498,7 @@ class Handler(BaseHTTPRequestHandler):
         task_id = str(body.get("id") or "")
         task = TASKS.get(task_id)
         edit_path = (task.edit_path if task and task.edit_path
-                     else edit_api.edit_path_for(task_id, OUTPUT_DIR))
+                     else edit_api.edit_path_for(task_id, (task.out_dir if task else None) or OUTPUT_DIR))
         # 乐观锁拿"存储里的版本"比，不能拿提交体自比
         edit_api.check_version(
             edit_api.stored_version(task.doc if task else None, edit_path),
@@ -380,7 +509,22 @@ class Handler(BaseHTTPRequestHandler):
             doc = task.doc
         else:
             doc, _ = edit_api.load_doc(task.ttml if task else None, edit_path)
-        ttml_path = task.result_path if task else None
+        # ⚠️⚠️ 任务不在内存里（后端重启过）时必须**退回确定性路径**，
+        # 否则 ttml_path=None ⇒ apply_doc 只写 .edit.json、**不重写 TTML**
+        # ⇒ 用户看到"已保存"但打开 TTML 毫无变化（真实报告：编辑台改动没保存）。
+        _persist = bool(body.get("persist", True))
+        if task is not None:
+            ttml_path = task.result_path if _persist else None
+        else:
+            _od = (task.out_dir if task else None) or OUTPUT_DIR
+            _p = os.path.join(_od, f"{task_id}.ttml")
+            if not os.path.exists(_p):
+                try:
+                    _meta = json.loads(textread.read_text(os.path.join(_od, f"{task_id}.result.json")))
+                    _p = str(_meta.get("ttml") or _p)
+                except Exception:
+                    pass
+            ttml_path = _p if os.path.exists(_p) else None
         out = edit_api.apply_doc(doc, edit_path, ttml_path,
                                  policy=str(body.get("policy") or "auto"))
         if task:
@@ -390,6 +534,102 @@ class Handler(BaseHTTPRequestHandler):
             task.summary["errors"] = len(out["check"]["errors"])
             task.summary["warnings"] = len(out["check"]["warnings"])
         self._json(out)
+
+    @staticmethod
+    def _display_stem(task) -> str:
+        """保存文件名：优先「歌手 - 歌名」，其次音频文件名（与界面识别同一来源）。
+
+        用户要求：处理完保存时不要是一串 task id，要用识别到的歌手/歌名。
+        """
+        pp = task.params or {}
+        title = str(pp.get("title") or "").strip()
+        artists = pp.get("artists") or []
+        if isinstance(artists, str):
+            artists = [a.strip() for a in re.split(r"[,，、/&]", artists) if a.strip()]
+        artists = [str(a).strip() for a in artists if str(a).strip()]
+        if title:
+            base = ((" _ ".join(artists) + " - ") if artists else "") + title
+        else:
+            audio = str(pp.get("audio") or "")
+            base = os.path.splitext(os.path.basename(audio))[0]
+        base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", base).strip(" .")
+        return (base[:120] or task.id)
+
+    @staticmethod
+    def _unique_path(out_dir: str, stem: str, keep: str = "") -> str:
+        """同名文件已存在时加 (2)/(3)…；keep 是本任务自己的现有路径则原样复用。"""
+        cand = os.path.join(out_dir, stem + ".ttml")
+        if not os.path.exists(cand) or (keep and os.path.abspath(cand) == os.path.abspath(keep)):
+            return cand
+        for i in range(2, 100):
+            cand = os.path.join(out_dir, f"{stem} ({i}).ttml")
+            if not os.path.exists(cand) or (keep and os.path.abspath(cand) == os.path.abspath(keep)):
+                return cand
+        return os.path.join(out_dir, f"{stem} ({uuid.uuid4().hex[:6]}).ttml")
+
+    def _post_save(self):
+        """把当前任务保存成正式 TTML（用户点「保存」时才写）。
+
+        为什么需要它：转换完成后产物**先不落盘**（auto_save=false），用户可能想先改；
+        保存时把内存里的编辑态写出去，并把 .pending.overlap.json 转成正式证据文件。
+        """
+        body = self._read_json()
+        task_id = str(body.get("id") or "")
+        if not task_id or "/" in task_id or "\\" in task_id or ".." in task_id:
+            self._json({"error": "任务 id 不合法"}, 400)
+            return
+        task = TASKS.get(task_id)
+        if task is None:
+            self._json({"error": "任务不在内存里（后端重启过）；请重新生成后再保存"}, 404)
+            return
+        out_dir = task.out_dir or OUTPUT_DIR
+        os.makedirs(out_dir, exist_ok=True)
+        # 文件名 = 「歌手 - 歌名」（不是 task id）；已保存过的任务保持原路径不变
+        if task.result_path and os.path.exists(task.result_path):
+            final = task.result_path
+        else:
+            final = self._unique_path(out_dir, self._display_stem(task))
+        edit_path = task.edit_path or edit_api.edit_path_for(task_id, out_dir)
+        # 没编辑过（version==0）⇒ 直接把生成好的 pending 产物转正：
+        # 重渲染会走一遍 normalize，可能把长尾按默认策略收回（用户抱怨过的老问题）。
+        _untouched = task.doc is None or getattr(task.doc, "version", 0) == 0
+        _pending = os.path.join(out_dir, f"{task_id}.pending.ttml")
+        if _untouched and os.path.exists(_pending):
+            edit_api.atomic_write_text(final, textread.read_text(_pending))
+        elif task.doc is not None:
+            out = edit_api.apply_doc(task.doc, edit_path, final,
+                                     policy=str(body.get("policy") or "auto"))
+            task.ttml = out["ttml"]
+        else:
+            pending = os.path.join(out_dir, f"{task_id}.pending.ttml")
+            if not os.path.exists(pending):
+                self._json({"error": "没有可保存的内容（既无编辑态也无 pending 产物）"}, 404)
+                return
+            edit_api.atomic_write_text(final, textread.read_text(pending))
+        # 证据 sidecar：pending → 与正式 TTML 同名的 .overlap.json
+        pend_ev = os.path.join(out_dir, f"{task_id}.pending.overlap.json")
+        final_ev = os.path.splitext(final)[0] + ".overlap.json"
+        if os.path.exists(pend_ev):
+            try:
+                os.replace(pend_ev, final_ev)
+            except OSError:
+                pass
+        # 清理 pending 中间产物（保存后不再需要）
+        for _p in (os.path.join(out_dir, f"{task_id}.pending.ttml"), pend_ev):
+            try:
+                if os.path.exists(_p):
+                    os.remove(_p)
+            except OSError:
+                pass
+        task.result_path = final
+        # 记住"这个 task 的正式产物在哪"：重启后编辑台按这个找 TTML
+        try:
+            edit_api.atomic_write_text(
+                os.path.join(out_dir, f"{task_id}.result.json"),
+                json.dumps({"ttml": final}, ensure_ascii=False))
+        except Exception:
+            pass
+        self._json({"ok": True, "path": final})
 
     def _post_validate(self):
         self._json(edit_api.validate_payload(self._read_json()))
@@ -404,7 +644,7 @@ class Handler(BaseHTTPRequestHandler):
         task_id = str(body.get("id") or "")
         task = TASKS.get(task_id)
         edit_path = (task.edit_path if task and task.edit_path
-                     else edit_api.edit_path_for(task_id, OUTPUT_DIR))
+                     else edit_api.edit_path_for(task_id, (task.out_dir if task else None) or OUTPUT_DIR))
         edit_api.check_version(
             edit_api.stored_version(task.doc if task else None, edit_path),
             body.get("version"))
@@ -416,8 +656,9 @@ class Handler(BaseHTTPRequestHandler):
             doc, _ = edit_api.load_doc(task.ttml if task else None, edit_path)
         result = edit_text.apply_op(doc, str(body.get("op") or ""),
                                    body.get("payload") or {})
+        _persist = bool(body.get("persist", True))
         out = edit_api.apply_doc(doc, edit_path,
-                                 task.result_path if task else None,
+                                 (task.result_path if task else None) if _persist else None,
                                  policy=str(body.get("policy") or "auto"))
         if task:
             task.doc = doc
@@ -449,6 +690,28 @@ class Handler(BaseHTTPRequestHandler):
             f.write(raw)
         self._json({"path": target, "filename": filename, "size": len(raw)})
 
+    # ---- 输出目录：用户可选（界面「歌词保存在哪里」）----
+    #
+    # ⚠️ 必须**真的写进去**：之前界面没有这个参数，用户抱怨"没法选保存位置"。
+    # 校验顺序：绝对路径 → 建目录 → 真写一个探针文件 → 通过才用。
+    # 任何一步失败都**回退默认目录并写进任务日志**（不静默忽略用户的设置）。
+    @staticmethod
+    def _resolve_out_dir(raw):
+        """返回 (目录, 失败原因)。原因必须能显示给用户 —— 用户选了不可写目录时必须明说。"""
+        raw = str(raw or "").strip()
+        if not raw:
+            return OUTPUT_DIR, ""
+        try:
+            p = os.path.abspath(raw)
+            os.makedirs(p, exist_ok=True)
+            probe = os.path.join(p, ".l2t_write_probe")
+            with open(probe, "w", encoding="utf-8") as f:
+                f.write("ok")
+            os.remove(probe)
+            return p, ""
+        except Exception as exc:
+            return "", f"{type(exc).__name__}: {exc}"
+
     def _convert(self):
         body = self._read_json()
         audio = body.get("audio") or ""
@@ -461,12 +724,18 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         task = Task(body)
+        _wanted, _why = self._resolve_out_dir(body.get("output_dir"))
+        task.out_dir = _wanted or OUTPUT_DIR
         TASKS[task.id] = task
+        if str(body.get("output_dir") or "").strip() and not _wanted:
+            task.log(f"[输出目录] 你选的目录不可用（{_why}），已改用默认目录：{OUTPUT_DIR}")
+        elif _wanted and _wanted != OUTPUT_DIR:
+            task.log(f"[输出目录] 产物将写入：{_wanted}")
         # 把音频路径落到盘上：编辑态本身能从磁盘恢复（edit_api.load_doc），
         # 但 TASKS 是进程内的，**重启后就没声音了** —— 编辑台能打开却没音频、
         # 没播放高亮。存一份 sidecar 让试听也能跨重启。
         try:
-            _src_path = os.path.join(OUTPUT_DIR, f"{task.id}.src.json")
+            _src_path = os.path.join(task.out_dir or OUTPUT_DIR, f"{task.id}.src.json")
             edit_api.atomic_write_text(_src_path, json.dumps(
                 {"audio": os.path.abspath(audio), "lyrics": os.path.abspath(lyrics)},
                 ensure_ascii=False))
@@ -474,6 +743,46 @@ class Handler(BaseHTTPRequestHandler):
             pass
         threading.Thread(target=_run_task, args=(task,), daemon=True).start()
         self._json({"task_id": task.id})
+
+
+def _proxy_status() -> dict:
+    """代理缓存现状 + 后台生成状态（给界面显示/给自检断言）。"""
+    st = audio_proxy.stats()
+    with _PROXY_LOCK:
+        building = sorted(k for k, v in _PROXY_STATE.items() if v.get("state") == "building")
+        errors = {os.path.basename(k): v.get("note", "") for k, v in _PROXY_STATE.items()
+                  if v.get("state") == "error"}
+    st["building"] = building
+    st["errors"] = errors
+    return st
+
+
+def _kickoff_proxy_build(source: str) -> bool:
+    """后台把这个源文件转成小体积代理。返回是否**本次真的启动了**转码。
+
+    幂等：同一个源已在转或已转好就不重复启动
+    （播放器会并发发多个 Range 请求，不做幂等会起一堆 ffmpeg）。
+    """
+    src = os.path.abspath(source)
+    with _PROXY_LOCK:
+        cur = _PROXY_STATE.get(src) or {}
+        if cur.get("state") == "building":
+            return False
+        _PROXY_STATE[src] = {"state": "building", "note": "", "ts": time.time()}
+
+    def _work():
+        try:
+            path, note = audio_proxy.build(src)
+            with _PROXY_LOCK:
+                _PROXY_STATE[src] = {"state": "ready", "note": note,
+                                     "path": path, "ts": time.time()}
+        except Exception as e:                              # noqa: BLE001
+            with _PROXY_LOCK:
+                _PROXY_STATE[src] = {"state": "error",
+                                     "note": f"{type(e).__name__}: {e}", "ts": time.time()}
+
+    threading.Thread(target=_work, daemon=True).start()
+    return True
 
 
 def _audio_from_sidecar(task_id: str) -> str:
@@ -485,7 +794,8 @@ def _audio_from_sidecar(task_id: str) -> str:
     """
     if not task_id or "/" in task_id or "\\" in task_id or ".." in task_id:
         return ""
-    p = os.path.join(OUTPUT_DIR, f"{task_id}.src.json")
+    task = TASKS.get(task_id)
+    p = os.path.join((task.out_dir if task else None) or OUTPUT_DIR, f"{task_id}.src.json")
     try:
         with open(p, encoding="utf-8") as f:
             return str(json.load(f).get("audio") or "")
@@ -493,7 +803,7 @@ def _audio_from_sidecar(task_id: str) -> str:
         return ""
 
 
-def safe_audio_path(raw: str):
+def safe_audio_path(raw: str, trusted: str = ""):
     """把客户端给的音频路径收敛到 uploads/ 内。
 
     返回 ``(绝对路径, None)`` 或 ``(None, (状态码, 错误体))``。
@@ -503,6 +813,16 @@ def safe_audio_path(raw: str):
         return None, (404, {"error": "没有音频路径"})
     path = os.path.abspath(raw)
     root = os.path.abspath(UPLOAD_DIR)
+    # ⚠️⚠️ **该任务自己记录过的音频视为可信**（2026-10-16 用户实测：编辑台播放没反应）：
+    # 原来只允许 uploads/ 内的音频 ⇒ 用户直接选自己电脑上的歌（如 E:\音乐\…）时
+    # `/api/audio` 直接 **403** ⇒ 播放器拿不到音频、`Play()` 静默无效。
+    # 网页端之所以正常，是因为它**先把文件上传进 uploads/**。
+    # 这里按原理放宽：**只**信任"这个任务自己的 sidecar 里记的路径"；
+    # `?id=` 仍然读不了任意文件（要读到某文件，必须先真的用它转过一次）。
+    if trusted and path == os.path.abspath(trusted):
+        if not os.path.isfile(path):
+            return None, (404, {"error": "音频文件不存在", "where": path})
+        return path, None
     if not (path == root or path.startswith(root + os.sep)):
         return None, (403, {"error": "音频路径不在 uploads/ 内", "where": path,
                             "hint": "只允许试听本工具上传的音频"})
@@ -554,6 +874,7 @@ def _run_task(task: Task):
             explicit_policy=p.get("explicit_policy", "keep"),
             detect_muted=bool(p.get("detect_muted", False)),
             separate_vocals=bool(p.get("separate_vocals", False)),
+            allow_same_agent_overlap=bool(p.get("allow_same_agent_overlap", False)),
             demucs_model=p.get("demucs_model", "htdemucs"),
         )
 
@@ -569,6 +890,13 @@ def _run_task(task: Task):
         task.stage = "加载模型 / 解析歌词"
         task.progress = max(task.progress, 2)
 
+        _out_dir = task.out_dir or OUTPUT_DIR
+        _auto_save = bool(p.get("auto_save", True))
+        # auto_save=false 时先写 .pending：pipeline **只有拿到最终路径才写拖音证据**，
+        # 不能传 None；用户点「保存」后再把 pending 改名成正式产物（证据一起改名）。
+        _final_path = os.path.join(_out_dir, f"{task.id}.ttml")
+        _gen_path = _final_path if _auto_save else os.path.join(_out_dir, f"{task.id}.pending.ttml")
+
         runner = LyricToTTML(options, log=task.log)
         result = runner.convert(
             audio_path=p["audio"],
@@ -579,21 +907,28 @@ def _run_task(task: Task):
             author=p.get("author", ""),
             author_id=str(p.get("author_id", "") or ""),
             platform_ids=platform_ids,
-            output_path=None,
+            # ⚠️ 必须有 output_path：生成链路只有在拿到**最终产物路径**时才会
+            # 写出拖音证据 sidecar（`<id>.overlap.json`）。以前这里是 None，
+            # 结果 Web/后端路径**永远没有证据** ⇒ 编辑台保存时会把长尾收回。
+            output_path=_gen_path,
             translation_text=translation_text,
             translation_lang=str(p.get("translation_lang", "") or ""),
             songwriters=[s.strip() for s in str(p.get("songwriters", "")).split(",") if s.strip()],
         )
 
-        out_path = os.path.join(OUTPUT_DIR, f"{task.id}.ttml")
-        # 原子写：先写同目录临时文件再 os.replace，中途崩溃不会留下半截 TTML。
-        # （编辑台保存路径本来就用同一个 helper，这里保持一致；原来是普通 open().write）
-        edit_api.atomic_write_text(out_path, result.ttml)
+        out_path = _final_path
+        if _auto_save:
+            # 原子写：先写同目录临时文件再 os.replace，中途崩溃不会留下半截 TTML。
+            edit_api.atomic_write_text(out_path, result.ttml)
+            task.result_path = out_path
+        else:
+            # pipeline 已把 TTML 与证据 sidecar 写到 <id>.pending.* 旁边，等用户点保存
+            task.result_path = None
+            task.log("（产物尚未保存：点「保存 TTML」后才写入正式文件）")
 
         task.ttml = result.ttml
-        task.result_path = out_path
         # 编辑台：生成即建立编辑态（内存 + outputs/<id>.edit.json 的初始快照）
-        task.edit_path = edit_api.edit_path_for(task.id, OUTPUT_DIR)
+        task.edit_path = edit_api.edit_path_for(task.id, task.out_dir or OUTPUT_DIR)
         try:
             task.doc = edit_api.doc_from_ttml(result.ttml)
             # TTML 文本里没有 prob/matched（parse_ttml 只能写死默认值），
@@ -625,6 +960,18 @@ def _run_task(task: Task):
         task.status = "done"
         task.log("")
         task.log(f"✓ 完成！匹配率 {result.report.match_rate:.1%}，{result.check.summary()}")
+    except TaskCancelled:
+        # ⚠️⚠️ **必须排在 `except Exception` 之前**（2026-10-16 真实验证抓到）：
+        # 取消是靠 `Task.log()` 里抛 `TaskCancelled` 实现的，如果被通用分支接走，
+        # 用户点了取消却看到 **"失败"** —— 属于误报（本项目明令禁止）。
+        # 注意：这里**不能调 `task.log()`**（它会因为 cancelled 又抛一次），
+        # 所以直接写环形缓冲。
+        task.status = "cancelled"
+        task.stage = "已取消"
+        task.error = None
+        with task.log_lock:
+            task.logs.append({"t": time.strftime("%H:%M:%S"),
+                              "m": "⊘ 已取消（用户中断；产物未写入）"})
     except Exception as e:
         task.status = "error"
         task.error = f"{type(e).__name__}: {e}"

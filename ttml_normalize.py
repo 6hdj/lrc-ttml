@@ -304,7 +304,205 @@ def _classify_before(line: EditLine, i: int, vals: List[tuple],
     return rules[0] if rules else "R2"
 
 
-def normalize_timeline(doc: EditDoc, policy: str = "auto") -> NormalizeReport:
+# ---------------------------------------------------------------------------
+# 重叠证据（sidecar v2）—— **可选**：只有显式传入 overlap_evidence 时才可能跳过 R4
+# ---------------------------------------------------------------------------
+EVIDENCE_SCHEMA_VERSION = 2
+EVIDENCE_ALGORITHM_VERSION = 2
+EVIDENCE_CONTAIN_TOL = 0.001
+EVIDENCE_REQUIRED_FIELDS = (
+    "prev_key", "next_key", "agent", "agent_next", "prev_end", "next_begin",
+    "next_median_char", "covered_chars", "cover_ratio", "threshold_policy",
+    "last_word", "word_order", "layer_structure", "locked_prev", "locked_next",
+    "algorithm_version",
+)
+
+
+def overlap_evidence_fingerprint(doc: EditDoc) -> str:
+    """证据绑定的内容指纹：行序 + key + agent + 行 begin/end + 每字 (text,begin,end,is_bg,layer)。
+
+    **不含** locked / policy / write_options —— 它们分别单独校验（见 check_overlap_evidence）。
+    """
+    import hashlib
+    import json
+
+    rows = []
+    for ln in doc.lines:
+        rows.append([ln.key, ln.agent or "", round(float(ln.begin), 3), round(float(ln.end), 3),
+                     [[w.text, round(float(w.begin), 3), round(float(w.end), 3),
+                       bool(getattr(w, "is_bg", False)), w.layer] for w in ln.words]])
+    raw = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def layer_structure_of(line: EditLine) -> dict:
+    """一行的层结构计数：{main, bg, translation}。"""
+    out = {"main": 0, "bg": 0, "translation": 0}
+    for w in line.words:
+        if bool(getattr(w, "is_bg", False)):
+            out["bg"] += 1
+        elif w.layer == LAYER_TRANSLATION:
+            out["translation"] += 1
+        else:
+            out["main"] += 1
+    return out
+
+
+def _words_inside_line(line: EditLine):
+    issues = []
+    for w in line.words:
+        if w.begin < line.begin - EVIDENCE_CONTAIN_TOL:
+            issues.append({"word": w.text, "side": "begin", "delta": round(w.begin - line.begin, 3)})
+        if w.end > line.end + EVIDENCE_CONTAIN_TOL:
+            issues.append({"word": w.text, "side": "end", "delta": round(w.end - line.end, 3)})
+    return (not issues), issues
+
+
+def check_overlap_evidence(doc: EditDoc, overlap_evidence, *, policy_version: int = 1,
+                           identity=None) -> List[dict]:
+    """逐边判定是否允许跳过 R4（**默认保守：任何检查失败都回退默认 R4**）。
+
+    返回 ``[{prev_key, next_key, edge_index, allowed, reason}]``。
+
+    校验顺序（文档级 → 边级）：
+    1. 证据结构 / schema / algorithm / 默认策略版本；
+    2. ``doc.fingerprint`` 与当前文档一致（文档级不匹配 ⇒ **全部边**拒绝）；
+    3. ``identity``（调用方校验；为 ``None`` 时记 ``identity_unchecked``，不阻断）；
+    4. 每条边：必需字段、行定位（按 ``prev_key``/``next_key``，**不用下标**）、agent、
+       ``prev_end``/``next_begin``、末字、字序、层结构、locked 状态、覆盖比与阈值；
+    5. **字级包含**（准入条件，不是修复规则）：该行所有字必须落在父级 ``begin/end`` 内。
+    """
+    decisions: List[dict] = []
+
+    def reject_all(reason: str):
+        decisions.append({"prev_key": None, "next_key": None, "edge_index": None,
+                          "allowed": False, "reason": reason, "scope": "doc"})
+        return decisions
+
+    if not isinstance(overlap_evidence, dict):
+        return reject_all("evidence_unparsable")
+    if overlap_evidence.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
+        return reject_all("schema_version_incompatible")
+    if overlap_evidence.get("algorithm_version") != EVIDENCE_ALGORITHM_VERSION:
+        return reject_all("algorithm_version_incompatible")
+    if overlap_evidence.get("default_policy_version") != policy_version:
+        return reject_all("policy_version_incompatible")
+    meta = overlap_evidence.get("doc")
+    if not isinstance(meta, dict):
+        return reject_all("doc_field_missing")
+    if meta.get("fingerprint") != overlap_evidence_fingerprint(doc):
+        return reject_all("content_fingerprint_mismatch")
+    identity_note = "identity_unchecked"
+    if identity is not None and isinstance(meta.get("identity"), dict):
+        if meta["identity"].get("id") != identity:
+            return reject_all("doc_identity_mismatch")
+        identity_note = "identity_ok"
+    edges = overlap_evidence.get("edges")
+    if not isinstance(edges, list):
+        return reject_all("edges_field_invalid")
+
+    index_by_keys = {}
+    for i in range(len(doc.lines) - 1):
+        index_by_keys[(doc.lines[i].key, doc.lines[i + 1].key)] = i
+
+    for edge in edges:
+        rec = {"prev_key": None, "next_key": None, "edge_index": None,
+               "allowed": False, "reason": "invalid", "scope": "edge", "identity": identity_note}
+        if not isinstance(edge, dict):
+            rec["reason"] = "edge_unparsable"
+            decisions.append(rec)
+            continue
+        rec["prev_key"] = edge.get("prev_key")
+        rec["next_key"] = edge.get("next_key")
+        missing = [f for f in EVIDENCE_REQUIRED_FIELDS if f not in edge]
+        if missing:
+            rec["reason"] = "edge_field_missing:" + ",".join(missing[:3])
+            decisions.append(rec)
+            continue
+        idx = index_by_keys.get((edge.get("prev_key"), edge.get("next_key")))
+        if idx is None:
+            rec["reason"] = "next_line_changed"
+            decisions.append(rec)
+            continue
+        rec["edge_index"] = idx
+        a, b = doc.lines[idx], doc.lines[idx + 1]
+        if (a.agent, b.agent) != (edge.get("agent"), edge.get("agent_next")):
+            rec["reason"] = "agent_changed"
+            decisions.append(rec)
+            continue
+        try:
+            if abs(float(a.end) - float(edge["prev_end"])) > EVIDENCE_CONTAIN_TOL:
+                rec["reason"] = "prev_end_changed"
+                decisions.append(rec)
+                continue
+            if abs(float(b.begin) - float(edge["next_begin"])) > EVIDENCE_CONTAIN_TOL:
+                rec["reason"] = "next_begin_changed"
+                decisions.append(rec)
+                continue
+        except (TypeError, ValueError):
+            rec["reason"] = "invalid_numeric"
+            decisions.append(rec)
+            continue
+        last = edge.get("last_word")
+        if not isinstance(last, dict) or not a.words or a.words[-1].text != last.get("text"):
+            rec["reason"] = "last_word_changed"
+            decisions.append(rec)
+            continue
+        try:
+            if abs(float(a.words[-1].end) - float(last.get("end"))) > EVIDENCE_CONTAIN_TOL:
+                rec["reason"] = "last_word_changed"
+                decisions.append(rec)
+                continue
+        except (TypeError, ValueError):
+            rec["reason"] = "invalid_numeric"
+            decisions.append(rec)
+            continue
+        if [w.text for w in a.words] != edge.get("word_order"):
+            rec["reason"] = "word_order_changed"
+            decisions.append(rec)
+            continue
+        if layer_structure_of(a) != edge.get("layer_structure"):
+            rec["reason"] = "layer_structure_changed"
+            decisions.append(rec)
+            continue
+        if (bool(a.locked), bool(b.locked)) != (bool(edge.get("locked_prev")), bool(edge.get("locked_next"))):
+            rec["reason"] = "locked_state_changed"
+            decisions.append(rec)
+            continue
+        policy = edge.get("threshold_policy")
+        if not isinstance(policy, dict) or not isinstance(policy.get("max_cover_ratio"), (int, float)):
+            rec["reason"] = "threshold_policy_invalid"
+            decisions.append(rec)
+            continue
+        ratio = edge.get("cover_ratio")
+        if ratio is None or edge.get("next_median_char") is None:
+            rec["reason"] = "cover_ratio_uncomputable"
+            decisions.append(rec)
+            continue
+        try:
+            if float(ratio) > float(policy["max_cover_ratio"]):
+                rec["reason"] = "cover_ratio_exceeds_policy"
+                decisions.append(rec)
+                continue
+        except (TypeError, ValueError):
+            rec["reason"] = "invalid_numeric"
+            decisions.append(rec)
+            continue
+        contained, issues = _words_inside_line(a)
+        if not contained:
+            rec["reason"] = "word_outside_parent"
+            rec["containment_issues"] = issues
+            decisions.append(rec)
+            continue
+        rec["allowed"] = True
+        rec["reason"] = "valid"
+        decisions.append(rec)
+    return decisions
+
+
+def normalize_timeline(doc: EditDoc, policy: str = "auto", *,
+                       overlap_evidence=None, evidence_policy_version: int = 1,
+                       evidence_identity=None) -> NormalizeReport:
     """规范化一份 ``EditDoc``，返回改动清单。
 
     ``policy``：
@@ -312,6 +510,15 @@ def normalize_timeline(doc: EditDoc, policy: str = "auto") -> NormalizeReport:
     * ``auto``      —— **就地修改** ``doc``，并返回 ``fixes``（默认）
     * ``highlight`` —— **不改** ``doc``，只在返回值里列出冲突/将要做的修复
     * ``off``       —— **不改** ``doc``，也不计算修复（校验交给 ``check_ttml``）
+
+    ``overlap_evidence``（可选，默认 ``None`` —— **必须保持默认行为零变化**）：
+
+    只在需要"保住有证据的跨行延长"时传入 sidecar v2 证据。三条约束：
+
+    1. ``None`` ⇒ 与以前**完全一致**（R4 照旧收紧，不进入任何新分支）；
+    2. 文档级不匹配（schema/算法/策略版本、内容指纹、身份）⇒ **全部边**回退默认 R4；
+    3. 单边失败 ⇒ **只该边**回退；**字级包含是准入条件**（字级越出父级 ⇒ 拒绝保护，
+       否则后续 R5′ 仍会压缩字级，造成"报告保护成功但长尾被吃"）。
 
     注意：**同一层的字**按文本顺序处理（``main`` / ``bg`` / ``translation`` 各自独立），
     所以和声层与主唱层时间重叠**不会**被压平 —— 这是 AMLL 规范允许的
@@ -348,8 +555,19 @@ def normalize_timeline(doc: EditDoc, policy: str = "auto") -> NormalizeReport:
                 normalize_group(tr, line.begin, line.end)
 
         # ---------- 行间：R4 同 agent 相邻行不重叠 ----------
-        for a, b in zip(work.lines, work.lines[1:]):
+        # 仅当显式传入 overlap_evidence 时，才可能跳过**通过全部校验**的边；
+        # overlap_evidence=None ⇒ 走原有逻辑，一行不改（默认行为零变化的保证）。
+        protected_edges = set()
+        if overlap_evidence is not None:
+            for _dec in check_overlap_evidence(work, overlap_evidence,
+                                               policy_version=evidence_policy_version,
+                                               identity=evidence_identity):
+                if _dec.get("allowed") and _dec.get("edge_index") is not None:
+                    protected_edges.add(int(_dec["edge_index"]))
+        for _edge_index, (a, b) in enumerate(zip(work.lines, work.lines[1:])):
             if a.agent != b.agent or a.locked or b.locked:
+                continue
+            if _edge_index in protected_edges:
                 continue
             new_end = overlap_pair(a.words, b.words, a.begin)
             if new_end is not None:

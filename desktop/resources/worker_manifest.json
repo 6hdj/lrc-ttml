@@ -1,0 +1,322 @@
+{
+  "schema": 1,
+  "updated": "2026-10-15",
+  "worker_version": "0.1.0",
+  "platform": "win-x64",
+  "python": "3.14",
+  "torch": "2.14.1+cu130",
+  "cuda": "13.0",
+  "min_app_version": "1.0.0",
+  "notes": [
+    "主程序**永不** import Worker 里的 torch/demucs；只通过 subprocess + JSON 调用。",
+    "全部组件 SHA256 校验通过 + Worker 自检通过，才启用 Worker。",
+    "**下载地址随程序发布，不做远程更新**（2026-10-15 用户决定）：清单只读内置那一份，镜像/地址变化随新版本一起发。",
+    "组件包已上传：**ModelScope（主源，已验证）**与 GitHub Releases worker-0.1.0（存档/兜底）；大陆用户的快速下载渠道仍需落实（ModelScope 平台实测 5.91 MB/s，但我们的组件尚未上传）。（ModelScope 上传工具：tools/upload_worker_components.py）",
+    "免费渠道优先：**不把阿里云 OSS / 腾讯云 COS / CDN 等付费服务作为默认前提**。",
+    "**只有 status=verified 的源才允许下载**；unpublished/unverified 一律不算\"已支持\"，界面会置灰并说明原因。"
+  ],
+  "total_compressed_bytes": 1752977636,
+  "components": [
+    {
+      "id": "cuda-cublas",
+      "file": "cuda-cublas-0.1.0.tar.xz",
+      "bytes": 383463112,
+      "uncompressed_bytes": 533738352,
+      "files": 5,
+      "sha256": "a07659507889bc6851a2f7a0ea26474a5eb5e895d808bb02f05c4b61e6de2249",
+      "required": true,
+      "sources": [
+        {
+          "id": "modelscope",
+          "label": "ModelScope 魔搭（免费·国内 CDN·拟主源）",
+          "status": "verified",
+          "verified": true,
+          "note": "已上传 7/7 并回传验证通过（2026-10-15）：全部 1671.8 MB / **367s**，单片 3.34–5.94 MB/s（均值 4.56），支持 Range。",
+          "url": "https://modelscope.cn/models/Hxj345/lyric2ttml-demucs-worker/resolve/master/cuda-cublas/cuda-cublas-0.1.0.tar.xz"
+        },
+        {
+          "id": "github",
+          "label": "GitHub Releases（免费·权威存档/兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "组件包**已上传**到 6hdj/lrc-ttml 的 worker-0.1.0；但实测大陆直连**SSL 握手超时**、gh-proxy 0.06 MB/s、ghproxy.net 0.01 MB/s ⇒ **未通过下载验证**，只作权威存档与兜底（有代理/VPN 的用户可用）",
+          "url": "https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/cuda-cublas-0.1.0.tar.xz"
+        },
+        {
+          "id": "gh-proxy",
+          "label": "gh-proxy 加速（免费·GitHub 中转兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "实测 0.06 MB/s（能下但很慢）；第三方中转，**不得假定永久可用**",
+          "url": "https://gh-proxy.com/https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/cuda-cublas-0.1.0.tar.xz"
+        },
+        {
+          "id": "hf-mirror",
+          "label": "hf-mirror（免费·最后兜底）",
+          "status": "unpublished",
+          "verified": false,
+          "note": "实测 0.55–0.73 MB/s；需先把组件传成 HF 仓库（本阶段未做）",
+          "url": "https://hf-mirror.com/6hdj/lyric2ttml-demucs-worker/resolve/main/cuda-cublas-0.1.0.tar.xz"
+        }
+      ]
+    },
+    {
+      "id": "cuda-cudnn",
+      "file": "cuda-cudnn-0.1.0.tar.xz",
+      "bytes": 369623204,
+      "uncompressed_bytes": 568754302,
+      "files": 63,
+      "sha256": "3dae2f4fb6acb0473f18226708ef3795b9d4fbcbfbb686ac6dc062f311c1400f",
+      "required": true,
+      "sources": [
+        {
+          "id": "modelscope",
+          "label": "ModelScope 魔搭（免费·国内 CDN·拟主源）",
+          "status": "verified",
+          "verified": true,
+          "note": "已上传 7/7 并回传验证通过（2026-10-15）：全部 1671.8 MB / **367s**，单片 3.34–5.94 MB/s（均值 4.56），支持 Range。",
+          "url": "https://modelscope.cn/models/Hxj345/lyric2ttml-demucs-worker/resolve/master/cuda-cudnn/cuda-cudnn-0.1.0.tar.xz"
+        },
+        {
+          "id": "github",
+          "label": "GitHub Releases（免费·权威存档/兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "组件包**已上传**到 6hdj/lrc-ttml 的 worker-0.1.0；但实测大陆直连**SSL 握手超时**、gh-proxy 0.06 MB/s、ghproxy.net 0.01 MB/s ⇒ **未通过下载验证**，只作权威存档与兜底（有代理/VPN 的用户可用）",
+          "url": "https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/cuda-cudnn-0.1.0.tar.xz"
+        },
+        {
+          "id": "gh-proxy",
+          "label": "gh-proxy 加速（免费·GitHub 中转兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "实测 0.06 MB/s（能下但很慢）；第三方中转，**不得假定永久可用**",
+          "url": "https://gh-proxy.com/https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/cuda-cudnn-0.1.0.tar.xz"
+        },
+        {
+          "id": "hf-mirror",
+          "label": "hf-mirror（免费·最后兜底）",
+          "status": "unpublished",
+          "verified": false,
+          "note": "实测 0.55–0.73 MB/s；需先把组件传成 HF 仓库（本阶段未做）",
+          "url": "https://hf-mirror.com/6hdj/lyric2ttml-demucs-worker/resolve/main/cuda-cudnn-0.1.0.tar.xz"
+        }
+      ]
+    },
+    {
+      "id": "cuda-jit",
+      "file": "cuda-jit-0.1.0.tar.xz",
+      "bytes": 128244084,
+      "uncompressed_bytes": 356836536,
+      "files": 5,
+      "sha256": "ad79aae1484e40076afb0a047b4c3cb514eb4dc92b779ba44ab6fb5c94988a34",
+      "required": true,
+      "sources": [
+        {
+          "id": "modelscope",
+          "label": "ModelScope 魔搭（免费·国内 CDN·拟主源）",
+          "status": "verified",
+          "verified": true,
+          "note": "已上传 7/7 并回传验证通过（2026-10-15）：全部 1671.8 MB / **367s**，单片 3.34–5.94 MB/s（均值 4.56），支持 Range。",
+          "url": "https://modelscope.cn/models/Hxj345/lyric2ttml-demucs-worker/resolve/master/cuda-jit/cuda-jit-0.1.0.tar.xz"
+        },
+        {
+          "id": "github",
+          "label": "GitHub Releases（免费·权威存档/兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "组件包**已上传**到 6hdj/lrc-ttml 的 worker-0.1.0；但实测大陆直连**SSL 握手超时**、gh-proxy 0.06 MB/s、ghproxy.net 0.01 MB/s ⇒ **未通过下载验证**，只作权威存档与兜底（有代理/VPN 的用户可用）",
+          "url": "https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/cuda-jit-0.1.0.tar.xz"
+        },
+        {
+          "id": "gh-proxy",
+          "label": "gh-proxy 加速（免费·GitHub 中转兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "实测 0.06 MB/s（能下但很慢）；第三方中转，**不得假定永久可用**",
+          "url": "https://gh-proxy.com/https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/cuda-jit-0.1.0.tar.xz"
+        },
+        {
+          "id": "hf-mirror",
+          "label": "hf-mirror（免费·最后兜底）",
+          "status": "unpublished",
+          "verified": false,
+          "note": "实测 0.55–0.73 MB/s；需先把组件传成 HF 仓库（本阶段未做）",
+          "url": "https://hf-mirror.com/6hdj/lyric2ttml-demucs-worker/resolve/main/cuda-jit-0.1.0.tar.xz"
+        }
+      ]
+    },
+    {
+      "id": "cuda-math",
+      "file": "cuda-math-0.1.0.tar.xz",
+      "bytes": 463781572,
+      "uncompressed_bytes": 656644784,
+      "files": 5,
+      "sha256": "0b1eb0d228373555dc9bd6f4b43873e1ac0b8fc253a73be70f1bc315aee4d3de",
+      "required": true,
+      "sources": [
+        {
+          "id": "modelscope",
+          "label": "ModelScope 魔搭（免费·国内 CDN·拟主源）",
+          "status": "verified",
+          "verified": true,
+          "note": "已上传 7/7 并回传验证通过（2026-10-15）：全部 1671.8 MB / **367s**，单片 3.34–5.94 MB/s（均值 4.56），支持 Range。",
+          "url": "https://modelscope.cn/models/Hxj345/lyric2ttml-demucs-worker/resolve/master/cuda-math/cuda-math-0.1.0.tar.xz"
+        },
+        {
+          "id": "github",
+          "label": "GitHub Releases（免费·权威存档/兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "组件包**已上传**到 6hdj/lrc-ttml 的 worker-0.1.0；但实测大陆直连**SSL 握手超时**、gh-proxy 0.06 MB/s、ghproxy.net 0.01 MB/s ⇒ **未通过下载验证**，只作权威存档与兜底（有代理/VPN 的用户可用）",
+          "url": "https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/cuda-math-0.1.0.tar.xz"
+        },
+        {
+          "id": "gh-proxy",
+          "label": "gh-proxy 加速（免费·GitHub 中转兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "实测 0.06 MB/s（能下但很慢）；第三方中转，**不得假定永久可用**",
+          "url": "https://gh-proxy.com/https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/cuda-math-0.1.0.tar.xz"
+        },
+        {
+          "id": "hf-mirror",
+          "label": "hf-mirror（免费·最后兜底）",
+          "status": "unpublished",
+          "verified": false,
+          "note": "实测 0.55–0.73 MB/s；需先把组件传成 HF 仓库（本阶段未做）",
+          "url": "https://hf-mirror.com/6hdj/lyric2ttml-demucs-worker/resolve/main/cuda-math-0.1.0.tar.xz"
+        }
+      ]
+    },
+    {
+      "id": "torch-cpu",
+      "file": "torch-cpu-0.1.0.tar.xz",
+      "bytes": 52502528,
+      "uncompressed_bytes": 307668224,
+      "files": 3,
+      "sha256": "1fbf5f3608e9c6aa271a81c1787909426f459e1a425fa1ffae85c08b23222b23",
+      "required": true,
+      "sources": [
+        {
+          "id": "modelscope",
+          "label": "ModelScope 魔搭（免费·国内 CDN·拟主源）",
+          "status": "verified",
+          "verified": true,
+          "note": "已上传 7/7 并回传验证通过（2026-10-15）：全部 1671.8 MB / **367s**，单片 3.34–5.94 MB/s（均值 4.56），支持 Range。",
+          "url": "https://modelscope.cn/models/Hxj345/lyric2ttml-demucs-worker/resolve/master/torch-cpu/torch-cpu-0.1.0.tar.xz"
+        },
+        {
+          "id": "github",
+          "label": "GitHub Releases（免费·权威存档/兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "组件包**已上传**到 6hdj/lrc-ttml 的 worker-0.1.0；但实测大陆直连**SSL 握手超时**、gh-proxy 0.06 MB/s、ghproxy.net 0.01 MB/s ⇒ **未通过下载验证**，只作权威存档与兜底（有代理/VPN 的用户可用）",
+          "url": "https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/torch-cpu-0.1.0.tar.xz"
+        },
+        {
+          "id": "gh-proxy",
+          "label": "gh-proxy 加速（免费·GitHub 中转兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "实测 0.06 MB/s（能下但很慢）；第三方中转，**不得假定永久可用**",
+          "url": "https://gh-proxy.com/https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/torch-cpu-0.1.0.tar.xz"
+        },
+        {
+          "id": "hf-mirror",
+          "label": "hf-mirror（免费·最后兜底）",
+          "status": "unpublished",
+          "verified": false,
+          "note": "实测 0.55–0.73 MB/s；需先把组件传成 HF 仓库（本阶段未做）",
+          "url": "https://hf-mirror.com/6hdj/lyric2ttml-demucs-worker/resolve/main/torch-cpu-0.1.0.tar.xz"
+        }
+      ]
+    },
+    {
+      "id": "torch-runtime",
+      "file": "torch-runtime-0.1.0.tar.xz",
+      "bytes": 298569872,
+      "uncompressed_bytes": 493935744,
+      "files": 32,
+      "sha256": "cc7d30fad9ee64c5f200474d5ec21884101b632644eb10b9836c14ddeea0dd52",
+      "required": true,
+      "sources": [
+        {
+          "id": "modelscope",
+          "label": "ModelScope 魔搭（免费·国内 CDN·拟主源）",
+          "status": "verified",
+          "verified": true,
+          "note": "已上传 7/7 并回传验证通过（2026-10-15）：全部 1671.8 MB / **367s**，单片 3.34–5.94 MB/s（均值 4.56），支持 Range。",
+          "url": "https://modelscope.cn/models/Hxj345/lyric2ttml-demucs-worker/resolve/master/torch-runtime/torch-runtime-0.1.0.tar.xz"
+        },
+        {
+          "id": "github",
+          "label": "GitHub Releases（免费·权威存档/兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "组件包**已上传**到 6hdj/lrc-ttml 的 worker-0.1.0；但实测大陆直连**SSL 握手超时**、gh-proxy 0.06 MB/s、ghproxy.net 0.01 MB/s ⇒ **未通过下载验证**，只作权威存档与兜底（有代理/VPN 的用户可用）",
+          "url": "https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/torch-runtime-0.1.0.tar.xz"
+        },
+        {
+          "id": "gh-proxy",
+          "label": "gh-proxy 加速（免费·GitHub 中转兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "实测 0.06 MB/s（能下但很慢）；第三方中转，**不得假定永久可用**",
+          "url": "https://gh-proxy.com/https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/torch-runtime-0.1.0.tar.xz"
+        },
+        {
+          "id": "hf-mirror",
+          "label": "hf-mirror（免费·最后兜底）",
+          "status": "unpublished",
+          "verified": false,
+          "note": "实测 0.55–0.73 MB/s；需先把组件传成 HF 仓库（本阶段未做）",
+          "url": "https://hf-mirror.com/6hdj/lyric2ttml-demucs-worker/resolve/main/torch-runtime-0.1.0.tar.xz"
+        }
+      ]
+    },
+    {
+      "id": "worker-core",
+      "file": "worker-core-0.1.0.tar.xz",
+      "bytes": 56793264,
+      "uncompressed_bytes": 188613292,
+      "files": 12261,
+      "sha256": "cafb44b92713fa5d0ea878946232ca6678bfd16491beffb8f07b5584e5ab3813",
+      "required": true,
+      "sources": [
+        {
+          "id": "modelscope",
+          "label": "ModelScope 魔搭（免费·国内 CDN·拟主源）",
+          "status": "verified",
+          "verified": true,
+          "note": "已上传 7/7 并回传验证通过（2026-10-15）：全部 1671.8 MB / **367s**，单片 3.34–5.94 MB/s（均值 4.56），支持 Range。",
+          "url": "https://modelscope.cn/models/Hxj345/lyric2ttml-demucs-worker/resolve/master/worker-core/worker-core-0.1.0.tar.xz"
+        },
+        {
+          "id": "github",
+          "label": "GitHub Releases（免费·权威存档/兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "组件包**已上传**到 6hdj/lrc-ttml 的 worker-0.1.0；但实测大陆直连**SSL 握手超时**、gh-proxy 0.06 MB/s、ghproxy.net 0.01 MB/s ⇒ **未通过下载验证**，只作权威存档与兜底（有代理/VPN 的用户可用）",
+          "url": "https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/worker-core-0.1.0.tar.xz"
+        },
+        {
+          "id": "gh-proxy",
+          "label": "gh-proxy 加速（免费·GitHub 中转兜底）",
+          "status": "unverified",
+          "verified": false,
+          "note": "实测 0.06 MB/s（能下但很慢）；第三方中转，**不得假定永久可用**",
+          "url": "https://gh-proxy.com/https://github.com/6hdj/lrc-ttml/releases/download/worker-0.1.0/worker-core-0.1.0.tar.xz"
+        },
+        {
+          "id": "hf-mirror",
+          "label": "hf-mirror（免费·最后兜底）",
+          "status": "unpublished",
+          "verified": false,
+          "note": "实测 0.55–0.73 MB/s；需先把组件传成 HF 仓库（本阶段未做）",
+          "url": "https://hf-mirror.com/6hdj/lyric2ttml-demucs-worker/resolve/main/worker-core-0.1.0.tar.xz"
+        }
+      ]
+    }
+  ]
+}

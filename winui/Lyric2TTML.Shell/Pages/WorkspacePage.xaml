@@ -1,0 +1,146 @@
+<Page
+    x:Class="Lyric2TTML.Shell.Pages.WorkspacePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
+    <ScrollViewer Padding="{StaticResource PageMargin}">
+        <StackPanel Spacing="16" MaxWidth="1000" HorizontalAlignment="Left">
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="歌词工作台" FontSize="{StaticResource TitleSize}" FontWeight="SemiBold" />
+                <TextBlock Text="选音频和歌词 → 点开始。识别、对齐、校验全自动；进度与阶段都来自后端真实状态。"
+                           FontSize="{StaticResource CaptionSize}" Opacity="0.7" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- ① 文件 -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="{StaticResource CardCorner}"
+                    Padding="{StaticResource CardPadding}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="1 · 选择文件" FontWeight="SemiBold" />
+                    <Grid ColumnSpacing="8" RowSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="音频" VerticalAlignment="Center" />
+                        <TextBox x:Name="EdAudio" AllowDrop="True" DragOver="Path_DragOver" Drop="Path_Drop" Grid.Row="0" Grid.Column="1"
+                                 PlaceholderText="未选择（也可直接拖进来）" />
+                        <Button x:Name="BtnAudio" Grid.Row="0" Grid.Column="2" Content="浏览…" Click="BtnAudio_Click" />
+
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="歌词" VerticalAlignment="Center" />
+                        <TextBox x:Name="EdLyrics" AllowDrop="True" DragOver="Path_DragOver" Drop="Path_Drop" Grid.Row="1" Grid.Column="1"
+                                 PlaceholderText="未选择（也可直接拖进来）" />
+                        <Button x:Name="BtnLyrics" Grid.Row="1" Grid.Column="2" Content="浏览…" Click="BtnLyrics_Click" />
+
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- ② 参数 -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="{StaticResource CardCorner}"
+                    Padding="{StaticResource CardPadding}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="2 · 参数" FontWeight="SemiBold" />
+                    <Grid ColumnSpacing="16" RowSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="输出模式" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CbMode" Grid.Row="0" Grid.Column="1" HorizontalAlignment="Stretch">
+                            <ComboBoxItem Content="AMLL（推荐）" Tag="amll" />
+                            <ComboBoxItem Content="Apple Music" Tag="apple" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="0" Grid.Column="2" Text="识别语言" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CbLang" Grid.Row="0" Grid.Column="3" HorizontalAlignment="Stretch">
+                            <ComboBoxItem Content="自动检测" Tag="auto" />
+                            <ComboBoxItem Content="中文" Tag="zh" />
+                            <ComboBoxItem Content="英语" Tag="en" />
+                            <ComboBoxItem Content="日语" Tag="ja" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="演唱者分段" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CbSinger" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Stretch">
+                            <ComboBoxItem Content="关闭（按歌词标记）" Tag="off" />
+                            <ComboBoxItem Content="强制单声部" Tag="1" />
+                            <ComboBoxItem Content="强制双声部" Tag="2" />
+                            <ComboBoxItem Content="强制三声部" Tag="3" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="1" Grid.Column="2" Text="Whisper 模型" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CbModel" Grid.Row="1" Grid.Column="3" HorizontalAlignment="Stretch">
+                            <ComboBoxItem Content="large-v3（最准）" Tag="large-v3" />
+                            <ComboBoxItem Content="medium" Tag="medium" />
+                            <ComboBoxItem Content="small" Tag="small" />
+                        </ComboBox>
+
+                        <!-- 三个开关**竖排** + Header 允许换行：横排时最后一项的长标题会被裁掉
+                             （用户实测只显示"同歌手拖音"+半个字）。 -->
+                        <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Spacing="6">
+                            <muxc:ToggleSwitch x:Name="TgSeparate" Header="人声分离（需要 Worker 运行库）">
+                                <muxc:ToggleSwitch.HeaderTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="460" /></DataTemplate>
+                                </muxc:ToggleSwitch.HeaderTemplate>
+                            </muxc:ToggleSwitch>
+                            <muxc:ToggleSwitch x:Name="TgTails" Header="尾音延长" IsOn="True" />
+                            <muxc:ToggleSwitch x:Name="TgSameAgent"
+                                               Header="同歌手拖音重叠（实验：拖音更长；部分工具可能不接受）">
+                                <muxc:ToggleSwitch.HeaderTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="460" /></DataTemplate>
+                                </muxc:ToggleSwitch.HeaderTemplate>
+                            </muxc:ToggleSwitch>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- ③ 执行 -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="{StaticResource CardCorner}"
+                    Padding="{StaticResource CardPadding}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="3 · 开始处理" FontWeight="SemiBold" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="BtnStart" Content="开始处理" Style="{StaticResource AccentButtonStyle}"
+                                Click="BtnStart_Click" />
+                        <Button x:Name="BtnCancel" Content="取消" IsEnabled="False" Click="BtnCancel_Click" />
+                        <Button x:Name="BtnSaveTtml" Content="💾 保存 TTML" IsEnabled="False"
+                                Click="BtnSaveTtml_Click" />
+                        <Button x:Name="BtnOpen" Content="打开 TTML" IsEnabled="False" Click="BtnOpen_Click" />
+                        <Button x:Name="BtnReveal" Content="打开所在文件夹" IsEnabled="False" Click="BtnReveal_Click" />
+                    </StackPanel>
+
+                    <muxc:ProgressBar x:Name="Bar2" Minimum="0" Maximum="100" Value="0" />
+                    <TextBlock x:Name="LbStage" Text="尚未开始" FontSize="{StaticResource CaptionSize}" />
+                    <muxc:InfoBar x:Name="Bar" IsOpen="False" IsClosable="True" />
+                    <ScrollViewer Height="180" VerticalScrollBarVisibility="Auto"
+                                  Background="{ThemeResource LayerFillColorAltBrush}">
+                        <TextBlock x:Name="LbLog" FontFamily="Consolas" FontSize="12" Margin="6"
+                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" Text="（这里显示后端实时日志）" />
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -84,9 +84,27 @@ def default_manifest_path() -> str:
 
 
 def load_manifest(path: str = "") -> dict:
+    """读运行组件清单。
+
+    ⚠️⚠️ **文件缺失/损坏时返回空清单 + 原因，绝不抛异常**（2026-10-16 实测）：
+    冻结版里因为构建漏打包 `runtime_manifest.json`，这里直接
+    `FileNotFoundError` 冒到顶层 —— 用户看到的是
+    `[PYI-xxxx:ERROR] Failed to execute script 'launcher' due to unhandled
+    exception!`（一个**未捕获异常崩溃**），而不是"清单里没有运行组件"。
+    缺资源是**可预期的部署问题**，必须降级成可读状态。
+    """
     path = path or default_manifest_path()
-    with open(path, encoding="utf-8") as fh:
-        return json.load(fh)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh)
+        d["_source"] = path
+        return d
+    except FileNotFoundError:
+        return {"runtimes": [], "_source": path,
+                "_error": f"找不到运行组件清单：{path}"}
+    except Exception as e:                                   # noqa: BLE001
+        return {"runtimes": [], "_source": path,
+                "_error": f"运行组件清单读取失败：{type(e).__name__}: {e}"}
 
 
 @dataclass

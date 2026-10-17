@@ -72,7 +72,40 @@ def _walk_spans(el, layer: str = "main"):
         yield from _walk_spans(child, child_layer)
 
 
-def check_ttml(text: str, strict: bool = True) -> CheckResult:
+def _match_allowed_overlap(allowed, line_no: int, agent: str,
+                           prev_end: float, next_begin: float, tol: float = 1e-3) -> bool:
+    """该"同演唱者行重叠"是否有**生成侧证据**允许（只认几何+agent 完全对得上的边）。
+
+    失败关闭：任何字段缺失/不匹配/解析失败都返回 False（仍报 error）。
+    """
+    for a in allowed or ():
+        if not isinstance(a, dict):
+            continue
+        try:
+            if int(a.get("next_line")) != int(line_no):
+                continue
+            if (a.get("agent") or "") != (agent or ""):
+                continue
+            if abs(float(a.get("prev_end")) - float(prev_end)) > tol:
+                continue
+            if abs(float(a.get("next_begin")) - float(next_begin)) > tol:
+                continue
+            return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def check_ttml(text: str, strict: bool = True, *, allowed_overlaps=None) -> CheckResult:
+    """校验一份 TTML。
+
+    ``allowed_overlaps``（可选，默认 ``None`` —— 行为与以前**完全一致**）：
+    生成侧「拖音证据」允许的同歌手跨行重叠边列表，元素形如
+    ``{"next_line": 2, "agent": "v1", "prev_end": 4.61, "next_begin": 3.23}``。
+    只有 ``next_line`` / ``agent`` / ``prev_end`` / ``next_begin`` **全部**对得上时，
+    该条"同一演唱者行时间重叠"才从 error 降为 warning（**仍可见、可审计**）；
+    其它任何错误一律不受影响（不支持"整体放宽"）。
+    """
     res = CheckResult()
 
     if text.startswith("\ufeff"):
@@ -341,7 +374,13 @@ def check_ttml(text: str, strict: bool = True) -> CheckResult:
                 # 主唱层之间仍然必须严格不重叠。
                 main_end = max((s1 for _, s1, _ in layers["main"]), default=None)
                 if prev is not None and p_begin < prev - 0.001 and not has_role_layer:
-                    res.errors.append(CheckIssue("error", f"第{lines}行", f"同一演唱者 {agent} 行时间重叠（上一行结束 {prev:.3f}）"))
+                    if _match_allowed_overlap(allowed_overlaps, lines, agent, prev, p_begin):
+                        res.warnings.append(CheckIssue(
+                            "warning", f"第{lines}行",
+                            f"同一演唱者 {agent} 行时间重叠，但该边有生成侧拖音证据允许"
+                            f"（上一行结束 {prev:.3f}，本行开始 {p_begin:.3f}）"))
+                    else:
+                        res.errors.append(CheckIssue("error", f"第{lines}行", f"同一演唱者 {agent} 行时间重叠（上一行结束 {prev:.3f}）"))
                 last_end_by_agent[agent] = main_end if main_end is not None else p_end
 
             # 规范 §7.3：背景人声用**半角括号**包裹，且「不要添加两个或更多括号、

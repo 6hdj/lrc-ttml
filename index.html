@@ -437,6 +437,10 @@
           <div class="switch active" id="creditSwitch" onclick="toggleSwitch(this)"></div>
           <span class="switch-label">自动跳过「作词/作曲」等制作人员行</span>
         </div>
+        <div class="switch-row">
+          <div class="switch" id="sameAgentSwitch" onclick="toggleSwitch(this)"></div>
+          <span class="switch-label">允许同歌手拖音跨行重叠（实验：拖音更长；部分工具/商店可能不接受；需开启人声分离）</span>
+        </div>
           <div class="form-group">
             <label>演唱者分段（CAM++ 声纹）</label>
             <select id="singers">
@@ -763,6 +767,7 @@ function startConversion() {
     // 需要那条启发式就走命令行 --detect-muted。
     detect_muted: false,
     separate_vocals: isOn('sepSwitch'),
+    allow_same_agent_overlap: isOn('sameAgentSwitch'),
     chunked: isOn('chunkedSwitch'), refine: isOn('refineSwitch'), skip_credits: isOn('creditSwitch'),
     pause_space: parseFloat(val('pauseSpace')) || 0,
     title: val('songTitle'), artists: val('artists'), album: val('album'), author: val('author'),
@@ -1841,9 +1846,13 @@ function scheduleValidate() {
 
 async function runValidate() {
   try {
+    // ⚠️ 必须带 id：服务端要靠它绑定 .edit.json 里的 overlap_evidence，
+    // 否则预览会被当成"无证据"按默认 R4 把受保护的长尾收回（与保存结果不一致）。
+    const vBody = { doc: editDoc };
+    if (currentTaskId) vBody.id = currentTaskId;   // 用当前任务上下文里的可信 id
     const r = await fetch('/api/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ doc: editDoc })
+      body: JSON.stringify(vBody)
     });
     const d = await r.json();
     if (!r.ok) { setEditorStatus('⚠ ' + (d.error || '校验失败'), 'bad'); return; }

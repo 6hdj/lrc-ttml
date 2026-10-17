@@ -253,6 +253,14 @@ def main() -> int:
         from desktop.services import runtime_service
         return int(runtime_service._cli(
             [a for a in argv if a != "--runtime-cli"]))
+
+    # 人声分离运行库（可选组件）：--worker-cli --status/--install/--verify/--uninstall
+    # 同 --runtime-cli：**必须真的路由**，光加进 _UI_FLAGS 只会让它掉进 cli_like
+    # 被当普通参数转发给 main.py（那样报 unrecognized arguments）。
+    if "--worker-cli" in argv:
+        from desktop.services import worker_service
+        return int(worker_service._cli(
+            [a for a in argv if a != "--worker-cli"]))
     _bare_install = any(a in ("--install", "-install", "install") for a in argv) \
         and not any(a in _SUBCOMMAND_FLAGS for a in argv)
     if _bare_install:
@@ -308,6 +316,7 @@ def main() -> int:
     # 而它的作用是**验证 Qt 平台插件在不在**，最容易坏的就是它）。
     _UI_FLAGS = ("--web", "--gui", "--server", "--uicheck", "-uicheck",
                  "--selftest", "-selftest", "--model-cli", "--runtime-cli",
+                 "--worker-cli",
                  # ⚠️ `--launch-check`（2026-10-14 加）：安装程序用的
                  # "能不能打开"检查。**必须列进来** —— 否则被转发给
                  # `main.py` 的 argparse，报 `unrecognized arguments`，

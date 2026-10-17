@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import time
+import json
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence
 
@@ -27,6 +29,7 @@ from preprocess import (LyricLine, detect_agent_switch, parse_lyrics,
 import onset_align
 import tail_extend
 from ttml_check import CheckIssue, CheckResult, check_ttml
+import snapshot
 from ttml_writer import TTMLWriter
 
 # 明显的制作人员信息行（不是歌词）
@@ -99,6 +102,80 @@ def duet_hint(artists: Optional[Sequence[str]], n_singers: int,
             f"或把「演唱者分段」设为强制双声部（CLI：--singer-mode 2）。")
 
 
+def build_overlap_evidence(ttml: str, lines, *, task_id: str = "") -> dict:
+    """从**生成侧边标记**构造拖音证据（不写文件、不改任何状态）。
+
+    数据来源：``tail_extend`` 在每行上写的 ``overlap_with_next`` / ``overlap_next_begin``
+    （``pipeline`` 的 5.7 步）。只有**同 agent + 标记为真 + 实际重叠**的相邻对才入证据。
+
+    返回 ``{"allowed_overlaps": [...], "evidence": dict | None}``：
+
+    * ``allowed_overlaps``：给 ``check_ttml`` 的门控列表（格式自检用）
+    * ``evidence``：给编辑台的 sidecar 内容（绑定**持久化后**指纹 + TTML SHA256）；
+      无证据 / 行数对不上 / 无 task_id ⇒ ``None``（失败关闭）
+    """
+    import hashlib
+    import json as _json
+    from datetime import datetime, timezone
+
+    from edit_api import edge_record_from_doc
+    from ttml_model import LAYER_TRANSLATION
+    from ttml_normalize import (EVIDENCE_ALGORITHM_VERSION, EVIDENCE_SCHEMA_VERSION,
+                               overlap_evidence_fingerprint)
+    from ttml_reader import parse_ttml
+
+    out = {"allowed_overlaps": [], "evidence": None}
+    try:
+        doc = parse_ttml(ttml)
+    except Exception:
+        return out
+    if len(doc.lines) != len(lines):
+        return out                     # 行数对不上 ⇒ 不猜（失败关闭）
+
+    for i in range(len(lines) - 1):
+        a, b = lines[i], lines[i + 1]
+        a_doc, b_doc = doc.lines[i], doc.lines[i + 1]
+        if not getattr(a, "overlap_with_next", False):
+            continue
+        if (a.agent or "") != (b.agent or ""):
+            continue                   # R4 只对同 agent 有意义
+        if a_doc.end <= b_doc.begin + 1e-6:
+            continue                   # 实际没有重叠（标记陈旧）
+        main_end = max((w.end for w in a_doc.words
+                        if not getattr(w, "is_bg", False) and w.layer != LAYER_TRANSLATION),
+                       default=None)
+        if main_end is None:
+            continue
+        out["allowed_overlaps"].append({"next_line": i + 2, "agent": a_doc.agent or "",
+                                        "prev_end": round(float(main_end), 3),
+                                        "next_begin": round(float(b_doc.begin), 3)})
+
+    if not out["allowed_overlaps"] or not task_id:
+        return out
+    edges = []
+    for item in out["allowed_overlaps"]:
+        idx = int(item["next_line"]) - 2
+        try:
+            edges.append(edge_record_from_doc(doc, idx))
+        except Exception:
+            continue
+    if not edges:
+        return out
+    out["evidence"] = {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "algorithm": "tail_extend@s7b/opt-in",
+        "algorithm_version": EVIDENCE_ALGORITHM_VERSION,
+        "default_policy_version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "doc": {"identity": {"task_id": task_id},
+                "fingerprint_persisted": overlap_evidence_fingerprint(doc),
+                "ttml_sha256": hashlib.sha256(ttml.encode("utf-8")).hexdigest(),
+                "line_count": len(doc.lines)},
+        "edges": edges,
+    }
+    return out
+
+
 @dataclass
 class ConvertOptions:
     mode: str = "amll"              # amll / apple
@@ -135,9 +212,15 @@ class ConvertOptions:
     agent_from: str = ""            # 参考 TTML：从里面读每行演唱者归属（人工标注复用）
     verify_amll: bool = True        # 生成后用真 AMLL 解析器验一遍"播放器里能不能显示"
     diarize_on: str = "mix"         # 声纹用哪条音轨：mix=原始混音（默认，实测准得多）/ vocals=分离轨
-    separate_vocals: bool = False   # 先用 Demucs 分离人声，再用干净人声轨识别/提声纹
+    separate_vocals: bool = False
+    allow_same_agent_overlap: bool = False   # 实验：允许有证据的同歌手跨行重叠（默认关闭）   # 先用 Demucs 分离人声，再用干净人声轨识别/提声纹
     extend_tails: bool = True       # 句尾拖音补全（用分离后人声轨的能量接回被切掉的尾音）
     demucs_model: str = "htdemucs"  # htdemucs / htdemucs_ft / htdemucs_6s / mdx_extra
+    # ⚠️ Worker 分离的超时**不做成 ConvertOptions 字段**（2026-10-15）：
+    # 它是内部实现细节，不是用户选项。做成字段就必须同步进
+    # desktop/services/convert_params.build_options()，否则
+    # desktop/selftest.py 第 8 组的 field_drift 会报"设了不生效" ——
+    # 我第一版正是这么被守卫抓到的。这里用模块常量 SEP_TIMEOUT_S。
 
     # ------------------------------------------------------------------
     def forced_singers(self) -> int:
@@ -160,6 +243,11 @@ class ConvertOptions:
         return 0
 
 
+# 独立 Worker 分离的超时（秒）：超时会**杀掉 Worker 并清理临时输出**，
+# 然后如实报告「分离失败（超时）」并跳过依赖人声轨的尾音延长 —— 不伪造结果。
+SEP_TIMEOUT_S = 1800.0
+
+
 def vocals_cache_path(audio_path: str, model_name: str,
                       out_dir: Optional[str] = None) -> str:
     """人声分离结果的缓存路径。
@@ -173,7 +261,15 @@ def vocals_cache_path(audio_path: str, model_name: str,
     stem = os.path.splitext(os.path.basename(audio_path))[0]
     safe = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", stem)[:60] or "audio"
     model_safe = re.sub(r"[^\w.-]+", "_", str(model_name or "demucs"))[:24] or "demucs"
-    base = out_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+    if out_dir:
+        base = out_dir
+    elif getattr(sys, "frozen", False):
+        # ⚠️ 冻结后 `__file__` 指向 `_internal\pipeline.py` —— 用它会算成
+        # `_internal\outputs`，与用户看到的 `outputs\` 不是同一个目录，导致
+        # "缓存明明在、却永远不复用"（winui 后端 / lite 包实测都踩过）。
+        base = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "outputs")
+    else:
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
     return os.path.join(base, f"{safe}.{model_safe}.vocals.wav")
 
 
@@ -223,6 +319,7 @@ class LyricToTTML:
         songwriters: Optional[Sequence[str]] = None,
     ) -> ConvertResult:
         t_start = time.time()
+        snapshot.init()   # 只读诊断开关：未设 L2T_SNAPSHOT_DIR 时立即返回 False，零行为差异
         notes: List[str] = []
         artists = list(artists or [])
 
@@ -289,6 +386,8 @@ class LyricToTTML:
                 vad_filter=False,
             )
             self.log(f"      识别到 {len(words)} 个词/字，用时 {time.time() - t0:.1f}s")
+        snapshot.dump_words("asr_raw", words, source="pipeline.py",
+                            function="AsrEngine.transcribe", note="ASR 原始输出（未加工）")
         if not words:
             raise RuntimeError("语音识别没有得到任何结果，请检查音频是否为纯音乐/无人声")
 
@@ -296,6 +395,8 @@ class LyricToTTML:
         self.log("[3/6] 动态规划强制对齐")
         matcher = LyricMatcher(log=self.log)
         report = matcher.align(lines, words, duration)
+        snapshot.dump_lines("align_dp", report.lines, source="pipeline.py",
+                            function="LyricMatcher.align", note="DP 强制对齐 + 行内后处理后的结果")
 
         # 4. 低匹配率行精修 -------------------------------------------------
         # 有第二条音轨时（分离人声）把阈值抬高：只要不是近乎满分，都让另一条轨复核一遍，
@@ -359,10 +460,15 @@ class LyricToTTML:
                 # 先把行首拉准，再按拉准后的位置量尾音。
                 snaps = onset_align.snap_line_starts(report.lines, tail_audio,
                                                      log=self.log)
+                snapshot.dump_lines("onset_align", report.lines, source="pipeline.py",
+                                    function="onset_align.snap_line_starts", note="首字起音对齐之后")
                 if snaps:
                     notes.append("首字起音对齐：" + onset_align.summarize(snaps))
                 fixes = tail_extend.extend_line_tails(report.lines, tail_audio,
+                                                      allow_same_agent_overlap=self.opt.allow_same_agent_overlap,
                                                       log=self.log)
+                snapshot.dump_lines("tail_extend", report.lines, source="pipeline.py",
+                                    function="tail_extend.extend_line_tails", note="句尾拖音补全之后")
                 if fixes:
                     notes.append("句尾拖音补全：" + tail_extend.summarize(fixes))
                 else:
@@ -376,11 +482,19 @@ class LyricToTTML:
                 self.log(f"[尾音/起音] 跳过：{why}，"
                          f"没有干净人声轨就没法可靠区分人声与伴奏")
                 notes.append(f"句尾拖音补全与首字起音对齐已跳过（{why}）")
+                snapshot.dump_lines("onset_align", report.lines, source="pipeline.py",
+                                    function="onset_align.snap_line_starts", executed=False,
+                                    skip_reason=why, note="未执行（无干净人声轨）")
+                snapshot.dump_lines("tail_extend", report.lines, source="pipeline.py",
+                                    function="tail_extend.extend_line_tails", executed=False,
+                                    skip_reason=why, note="未执行（无干净人声轨）")
 
         # 5.8 同歌手行不许重叠（铁律 4）--------------------------------------
         # 放在尾音补全**之后**：补全本身已按"同歌手不越过下一行"设了上限，
         # 但对齐原本就可能产出重叠（实测《让风告诉你》L35/L36），这里是兜底。
         self._enforce_agent_monotonic(report.lines, notes)
+        snapshot.dump_lines("agent_monotonic", report.lines, source="pipeline.py",
+                            function="Pipeline._enforce_agent_monotonic", note="同歌手去重叠之后")
 
         # 6. 输出 + 自检 ---------------------------------------------------
         if translation_text:
@@ -404,6 +518,8 @@ class LyricToTTML:
             inline_translation_lang=translation_lang or self._ttml_lang(),
             agent_types=getattr(self, "_ref_agent_types", None),
         )
+        snapshot.dump_lines("final_write", report.lines, source="pipeline.py",
+                            function="TTMLWriter.write", note="写入 TTML 前的最终值")
         ttml = writer.write(
             report.lines,
             title=song_title,
@@ -418,10 +534,21 @@ class LyricToTTML:
             songwriters=songwriters,
         )
 
+        # 生成侧拖音证据：从 5.7 步的边标记构造（无标记 ⇒ 空，行为完全不变）
+        _tid = ""
+        if output_path:
+            _tid = "".join(c for c in os.path.splitext(os.path.basename(output_path))[0]
+                           if c.isalnum() or c in "-_")
+        overlap_bundle = build_overlap_evidence(ttml, report.lines, task_id=_tid)
+        if overlap_bundle["allowed_overlaps"]:
+            self.log(f"      拖音证据：{len(overlap_bundle['allowed_overlaps'])} 条同歌手跨行重叠边"
+                     f"（格式自检按证据允许，仍以 warning 可见）")
+
         self.log("[6/6] 格式与时间轴自检")
         # 只有 clock(HH:MM:SS.mmm) 是 W3C TTML1 合法写法；mmss/seconds 是 AMLL 宽松写法，
         # 用户显式选择时按宽松模式校验（降级为警告），避免自检把故意的格式判成错误
-        check = check_ttml(ttml, strict=(self.opt.time_format == "clock"))
+        check = check_ttml(ttml, strict=(self.opt.time_format == "clock"),
+                           allowed_overlaps=overlap_bundle["allowed_overlaps"])
         self.log("      " + check.summary())
         if not check.ok:
             for e in check.errors[:5]:
@@ -468,6 +595,14 @@ class LyricToTTML:
             with open(output_path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(ttml)
             self.log(f"      已保存: {output_path}")
+            if overlap_bundle.get("evidence"):
+                from edit_api import atomic_write_text
+                side = os.path.splitext(output_path)[0] + ".overlap.json"
+                atomic_write_text(side, json.dumps(overlap_bundle["evidence"],
+                                                   ensure_ascii=False, indent=1))
+                notes.append(f"拖音证据已写入 {os.path.basename(side)}"
+                             f"（{len(overlap_bundle['evidence']['edges'])} 条边；"
+                             f"编辑台保存时会据此保住长尾，证据不符则自动回退）")
 
         notes.append(f"字级匹配率 {report.match_rate:.1%}（匹配 {report.matched_units}/{report.total_units}）")
         if report.match_rate < 0.75:
@@ -502,7 +637,9 @@ class LyricToTTML:
         for i, line in enumerate(lines):
             ag = line.agent or ""
             prev = last_of.get(ag)
-            if prev is not None and prev[1] > line.begin:
+            edge_ok = (prev is not None and prev[0] == i - 1
+                       and getattr(lines[prev[0]], "overlap_with_next", False))
+            if prev is not None and prev[1] > line.begin and not edge_ok:
                 j, prev_end = prev
                 a, b = lines[j], line
                 limit = float(b.begin)
@@ -545,6 +682,10 @@ class LyricToTTML:
         这里按字数估一个上限，避免把整段间奏送进识别。
         """
         line = lines[idx]
+        snapshot.record(stage="line_span_clip", line_id="L" + str(idx + 1), span_id=None,
+                        text=line.text, executed=True,
+                        note="行尾约束输入（_line_span 入口；返回值见 align_dp 阶段）",
+                        source_file="pipeline.py", function="Pipeline._line_span")
         lo = float(line.line_start)
         nxt = lines[idx + 1].line_start if idx + 1 < len(lines) else None
         n_chars = sum(1 for ch in line.text if not ch.isspace())
@@ -556,6 +697,11 @@ class LyricToTTML:
         # 那几个和声字会被硬挤进 0.2 秒里，最后变成时间戳重叠的坏文件。
         if any(getattr(t, "is_background", False) for t in line.tokens):
             hard_end = line.line_end if (line.line_end and line.line_end > lo) else lo + est
+            snapshot.record(stage="line_span_clip_out", line_id="L" + str(idx + 1), span_id=None,
+                            text=line.text, begin_after=lo, end_after=max(hard_end, lo + est),
+                            duration_after=round(max(hard_end, lo + est) - lo, 3),
+                            reason="背景/和声行分支：不被下一行截断",
+                            source_file="pipeline.py", function="Pipeline._line_span")
             return lo, max(hard_end, lo + est)
 
         hard_end = line.line_end if line.line_end and line.line_end > lo else None
@@ -563,6 +709,11 @@ class LyricToTTML:
             hard_end = nxt if nxt and nxt > lo else lo + 8.0
         if nxt and nxt > lo:
             hard_end = min(hard_end, nxt)
+        snapshot.record(stage="line_span_clip_out", line_id="L" + str(idx + 1), span_id=None,
+                        text=line.text, begin_after=lo, end_after=min(hard_end, lo + est),
+                        duration_after=round(min(hard_end, lo + est) - lo, 3),
+                        reason="普通行：按下一行开始/字数估上限截断",
+                        source_file="pipeline.py", function="Pipeline._line_span")
         return lo, min(hard_end, lo + est)
 
     def _transcribe_chunked(self, lines: Sequence[LyricLine], audio_path: str):
@@ -779,19 +930,109 @@ class LyricToTTML:
         return dropped
 
     # ------------------------------------------------------------ 人声分离
+    def _worker_vocals(self, audio_path: str, out_path: str,
+                       notes: List[str]) -> Optional[str]:
+        """用**独立 Demucs Worker** 分离（打包版的主路径）。
+
+        ⚠️ 主程序**绝不导入** Worker 里的 torch/demucs —— 只跑子进程 + 读 JSON。
+        ⚠️⚠️ 失败时**不要在这里断言"改用原始音频"**（2026-10-15 实测踩到）：
+        源码环境里 Worker 失败后还会走进程内 demucs，那条路**可能成功**；
+        在这里就写"改用原始音频"，会出现"日志说的和实际做的不一样"。
+        失败原因记进 `self._worker_error`，最终措辞由 `_separate_vocals`
+        按**两条路的真实结果**决定。
+        """
+        try:
+            from desktop.services import worker_service as ws
+        except Exception as e:                               # noqa: BLE001
+            self._worker_error = f"服务模块不可用（{type(e).__name__}）"
+            self.log(f"[分离] Worker 服务不可用：{type(e).__name__}: {e}")
+            return None
+        exe = ws.discover()
+        if not exe:
+            self._worker_error = ""
+            return None                                       # 没装，不算错误
+        # 复用产品已有的 Demucs 权重目录（separate.CACHE_DIR）
+        torch_home = ""
+        try:
+            from separate import CACHE_DIR as _cd
+            torch_home = _cd
+        except Exception:                                    # noqa: BLE001
+            pass
+        t0 = time.time()
+        self.log(f"[分离] 使用独立 Worker：{os.path.basename(exe)}"
+                 f"（模型 {self.opt.demucs_model}）")
+        try:
+            meta = ws.separate(audio_path, out_path, exe=exe,
+                               torch_home=torch_home,
+                               timeout=SEP_TIMEOUT_S,
+                               stop=self._sep_cancelled, echo=lambda m: None)
+        except Exception as e:                               # noqa: BLE001
+            kind = getattr(e, "kind", type(e).__name__)
+            detail = getattr(e, "detail", str(e))
+            self._worker_error = f"{kind}：{detail}"
+            self.log(f"[分离] ✗ Worker 失败（{kind}）：{detail}")
+            return None
+        dt = time.time() - t0
+        self.log(f"[分离] 完成（Worker {meta.get('used_device', '?')} "
+                 f"{meta.get('device_name', '')}），用时 {dt:.1f}s")
+        notes.append(f"人声分离（Worker/Demucs {self.opt.demucs_model}，"
+                     f"{meta.get('used_device')}）：用时 {dt:.1f}s")
+        self._worker_error = ""
+        return out_path
+
+    def _sep_cancelled(self) -> bool:
+        """是否被取消（供 Worker 轮询）。默认不取消，便于测试打桩。"""
+        try:
+            return bool(getattr(self, "_cancel_flag", None)
+                        and self._cancel_flag())
+        except Exception:                                    # noqa: BLE001
+            return False
+
     def _separate_vocals(self, audio_path: str, song_title: str,
                          notes: List[str]) -> Optional[str]:
         """用 Demucs 把人声分离出来，返回人声轨路径（失败返回 None，流程照常走原音轨）。
 
         分离出的人声轨与原始音频**时间轴完全一致**，所以后面所有时间戳照旧可用；
         它只是让 whisper 和 CAM++ 不再被鼓/贝斯/弦乐干扰。
+
+        路径优先级（第三/四阶段）：
+        ① **独立 Demucs Worker**（可选运行组件，打包版主路径；主程序不导入 torch）
+        ② 进程内 demucs（源码/开发环境，老路径，行为不变）
+        ③ 都不可用 → 如实报原因，**跳过**依赖人声轨的句尾拖音
         """
+        out_path = vocals_cache_path(audio_path, self.opt.demucs_model)
+
+        # 同一首歌重复跑时直接复用（分离很费时间）—— **复用检查要放在最前**，
+        # 这样不论走 Worker 还是进程内 demucs，都不会重算。
+        if (os.path.exists(out_path)
+                and os.path.getmtime(out_path) >= os.path.getmtime(audio_path)
+                and os.path.getsize(out_path) > 1024):
+            self.log(f"[分离] 复用已有人声轨：{os.path.basename(out_path)}")
+            notes.append("人声分离：复用上次结果（想重新分离就删掉 outputs/*.vocals.wav）")
+            return out_path
+
+        # ---- ① 独立 Worker（首选）----
+        r = self._worker_vocals(audio_path, out_path, notes)
+        if r:
+            return r
+        _werr = getattr(self, "_worker_error", "")
+
+        # ---- ② 进程内 demucs（源码环境/老用户）----
+        def _both_failed(reason2: str) -> None:
+            """两条路都失败时，才说"改用原始音频"，并把**两个原因**都说出来。"""
+            both = "；".join(x for x in (f"Worker: {_werr}" if _werr else "",
+                                        f"进程内 demucs: {reason2}" if reason2 else "")
+                            if x)
+            self.log(f"[分离] ✗ 人声分离两条路都不可用：{both} —— 已改用原始音频；"
+                     f"句尾拖音补全依赖人声轨，本次会跳过")
+            notes.append(f"⚠ 人声分离不可用（{both}），跳过")
+            self._sep_reason = f"人声分离不可用（{both}）"
+
         try:
             from separate import VocalSeparator, available
         except Exception as e:
             self.log(f"[分离] ✗ 人声分离模块不可用：{type(e).__name__}: {e}")
-            notes.append(f"⚠ 人声分离不可用（{type(e).__name__}），改用原始音频")
-            self._sep_reason = f"人声分离模块不可用（{type(e).__name__}）"
+            _both_failed(f"模块不可用（{type(e).__name__}）")
             return None
         if not available():
             # ⚠️⚠️ **必须说出来，而且要说准**（2026-10-15 用户实测）：
@@ -804,37 +1045,30 @@ class LyricToTTML:
             try:
                 from separate import why_unavailable as _why
                 reason = _why() or "demucs 不可用"
-            except Exception:                            # noqa: BLE001
+            except Exception:                                # noqa: BLE001
                 reason = "demucs 不可用"
-            self.log(f"[分离] ✗ 人声分离用不了：{reason} —— 已改用原始音频；"
-                     f"句尾拖音补全依赖人声轨，本次会跳过")
-            notes.append(f"⚠ 人声分离不可用（{reason}），跳过")
-            self._sep_reason = f"人声分离不可用（{reason}）"
+            self.log(f"[分离] ✗ 进程内 demucs 用不了：{reason}"
+                     + (f"（Worker 也已失败：{_werr}）" if _werr else ""))
+            _both_failed(reason)
             return None
-
-        out_path = vocals_cache_path(audio_path, self.opt.demucs_model)
-
-        # 同一首歌重复跑时直接复用（分离很费时间）
-        if (os.path.exists(out_path)
-                and os.path.getmtime(out_path) >= os.path.getmtime(audio_path)
-                and os.path.getsize(out_path) > 1024):
-            self.log(f"[分离] 复用已有人声轨：{os.path.basename(out_path)}")
-            notes.append("人声分离：复用上次结果（想重新分离就删掉 outputs/*.vocals.wav）")
-            return out_path
 
         try:
             t0 = time.time()
             sep = VocalSeparator(model=self.opt.demucs_model, device=self.opt.device,
                                  log=self.log)
             sep.separate_to_file(audio_path, out_path)
-            self.log(f"[分离] 完成，用时 {time.time() - t0:.1f}s")
-            notes.append(f"人声分离（Demucs {self.opt.demucs_model}）："
-                         f"识别与声纹都基于纯人声轨，用时 {time.time() - t0:.1f}s")
+            self.log(f"[分离] 完成，用时 {time.time() - t0:.1f}s"
+                     + (f"（Worker 曾失败：{_werr}，已回落到进程内 demucs）"
+                        if _werr else ""))
+            notes.append(f"人声分离（进程内 Demucs {self.opt.demucs_model}）："
+                         f"识别与声纹都基于纯人声轨，用时 {time.time() - t0:.1f}s"
+                         + (f"；⚠ Worker 曾失败（{_werr}），本次走的是进程内路径"
+                            if _werr else ""))
+            self._sep_reason = ""
             return out_path
         except Exception as e:
-            self.log(f"[分离] ✗ 失败：{type(e).__name__}: {str(e)[:150]}")
-            notes.append(f"⚠ 人声分离失败（{type(e).__name__}），改用原始音频")
-            self._sep_reason = f"人声分离失败（{type(e).__name__}）"
+            self.log(f"[分离] ✗ 进程内 demucs 失败：{type(e).__name__}: {str(e)[:150]}")
+            _both_failed(f"{type(e).__name__}: {str(e)[:80]}")
             return None
 
     # ------------------------------------------------------------ 风格准则

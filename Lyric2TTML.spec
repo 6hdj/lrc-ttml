@@ -128,13 +128,19 @@ else:
     print('[models] ⚠️ 没有 models/campplus/campplus.onnx —— '
           '分声部将要求 pyTorch 运行时组件；'
           '可用 `python tools/export_campplus_onnx.py` 生成')
-# 桌面版的两份清单都必须随包带上（第一次启动就要按它们检查状态）：
+# 桌面版的三份清单都必须随包带上（第一次启动就要按它们检查状态）：
 #   * model_manifest.json    —— 模型权重（CAM++/Whisper/Demucs）
 #   * runtime_manifest.json  —— 运行时组件（PyTorch，按需下载）
-# ⚠️ 两份**不能混**：模型在 `models/`，运行时在 `<数据目录>/runtime/`，
+#   * worker_manifest.json   —— 人声分离运行库（可选组件，从免费公共源下载）
+# ⚠️ 三份**不能混**：模型在 `models/`，运行时在 `<数据目录>/runtime/`，
+# 分离运行库也在 `<数据目录>/runtime/demucs-worker`，
 # 状态机独立、提示文案独立（需求第 9 条：不得互相误报）。
+# ⚠️⚠️ **新增清单必须加在这里**（2026-10-16 冻结版实测踩到）：
+# `worker_manifest.json` 没进包时，冻结版运行库页显示"清单里没有组件"、
+# 下载按钮永远不可用 —— 而源码模式全绿，只有冻结版才暴露。
 datas += [('desktop/resources/model_manifest.json', 'desktop/resources'),
-          ('desktop/resources/runtime_manifest.json', 'desktop/resources')]
+          ('desktop/resources/runtime_manifest.json', 'desktop/resources'),
+          ('desktop/resources/worker_manifest.json', 'desktop/resources')]
 
 # ⚠️⚠️ **AMLL 解析器要随包分发**（2026-10-15 用户实测）：
 # 打包版里那行是「（AMLL 解析器检查跳过：ModuleNotFoundError）」——

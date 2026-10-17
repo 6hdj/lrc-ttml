@@ -25,8 +25,50 @@ import numpy as np
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def demucs_roots() -> list:
+    """Demucs 权重**可能存在的根目录**，按优先级排列。
+
+    ⚠️⚠️ 2026-10-16 **冻结版端到端**实测踩到（第九阶段闭环）：
+    * `--add-data models;models` 打到的是 **`<exe>/_internal/models/`**（PyInstaller ≥6）；
+    * 而本文件与模型清单、CAM++ 三处**统一用 `<exe>/models/`**（可写、升级不丢）；
+    ⇒ 权重其实**随包发布了 80MB**，运行时却找不到，于是 Worker 去联网重下
+      （实测 13 分钟只到 57MB，用户看到就是"卡死"）。
+    **所以不能只认一个根**：谁那里真的有 `hub/checkpoints/*.th` 就用谁。
+    （修复方式刻意选择"解析出真实位置"，**不复制大体积权重**来掩盖问题。）
+    """
+    roots = []
+    try:
+        from desktop import paths as _p          # 不导入 Qt，安全
+        roots.append(os.path.join(_p.app_dir(), "models", "demucs"))
+        for r in _p.resource_roots():            # 冻结时含 `_internal`（= _source_dir）
+            cand = os.path.join(r, "models", "demucs")
+            if cand not in roots:
+                roots.append(cand)
+    except Exception:                            # noqa: BLE001
+        pass
+    fallback = os.path.join(_HERE, "models", "demucs")
+    if fallback not in roots:
+        roots.append(fallback)
+    return roots
+
+
+def _has_checkpoint(root: str) -> bool:
+    """该根下有没有**有效**权重（排除 `.partial` 半截文件、要 >1MB）。"""
+    ck = os.path.join(root, "hub", "checkpoints")
+    if not os.path.isdir(ck):
+        return False
+    for f in os.listdir(ck):
+        if f.endswith(".th") and not f.endswith(".partial"):
+            try:
+                if os.path.getsize(os.path.join(ck, f)) > 1024 * 1024:
+                    return True
+            except OSError:
+                pass
+    return False
+
+
 def _cache_dir() -> str:
-    """Demucs 权重目录 —— **必须与模型清单的落盘位置一致**。
+    """Demucs 权重目录 —— **优先选"真的有权重"的那个根**，否则退到可写目录。
 
     ⚠️⚠️ 2026-10-15 用户实测踩到：原来是 `os.path.join(_HERE, "models", "demucs")`，
     而**冻结后 `__file__` 在 `_internal/` 里** ⇒ 跑到
@@ -35,11 +77,17 @@ def _cache_dir() -> str:
     `verify.target` 落到 **`<程序目录>/models/demucs/hub/checkpoints`** 的。
     两边差一层 `_internal` ⇒ **明明装好了，运行时还去重下 80MB**。
 
-    现在走 `desktop.paths.app_dir()`（冻结 = exe 旁边，源码 = 仓库根），
-    与清单、与 CAM++ 那三处资源根保持同一个口径。
+    2026-10-16 又反过来踩了一次：**构建把权重打进了 `_internal/models/`**，
+    而这里只认 `<程序目录>/models/` ⇒ 同样"明明有、却当没有"。
+    结论：**两个根都要看**，先看谁真的有权重；都没有才用可写目录
+    （供模型管理页下载落盘 & 让 torch.hub 有地方写）。
     """
+    roots = demucs_roots()
+    for r in roots:
+        if _has_checkpoint(r):
+            return r
     try:
-        from desktop import paths as _p          # 不导入 Qt，安全
+        from desktop import paths as _p          # 可写根（与模型清单落盘位置一致）
         return os.path.join(_p.app_dir(), "models", "demucs")
     except Exception:                            # noqa: BLE001
         return os.path.join(_HERE, "models", "demucs")

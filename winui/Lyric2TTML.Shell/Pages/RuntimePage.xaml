@@ -1,0 +1,87 @@
+<Page
+    x:Class="Lyric2TTML.Shell.Pages.RuntimePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
+    <ScrollViewer>
+        <Grid Margin="{StaticResource PageMargin}" RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Spacing="4">
+                <TextBlock Text="运行库" FontSize="{StaticResource TitleSize}" FontWeight="SemiBold" />
+                <TextBlock Text="状态来自后端真实检查（--runtime-cli --status --json / --worker-cli --status）；安装真的下载并校验。"
+                           FontSize="{StaticResource CaptionSize}" Opacity="0.7" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                <Button x:Name="BtnRefresh" Content="刷新状态" Click="BtnRefresh_Click" />
+                <muxc:ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" />
+                <TextBlock x:Name="LbStatus" VerticalAlignment="Center"
+                           FontSize="{StaticResource CaptionSize}" Opacity="0.8" />
+            </StackPanel>
+
+            <muxc:InfoBar x:Name="Bar" Grid.Row="2" IsOpen="False" IsClosable="True" />
+
+            <Border Grid.Row="3"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="{StaticResource CardCorner}"
+                    Padding="{StaticResource CardPadding}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Python 运行时（torch / CUDA）" FontWeight="SemiBold" />
+                    <TextBlock x:Name="LbRuntimeRoot" FontSize="{StaticResource CaptionSize}" Opacity="0.7"
+                               TextWrapping="Wrap" />
+                    <ListView x:Name="RuntimeList" SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid ColumnSpacing="12" Padding="0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets"
+                                               FontSize="16" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                    <StackPanel Grid.Column="1" Spacing="3">
+                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap"
+                                                   FontSize="{StaticResource CaptionSize}" Opacity="0.85" />
+                                        <TextBlock Text="{Binding Meta}" TextWrapping="Wrap"
+                                                   FontSize="{StaticResource CaptionSize}" Opacity="0.65" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Button Content="安装/修复" Tag="{Binding Id}" Click="BtnInstallRuntime_Click"
+                                                    IsEnabled="{Binding CanDownload}" />
+                                            <Button Content="删除" Tag="{Binding Id}" Click="BtnRemoveRuntime_Click"
+                                                    IsEnabled="{Binding CanRemove}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="4"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="{StaticResource CardCorner}"
+                    Padding="{StaticResource CardPadding}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="人声分离运行库（Demucs Worker）" FontWeight="SemiBold" />
+                    <TextBlock x:Name="LbWorker" TextWrapping="Wrap" FontSize="{StaticResource CaptionSize}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="BtnWorkerInstall" Content="安装" Click="BtnWorkerInstall_Click" />
+                        <Button x:Name="BtnWorkerVerify" Content="校验" Click="BtnWorkerVerify_Click" />
+                        <Button x:Name="BtnWorkerUninstall" Content="卸载" Click="BtnWorkerUninstall_Click" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </ScrollViewer>
+</Page>

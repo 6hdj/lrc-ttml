@@ -2093,8 +2093,27 @@ def test_tail_extend():
         check("尾字 end 被延到能量跌落处（≈2.8s）",
               2.7 <= lines[0].units[-1].end <= 2.9, f"{lines[0].units[-1].end:.3f}")
         check("行 end 跟着延（span ⊆ p）", lines[0].end >= lines[0].units[-1].end - 1e-9)
-        check("跨歌手允许重叠", fixes[0]["overlap"] is True)
+        # ⚠️ 语义已升级：`overlap` = **实际越过** nxt.begin（同歌手/跨歌手同一规则）。
+        # 本场景尾音只延到 2.8s，下一行从 3.5s 开始 —— **并没有越界**，
+        # 所以这里必须为 False（旧实现跨歌手分支无条件 True，把"允许重叠"
+        # 误报成"发生了重叠"，summarize() 计数因此虚高）。
+        check("跨歌手未越界 ⇒ overlap 必须为 False", fixes[0]["overlap"] is False,
+              str(fixes[0]))
         check("没有动第二行", abs(lines[1].end - 4.5) < 1e-9)
+
+    # 正对照：**确实越过** next.begin 的跨歌手场景 ⇒ overlap=True / marker 为真 / 不超上限
+    # （旧用例断言"未越界也 True"已换成上面的 False；这条补回真正的越界覆盖，
+    #  是语义升级、不是降级 —— 旧断言在这条场景下也会通过。）
+    audio_cross = tone(1.0, 4.0)
+    lines_cross = [L(1.0, 2.0, "v1", [U(1.0, 1.5), U(1.5, 1.9), U(1.9, 2.0)], "一句"),
+                   L(2.3, 3.0, "v2", [U(2.3, 3.0)], "二句")]
+    fx_cross = T.extend_line_tails(lines_cross, audio_cross, SR)
+    check("跨歌手确实越过 next.begin ⇒ overlap=True",
+          bool(fx_cross) and fx_cross[0]["overlap"] is True, str(fx_cross))
+    check("跨歌手越界 ⇒ marker 为真",
+          getattr(lines_cross[0], "overlap_with_next", False) is True)
+    check("跨歌手越界 ⇒ new_end 不超过 next.begin + cross_agent_max",
+          lines_cross[0].end <= 2.3 + 1.5 + 1e-9, f"{lines_cross[0].end:.3f}")
 
     # ⚠️ 行为已升级：换成**音高判据**后，是否延伸取决于**音频里还在不在唱**，
     # 不再取决于"尾字够不够短"。所以：

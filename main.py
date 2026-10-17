@@ -101,6 +101,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "mask=星号屏蔽（儿童适宜版本）")
     p.add_argument("--detect-muted", action="store_true",
                    help="检测被消音屏蔽的词，并按 Apple 准则用 **** 替换")
+    p.add_argument("--allow-same-agent-overlap", dest="allow_same_agent_overlap",
+                   action="store_true", default=False,
+                   help="【实验/诊断】允许有证据的同歌手跨行叠唱并越过下一行 begin（上限 nxt.begin+1.5s）。⚠️ 产出 TTML 会触发『同一演唱者行时间重叠』校验错误，不要当成品发布；默认关闭")
     p.add_argument("--separate-vocals", action="store_true",
                    help="先用 Demucs 分离出人声轨，再用它做识别与声纹（更准，但要多花时间）")
     p.add_argument("--extend-tails", dest="extend_tails", action="store_true",
@@ -217,6 +220,7 @@ def main(argv=None) -> int:
         explicit_policy=args.explicit_policy,
         detect_muted=args.detect_muted,
         separate_vocals=args.separate_vocals,
+        allow_same_agent_overlap=args.allow_same_agent_overlap,
         extend_tails=args.extend_tails,
         demucs_model=args.demucs_model,
     )

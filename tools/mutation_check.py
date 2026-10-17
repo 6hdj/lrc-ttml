@@ -84,6 +84,57 @@ MUTATIONS = [
      "                if False:",
      "tools/test_gpu_guard.py",
      "拿掉「没有 N 卡」的分支 → 没卡用户会被引导白下 529 MB"),
+
+    # ---------------------------------------------------------------- 长音重叠 opt-in
+    # 这一组变异守的是「尾音补全允许同歌手跨行重叠」这条实验开关的**边级语义**：
+    # 默认关闭时零回归；打开后只有实际越界才打 marker；marker 只豁免**相邻**边；
+    # 而且消费者（pipeline/matcher）必须真的认这个 marker。
+    # 目标测试：tools/test_tail_overlap_optin.py（55 项断言）。
+    ("tail-overlap-m1-same-agent-clamp", "tail_extend.py",
+     "            if same_agent and not allow_same_agent_overlap:",
+     "            if same_agent:",
+     "tools/test_tail_overlap_optin.py",
+     "把同歌手分支改回无条件 min(hard, nxt.begin) → opt-in 形同虚设，"
+     "尾音仍被硬切在下一行开始"),
+
+    ("tail-overlap-m2-pipeline-flag", "pipeline.py",
+     "allow_same_agent_overlap=self.opt.allow_same_agent_overlap,",
+     "allow_same_agent_overlap=False,",
+     "tools/test_tail_overlap_optin.py",
+     "流水线永远传 False → 界面/CLI 打开开关也不生效（死字段），"
+     "只有真把参数传下去才叫「接上了」"),
+
+    ("tail-overlap-m3-marker-after-overlap-pair", "matcher.py",
+     "            if getattr(a, \"overlap_with_next\", False):\n"
+     "                # \u8fb9\u7ea7\u8bc1\u636e\uff1a\u672c\u884c\u4e0e\u7d27\u90bb"
+     "\u4e0b\u4e00\u884c**\u5b9e\u9645**\u53d1\u751f\u6709\u8bc1\u636e\u7684"
+     "\u5ef6\u957f \u2192 \u4e0d\u56de\u6536\n"
+     "                continue\n"
+     "            new_a_end = overlap_pair(a.units, b.units, a.begin, self.min_unit_duration)\n",
+     "            new_a_end = overlap_pair(a.units, b.units, a.begin, self.min_unit_duration)\n"
+     "            if getattr(a, \"overlap_with_next\", False):\n"
+     "                # \u8fb9\u7ea7\u8bc1\u636e\uff1a\u672c\u884c\u4e0e\u7d27\u90bb"
+     "\u4e0b\u4e00\u884c**\u5b9e\u9645**\u53d1\u751f\u6709\u8bc1\u636e\u7684"
+     "\u5ef6\u957f \u2192 \u4e0d\u56de\u6536\n"
+     "                continue\n",
+     "tools/test_tail_overlap_optin.py",
+     "把 marker 判断移回 overlap_pair() 之后 → overlap_pair 就地改 units，"
+     "尾字 end 已经被压回去，行区间看起来没动、字级证据被吃掉（真踩过的 bug）"),
+
+    ("tail-overlap-m4-edge-ok-always-false", "pipeline.py",
+     "            edge_ok = (prev is not None and prev[0] == i - 1\n"
+     "                       and getattr(lines[prev[0]], \"overlap_with_next\", False))",
+     "            edge_ok = False",
+     "tools/test_tail_overlap_optin.py",
+     "edge_ok 恒 False → 相邻边的 marker 不再豁免，opt-in 产出的合法叠唱"
+     "会被流水线自己压回去（补了等于没补）"),
+
+    ("tail-overlap-m5-marker-always-true", "tail_extend.py",
+     "            line.overlap_with_next = bool(overlap)",
+     "            line.overlap_with_next = True",
+     "tools/test_tail_overlap_optin.py",
+     "marker 恒 True → 没实际越界的行也被标成「允许重叠」，"
+     "下游会放过本该收紧的同歌手重叠（边级证据泄漏）"),
 ]
 
 

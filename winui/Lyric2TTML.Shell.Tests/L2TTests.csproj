@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    编辑台纯逻辑的单测。
+    ⚠️ 刻意做成**普通控制台程序**（不是 WinUI、不引入任何测试框架）：
+      * 直接 `<Compile Include>` 链接业务源码 ⇒ 测的就是真代码，不是副本；
+      * 受限环境里也能跑（本机 `dotnet build` 对 WinUI 有 MSB4062 问题，控制台项目没这个问题）；
+      * 输出是被本项目一贯使用的 PASS/FAIL 清单，便于人工核对。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Lyric2TTML.Shell.Tests</RootNamespace>
+    <AssemblyName>L2TEditTests</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <!-- 链接真源码（唯一来源，避免"测试测的是副本"）。
+         用通配符：Editing/ 下新增的纯逻辑文件（如 TimeNudge.cs）自动纳入测试，不必再改本文件。 -->
+    <!-- 只链**纯逻辑**：HttpEditBackend 依赖 WinUI 侧 BackendClient，不属于纯逻辑 ⇒ 排除 -->
+    <Compile Include="..\Lyric2TTML.Shell\Editing\*.cs" Exclude="..\Lyric2TTML.Shell\Editing\HttpEditBackend.cs" />
+    <!-- 阶段 4：模型/运行库解析与外壳设置是纯逻辑，同样直接链真源码 -->
+    <Compile Include="..\Lyric2TTML.Shell\Backend\Management.cs" />
+    <Compile Include="..\Lyric2TTML.Shell\Backend\ShellSettings.cs" />
+  </ItemGroup>
+</Project>
