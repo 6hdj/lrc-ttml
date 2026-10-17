@@ -134,6 +134,12 @@ class WhisperASR:
                           or os.environ.get("HUGGINGFACE_HUB_CACHE")
                           or os.environ.get("L2T_HF_CACHE")
                           or DEFAULT_CACHE_DIR)
+        # 重新扫 CUDA DLL 目录：用户可能在程序启动**之后**才在「运行库」页装好，
+        # 模块导入期那次 add_dll_directory 看不到新目录 ⇒ 这里补一次。
+        try:
+            _register_cuda_dlls()
+        except Exception:
+            pass
         self.cpu_threads = cpu_threads or (os.cpu_count() or 4)
         self.log = log
         self._model = None
@@ -193,6 +199,16 @@ class WhisperASR:
             _sys.executable if getattr(_sys, "frozen", False) else __file__))
         candidates = [os.path.join(app_dir, "cuda"),
                       os.path.join(app_dir, "cuda", "bin")]
+        # 「运行库」页安装的 CUDA 组件放在 <数据目录>\runtime\cuda，不是 app_dir\cuda。
+        # 用户"先开程序、后装运行库"时模块导入期扫不到 ⇒ 转换报 cublas64_12.dll 找不到。
+        try:
+            from desktop import paths as _p
+            _rt = _p.runtime_root()          # <数据目录>/runtime
+            candidates.append(os.path.join(_rt, "cuda"))
+            candidates.append(os.path.join(_rt, "cuda", "bin"))
+            candidates.extend(glob.glob(os.path.join(_rt, "cuda", "*", "bin")))
+        except Exception:
+            pass
         # ① **程序目录下的 `cuda\` —— 直接注册这个目录本身。**
         # ⚠️ 不能把它混进下面那个 `nvidia/*/bin` 通配里：安装程序是把 DLL **摊平**
         # 放进 `cuda\` 的，通配 `cuda/nvidia/*/bin` 一个都匹配不到，

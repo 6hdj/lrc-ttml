@@ -19,7 +19,13 @@ from urllib.parse import parse_qs, urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(HERE, ".hf_cache"))
+# ⚠️ 不能写死 HERE/.hf_cache：冻结后 HERE=_internal，而下载/体检都指向 <程序目录>\.hf_cache
+# 或 L2T_HF_CACHE ⇒ ASR 会去错误目录找模型（便携包里实测"下好了却说没缓存"）。
+if not os.environ.get("HUGGINGFACE_HUB_CACHE"):
+    _hf_default = (os.path.dirname(os.path.abspath(sys.executable))
+                   if getattr(sys, "frozen", False) else HERE)
+    os.environ["HUGGINGFACE_HUB_CACHE"] = (os.environ.get("L2T_HF_CACHE")
+                                            or os.path.join(_hf_default, ".hf_cache"))
 sys.path.insert(0, HERE)
 
 from pipeline import ConvertOptions, LyricToTTML  # noqa: E402

@@ -68,6 +68,18 @@ def main() -> int:
             pass
         print(f"[service] LocalAppData 不可写，数据/模型缓存改用：{_data}", flush=True)
 
+    # ASR 优先认 HUGGINGFACE_HUB_CACHE（HF 官方名）⇒ 必须与我们的缓存目录对齐。
+    # 否则：模型下到 data 缓存、ASR 去 _internal\.hf_cache 找 ⇒「下好了却说没缓存」
+    # （便携包实测踩到；web_server 原来的 setdefault 冻结后指向 _internal）。
+    if os.environ.get("L2T_HF_CACHE"):
+        os.environ["HUGGINGFACE_HUB_CACHE"] = os.environ["L2T_HF_CACHE"]
+    else:
+        try:
+            from desktop import paths as _paths
+            os.environ["HUGGINGFACE_HUB_CACHE"] = _paths.hf_cache_dir()
+        except Exception:
+            os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(base, ".hf_cache")
+
     # ---------------- CLI JSON 子命令（WinUI 的 CliBridge 直接调本 exe）----------------
     # ⚠️ 必须**真的路由**：CliBridge 的约定是"跑后端 exe + 参数，从 stdout 取 JSON"。
     # 漏了分发的话，`--model-cli json` 会被当成"没参数" ⇒ 起 HTTP 服务 ⇒ 永远拿不到 JSON。
