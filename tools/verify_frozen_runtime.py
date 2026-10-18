@@ -70,8 +70,24 @@ def main() -> int:
         print(f"没有冻结版 exe：{exe}")
         return 2
     EXE = exe                      # ⚠️ run() 用的是全局 EXE，不设这里会跑默认路径
+    skip_convert = "--skip-convert" in sys.argv
+    wheels_dir = ""
+    if "--wheels" in sys.argv:
+        try:
+            wheels_dir = os.path.abspath(sys.argv[sys.argv.index("--wheels") + 1])
+        except IndexError:
+            pass
     shutil.rmtree(SANDBOX, ignore_errors=True)
     os.makedirs(SANDBOX, exist_ok=True)
+    if wheels_dir and os.path.isdir(wheels_dir):
+        # 复用已下载的 wheel，避免回归时每次重下 118 MB
+        cache = os.path.join(SANDBOX, "runtime", ".wheels")
+        os.makedirs(cache, exist_ok=True)
+        for f in os.listdir(wheels_dir):
+            src = os.path.join(wheels_dir, f)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(cache, f))
+        print(f"[wheels] 复用缓存：{wheels_dir}")
     env_data = {"L2T_DATA_DIR": SANDBOX, "L2T_RUNTIME_DIR":
                 os.path.join(SANDBOX, "runtime")}
     print(f"冻结版：{exe}")
@@ -83,7 +99,9 @@ def main() -> int:
                          "1791454712_在出发之前 - 陶典&hanser&爆裂菊是也&HOYO-MiX.wav")
     lyrics = os.path.join(HERE, "uploads", "1791454729_在出发之前 - 陶典.lrc")
     out_ttml = os.path.join(SANDBOX, "base.ttml")
-    if os.path.isfile(audio) and os.path.isfile(lyrics):
+    if skip_convert:
+        print("    跳过（--skip-convert；便携版后端无 CUDA，完整歌曲 CPU 转换会超时）")
+    elif os.path.isfile(audio) and os.path.isfile(lyrics):
         code, out, err = run(["--audio", audio, "--lyrics", lyrics,
                               "-o", out_ttml, "--language", "zh"],
                              env_extra=env_data, timeout=1200)
@@ -136,7 +154,7 @@ def main() -> int:
                 pass
     tor = [r for r in rows if r["id"] == "torch"]
     if tor and tor[0]["status"] == "ready":
-        loc = tor[0]["location"]
+        loc = tor[0].get("location") or rt_dir   # 某些版本 status JSON 不带 location
         ok("运行时状态=ready", tor[0]["detail"][:50])
         if os.path.abspath(loc).startswith(os.path.abspath(SANDBOX)):
             ok("运行时装在**数据目录**（升级不会丢）",
@@ -154,13 +172,16 @@ def main() -> int:
         fh.write(
             "import os, sys\n"
             "sys.stdout.reconfigure(encoding='utf-8', errors='replace')\n"
-            f"sys.path.insert(0, {os.path.dirname(rt_dir)!r})\n"
+            f"sys.path.insert(0, {rt_dir!r})\n"
             "import torch\n"
             "print('FROM', os.path.abspath(torch.__file__))\n"
             "print('VER', torch.__version__)\n")
     env_clean = dict(os.environ)
     env_clean.pop("PYTHONPATH", None)
-    r = subprocess.run([sys.executable, "-S", probe], capture_output=True,
+    # ⚠️ 不加 `-S`：torch wheel 自己不包含 typing_extensions/filelock 等依赖，
+    # 真实用户环境由**冻结后端内置**这些依赖（打包时 --hidden-import）；
+    # 这里的独立探针用当前 Python 环境（含依赖）并保证 rt_dir 优先即可。
+    r = subprocess.run([sys.executable, probe], capture_output=True,
                        text=True, encoding="utf-8", errors="replace",
                        timeout=600, cwd=SANDBOX, env=env_clean)
     if "FROM" in (r.stdout or ""):
