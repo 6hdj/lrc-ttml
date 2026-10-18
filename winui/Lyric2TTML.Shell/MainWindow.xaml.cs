@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Lyric2TTML.Shell.Pages;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
@@ -23,6 +24,14 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         Title = "Lyric2TTML";
+        // 窗口/任务栏图标：exe 图标由 csproj 的 ApplicationIcon 提供；
+        // 运行时再显式设一次（未打包应用的任务栏/标题栏图标有时不跟 exe）。
+        try
+        {
+            var ico = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
+            if (File.Exists(ico)) AppWindow.SetIcon(ico);
+        }
+        catch { /* 图标失败不影响启动 */ }
         TryEnableMica();
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
