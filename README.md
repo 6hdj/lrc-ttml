@@ -1,58 +1,62 @@
 # Lyric2TTML
 
-**当前版本：v1.1.1**　·　安装包 **190 MB**　·　**不需要管理员权限**
+**当前版本：v1.2.1**　·　**WinUI 3 桌面界面**　·　便携包 **414 MB**（解压即用）　·　全程离线、无需 API Key
 
 > ## ⬇️ 下载
 >
-> **[`Lyric2TTML-1.1.1-setup.exe`](https://github.com/6hdj/lrc-ttml/releases/download/v1.1.1/Lyric2TTML-1.1.1-setup.exe)**（190 MB，双击即装）
+> **[`Lyric2TTML-winui-v1.2.1-portable.zip`](https://github.com/6hdj/lrc-ttml/releases/download/v1.2.1/Lyric2TTML-winui-v1.2.1-portable.zip)**
+> （**414 MB**，解压后双击 `winui\Lyric2TTML.exe`）
 >
 > 全部版本：[Releases](https://github.com/6hdj/lrc-ttml/releases)　·　
-> 安装与首次使用步骤见下方[「Windows 一键安装」](#windows-一键安装推荐不用装-python)
+> 旧版 Qt 安装包（v1.1.1，190 MB）：
+> [`Lyric2TTML-1.1.1-setup.exe`](https://github.com/6hdj/lrc-ttml/releases/download/v1.1.1/Lyric2TTML-1.1.1-setup.exe)
 >
-> ⚠️ **v1.1 与 v1.0.x 的安装方式完全不同**：旧版是
-> `part1.bin + part2.bin + merge-and-extract-v3.bat`（1.8 GB，要手动合并），
-> 新版是**单个 exe**。如果你看到"合并解压"的教程，那是旧版的，别照做。
+> **首次使用需要联网下两样**（都来自官方源，装完后完全离线可用）：
 >
-> ⚠️ **首次使用要联网下两样**（语音模型约 3 GB + GPU 运行时约 529 MB），
-> 都下完后**完全离线可用**。详见下方说明。
+> ① **Whisper 语音模型**（large-v3 约 2.9 GB）——「模型管理」页点下载，
+>    走**魔搭 ModelScope 官方源**，实测约 20 MB/s（2 分钟左右）；
+> ② **CUDA 运行库**（527 MB）——「运行库」页一键安装，实测 22 秒。
+>    需要人声分离时再装 Demucs Worker（约 86 秒）。
 >
-> ### v1.1.1 修了什么（相对 v1.1.0）
+> ### v1.2 做了什么
 >
-> * **安装阶段不再要求下载大件**：语音模型（3 GB）与 GPU 运行时（529 MB）
->   属于"处理歌词时才需要"，现在只在软件内的「模型」页下载 ——
->   安装程序只检查**能不能打开**。
->   （以前装完就要求"补全"，等于软件还没打开先下 3.5 GB。）
-> * **中国大陆能下载 GPU 运行时的**：新增**腾讯云 / 阿里云 PyPI 镜像**
->   作为备用源，首选源失败会**自动换下一个**（原来只配了 GitHub 单一源，
->   大陆用户实测"连接被拒"就彻底下不动）。
-> * 修掉三个真 bug：多来源回退**实际不生效**、镜像 wheel 的 DLL 布局
->   识别不到（会重复下载）、"文件被挪走仍报已就绪"的**假就绪**。
-> * `cuDNN` 不再下载（实测对速度无影响，白占 1 GB）；修正
->   "没有它只能 CPU"（**本项目没有 CPU 降级**，是直接报错）。
-
-把**普通歌词**（`.txt` / `.lrc`）配合**歌曲音频**，智能转换成 Apple Music 逐字歌词（TTML），
-输出遵循 [AMLL TTML Database 官方规范](https://github.com/amll-dev/amll-ttml-db)，
-可直接用于 [AMLL Player](https://github.com/steve-xmh/amll-ttml-tool)、SPlayer 等播放器，
-或整理后提交 Apple Music。
-
-> **全程离线运行**：不需要 API Key、不上传任何数据。所有时间戳都来自真实音频。
-
-> 📌 **改代码前先读**：[`AGENTS.md`](AGENTS.md)（输出 TTML 的铁律与验证流程）、
-> [`docs/TTML1-AMLL歌词格式规范.md`](docs/TTML1-AMLL歌词格式规范.md)
-> （W3C TTML1 条款、AMLL/Apple 约定、背景人声与对唱的写法、症状对照表）。
-> 生成新文件后建议跑：`python selftest.py` 与
-> `python main.py --check-only <文件>.ttml --strict-time`。
-
----
-
+> * **界面迁移到 WinUI 3**（C# / XAML，原生 Windows 11 风格）：开始 / 歌词工作台 /
+>   歌词编辑台 / 任务中心 / 模型管理 / 运行库 / 设置 / 帮助诊断，全部真实页面；
+>   浅色·深色·跟随系统主题（选中即预览）、播放逐字高亮。
+> * **模型下载改走官方国内源（魔搭 ModelScope）直链**：支持断点续传 + 字节数校验，
+>   HuggingFace / GitHub Release 镜像依次兜底；实测 large-v3 2.9 GB ≈ 2 分钟、
+>   medium 1.4 GB ≈ 1 分钟、small 464 MB ≈ 30 秒，**7/7 模型可就绪**。
+> * **显式保存**：处理完成后先不落盘（`.pending`），点「💾 保存 TTML」才写正式文件；
+>   编辑台的修改只进草稿，点保存才写 TTML。未编辑时保存**逐字节保留**生成结果。
+>   保存文件名 = **歌手 - 歌名**（同名自动加序号），不再是一串 task id。
+> * **便携包不再捆绑 2 GB CUDA**，改为运行库页一键安装 ⇒ 包体从 2.37 GB 降到 **414 MB**。
+> * 修掉一批实测问题：后端 CLI 中文乱码、模型「下载」按钮永远灰、
+>   深色模式歌词黑字/编辑面板配色、工作台开关文字被裁、
+>   外部目录不可写时静默回退、后装 CUDA 不生效等。
+>
+> ⚠️ **v1.2.0 的附件是「更新补丁」**（只有壳 + 后端 exe，不含后端 `_internal` 运行库），
+> 单独运行会报 `Failed to load Python DLL ... python314.dll`。请下载 **v1.2.1 便携版**；
+> 更新补丁只用于给已有安装目录覆盖升级。
 ## 界面演示
 
-> 下面都是**真实运行的界面截图**，不是效果图 —— 由 `tools/shoot_screens.ps1`
-> 把服务起起来、用无头浏览器打开真实页面截的，随时可以重新生成。
-> 截图用的是仓库自带的示例歌词（[`examples/`](examples/)），所以里面出现的
-> 歌名/歌手都是占位的示例数据。
+> 下面这些是**真实运行的界面截图**（旧版 Qt 桌面窗口 + 浏览器编辑台），不是效果图 ——
+> 由 `tools/shoot_screens.ps1` 把服务起起来、用无头浏览器打开真实页面截的，随时可以重新生成。
+> 截图用的是仓库自带的示例歌词（[`examples/`](examples/)），里面出现的歌名/歌手都是占位的示例数据。
+> **v1.2 的 WinUI 3 界面**见上方说明（截图稍后补）。
 
-### 桌面版（v1.1 新增）
+### WinUI 3 桌面界面（v1.2 新增）
+
+界面全部迁移到 **WinUI 3（C# / XAML）**，左侧八页：
+**开始** / **歌词工作台** / **歌词编辑台** / **任务中心** / **模型管理** / **运行库** / **设置** / **帮助诊断**。
+
+* **歌词工作台**：选音频 / 歌词 → 参数 → 开始处理；进度与日志来自后端真实任务，可取消。
+* **歌词编辑台**：逐字渲染 + 播放高亮（咬字 / 拖音两阶段）、改时间、±10ms、改声部、
+  和声、元数据；改动只写草稿，点「💾 保存 TTML」才写正式文件。
+* **模型管理**：7 个模型的来源 / 体积 / 许可 / 真实状态；下载走**魔搭官方源**（断点续传 + 字节校验）。
+* **运行库**：torch / CUDA / Demucs Worker 的安装、校验、卸载（装完无需重启即可生效）。
+* **设置**：主题（浅色 / 深色 / 跟随系统，选中即预览）、默认参数、歌词保存目录。
+
+### 旧版 Qt 桌面窗口（v1.1.1，仍可下载）
 
 ![桌面版·制作页](docs/desktop/home.png)
 
@@ -112,6 +116,7 @@
 | 🌐 翻译 / 音译 | 额外一份文本 → `<iTunesMetadata><translations><text for="L1">`（Apple Music 样式） |
 | 📤 双输出格式 | AMLL 社区格式（默认）/ Apple 提交格式（按段落分 `<div itunes:songPart>`） |
 | ✅ 确定性自检 | 按 AMLL 规范逐条校验：命名空间、时间格式、行/字重叠、key 连续、元数据必填项 |
+| 🪟 WinUI 3 桌面界面 | 原生 Windows 11 风格：工作台 / 编辑台 / 模型 / 运行库 / 任务 / 设置，深浅色主题 |
 | 🖥 Web 界面 + 命令行 | 浏览器里上传即用，也可脚本批处理 |
 
 ---
@@ -122,11 +127,12 @@
 
 | 界面 | 怎么开 | 适合 |
 | --- | --- | --- |
-| **桌面窗口**（1.1 新增） | 双击桌面快捷方式 / `python -m desktop` | 日常做歌词：选文件 → 开始 → 看结果；**模型管理**（下载/校验/清理）在这里 |
-| **浏览器编辑台** | `python web_server.py` / 桌面窗口里点「打开编辑台」 | 精修：逐字改时间、改声部、改文本与和声 |
+| **WinUI 3 桌面窗口**（v1.2 起，推荐） | 解压便携包 → `winui\Lyric2TTML.exe` | 日常做歌词 + 精修：工作台 / 编辑台 / 模型 / 运行库 / 任务 / 设置全在这一套里 |
+| **浏览器编辑台** | `python web_server.py` | 精修：逐字改时间、改声部、改文本与和声（网页版保底入口） |
+| **旧版 Qt 桌面窗口** | v1.1.1 安装包 / `python -m desktop` | 旧安装包用户；功能保留，新特性以 WinUI 版为准 |
 
-桌面窗口**不做**逐字精修（那部分保持浏览器里的编辑台），
-所以也**不需要 QtWebEngine** —— 安装包不会因此再大几百 MB。
+WinUI 3 版**内置编辑台**（逐字高亮、时间/声部/和声/元数据编辑、显式保存），
+不再需要单独开浏览器；安装包也因此保持轻量。
 
 > ### 桌面窗口的四条设计约束
 >
@@ -141,9 +147,25 @@
 >    可持久化（关了软件再打开，任务历史和日志还在）。
 > 4. **产物先写临时文件再原子替换**：转换失败**不会**覆盖上一次做好的文件。
 
-### Windows 一键安装（推荐，不用装 Python）
+### Windows 便携版安装（推荐，v1.2 起）
 
-> **v1.1.0 起只需要下一个文件**：
+> **只需要下一个文件**：
+> [`Lyric2TTML-winui-v1.2.1-portable.zip`](https://github.com/6hdj/lrc-ttml/releases/download/v1.2.1/Lyric2TTML-winui-v1.2.1-portable.zip)
+> （**414 MB**，解压后双击 `winui\Lyric2TTML.exe`；**不需要管理员权限**）
+
+1. 解压整个 zip（保留 `winui\` 目录结构，**不要只拷 exe**）
+2. 双击 `winui\Lyric2TTML.exe` 启动
+3. **模型管理 → 下载 Whisper 模型**（魔搭官方源，约 20 MB/s）
+4. **运行库 → CUDA 运行时「安装/修复」**（527 MB，腾讯镜像，实测 22 秒）
+5. 需要人声分离再装 **运行库 → Demucs Worker**（约 86 秒）
+6. 回到「歌词工作台」选音频 + 歌词 → 开始处理；完成后点「💾 保存 TTML」
+
+> **数据放哪**：模型缓存与输出默认在程序目录内（`backend\data` 与 `backend\outputs`）。
+> 本机安全策略可能禁止本程序写外部目录；要分目录建议用程序目录内的子目录。
+
+### 旧版 Qt 安装包（v1.1.1，仍可下载）
+
+> **v1.1.x 的安装方式（Qt 桌面版）**：
 > [`Lyric2TTML-1.1.1-setup.exe`](https://github.com/6hdj/lrc-ttml/releases/download/v1.1.1/Lyric2TTML-1.1.1-setup.exe)
 > （**190 MB**，双击即装）
 >
@@ -233,9 +255,25 @@ python web_server.py       # 或直接 python main.py --audio 歌.wav --lyrics �
 
 ```bash
 pip install -r requirements-desktop.txt
-python -m desktop                     # 桌面窗口
+python -m desktop                     # 桌面窗口（旧版 Qt）
 python desktop/selftest.py            # 服务层自检（离线，14 组）
 python desktop/uicheck.py             # 界面自检（无显示环境也能跑，14 项）
+```
+
+**构建 WinUI 3 版（v1.2）**：需要 .NET 8 SDK + Windows App SDK（部分环境
+`dotnet build` 有 MSB4062，用 VS Build Tools 跑 `pwsh tools/build_winui.ps1`）：
+
+```powershell
+# 后端（PyInstaller onedir；完整版含 torch/CUDA，便携版见 docs/WinUI3-版本说明.md）
+python -m PyInstaller --noconfirm --onedir --console --name Lyric2TTML.Service `
+  --add-data "index.html;." --add-data "desktop/resources;desktop/resources" `
+  --add-data "models;models" --collect-all torch --collect-all demucs `
+  --hidden-import numpy.core --hidden-import numpy.core.multiarray `
+  --hidden-import desktop.services.model_manager --hidden-import doctor `
+  service_main.py
+pwsh tools/build_winui.ps1        # 构建壳
+pwsh tools/deploy_winui.ps1       # 部署到 dist-winui（程序运行时也能在线替换被锁文件）
+pwsh tools/publish_models_github.ps1   # 可选：把模型打包上传到 GitHub Release 作备用源
 ```
 
 **想了解代码结构**：见 [`docs/模块说明.md`](docs/模块说明.md)。那份文档由
@@ -966,6 +1004,8 @@ open("out.ttml", "w", encoding="utf-8").write(doc_to_ttml(doc))
 ├── preprocess.py      LRC / 纯文本解析、演唱者标记、段落、背景人声合并
 ├── textread.py        带编码探测的文本读取（GBK / GB18030 / UTF-8 BOM）
 ├── minipip.py         内存版 wheel 安装器（pip 被环境限制时的替代）
+├── service_main.py    冻结后端入口（WinUI 版）：HTTP 服务 + --model-cli/--runtime-cli/--worker-cli/--doctor
+├── winui/             **WinUI 3 桌面界面**（C# / XAML）：壳 + 后端 HTTP 客户端 + 编辑台逻辑 + 单测
 ├── selftest.py        离线自检脚本（33 组，不需要网络与大模型）
 ├── tools/             评估与诊断工具（见下）
 ├── docs/              规范文档、评估协议、调研记录
@@ -999,7 +1039,9 @@ open("out.ttml", "w", encoding="utf-8").write(doc_to_ttml(doc))
 | 人声分离 | [Demucs](https://github.com/facebookresearch/demucs)（可选） |
 | 音频/数值 | numpy、torch、av |
 | 后端 | **Python 标准库** `http.server`（没有 Flask/FastAPI 之类的框架依赖） |
-| 前端 | **单文件原生 HTML/JS**（无构建步骤、无 npm 依赖） |
+| 桌面界面（v1.2） | **WinUI 3**（C# / XAML，.NET 8 + Windows App SDK）；壳通过 HTTP 调用本机 Python 后端 |
+| Web 界面 | **单文件原生 HTML/JS**（无构建步骤、无 npm 依赖） |
+| 旧版桌面界面 | PySide6 / Qt（v1.1.1，仍可下载） |
 
 **刻意的取舍**：后端与前端都**不引入 Web 框架**，整个项目 `pip install -r requirements.txt`
 之后就能跑，没有 `npm install`、没有打包步骤。代价是前端要手写，但换来"下载即用"。
@@ -1019,6 +1061,8 @@ open("out.ttml", "w", encoding="utf-8").write(doc_to_ttml(doc))
 
 **路线图**：
 
+- [x] **WinUI 3 桌面界面**（v1.2）：工作台 / 编辑台 / 模型 / 运行库 / 任务 / 设置全套原生页面
+- [ ] WinUI 版界面截图补进 README
 - [ ] 逐字时间的**可视化拖动**（现在只能输入时间）
 - [ ] 从音频自动检测"这里少了一句歌词"并提示
 - [ ] 分声部改用更强的说话人嵌入（试过 Sony SSL，68.8% vs 基线 89.9%，**已否决**）
