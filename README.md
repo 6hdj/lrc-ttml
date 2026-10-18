@@ -1,6 +1,8 @@
 # Lyric2TTML
 
 **当前版本：v1.2.1**　·　**WinUI 3 桌面界面**　·　便携包 **414 MB**（解压即用）　·　全程离线、无需 API Key
+>
+> 🌐 项目主页（GitHub Pages）：https://6hdj.github.io/lrc-ttml/
 
 > ## ⬇️ 下载
 >
