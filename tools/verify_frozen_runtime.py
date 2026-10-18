@@ -63,10 +63,13 @@ def doctor_items():
 
 
 def main() -> int:
+    global EXE
     exe = sys.argv[1] if len(sys.argv) > 1 else EXE
+    exe = os.path.abspath(exe)
     if not os.path.isfile(exe):
         print(f"没有冻结版 exe：{exe}")
         return 2
+    EXE = exe                      # ⚠️ run() 用的是全局 EXE，不设这里会跑默认路径
     shutil.rmtree(SANDBOX, ignore_errors=True)
     os.makedirs(SANDBOX, exist_ok=True)
     env_data = {"L2T_DATA_DIR": SANDBOX, "L2T_RUNTIME_DIR":
