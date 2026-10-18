@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lyric2TTML —— 普通歌词 + 音频 → 逐字 TTML</title>
+<meta name="description" content="把普通歌词（TXT/LRC）+ 音频，自动转成 Apple Music / AMLL 逐字 TTML。全程离线、无需 API Key、开源。">
+<link rel="icon" href="favicon.ico">
+<style>
+  :root{
+    --bg:#0b0908; --panel:#151217; --panel2:#1b1720; --line:#2a2433;
+    --text:#f2f0f5; --muted:#a8a3b3; --purple:#6630F8; --purple-l:#A175F1;
+    --radius:18px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,-apple-system,"Segoe UI",sans-serif;
+    line-height:1.65; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--purple-l); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1120px; margin:0 auto; padding:0 22px}
+  header.nav{
+    position:sticky; top:0; z-index:20; backdrop-filter:blur(12px);
+    background:rgba(11,9,8,.78); border-bottom:1px solid var(--line);
+  }
+  .nav-inner{display:flex; align-items:center; gap:14px; height:64px}
+  .nav img{width:34px; height:34px; border-radius:9px}
+  .nav b{font-size:17px; letter-spacing:.3px}
+  .nav .tag{font-size:12px; color:var(--muted); border:1px solid var(--line); padding:2px 9px; border-radius:99px}
+  .nav .links{margin-left:auto; display:flex; gap:18px; font-size:14px}
+  .nav .links a{color:var(--muted)}
+  .nav .links a:hover{color:var(--text); text-decoration:none}
+
+  .hero{padding:76px 0 40px; text-align:center; position:relative; overflow:hidden}
+  .hero::before{
+    content:""; position:absolute; inset:-200px 0 auto; height:520px;
+    background:radial-gradient(closest-side,rgba(102,48,248,.38),transparent 72%);
+    pointer-events:none;
+  }
+  .hero .icon{width:112px; height:112px; border-radius:26px; box-shadow:0 18px 60px rgba(102,48,248,.45)}
+  .hero h1{font-size:54px; margin:20px 0 6px; letter-spacing:-1px}
+  .hero .sub{font-size:20px; color:var(--muted); margin:0 auto 6px; max-width:720px}
+  .hero .sub2{font-size:16px; color:var(--muted); margin:0}
+  .hero .sub2 b{color:var(--purple-l); font-weight:600}
+  .cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin:30px 0 10px}
+  .btn{
+    display:inline-flex; align-items:center; gap:9px; padding:13px 24px; border-radius:999px;
+    font-size:15px; font-weight:600; border:1px solid transparent; transition:.18s;
+  }
+  .btn.primary{background:var(--purple); color:#fff; box-shadow:0 10px 30px rgba(102,48,248,.35)}
+  .btn.primary:hover{background:#7443ff; text-decoration:none; transform:translateY(-1px)}
+  .btn.ghost{border-color:var(--line); color:var(--text); background:var(--panel)}
+  .btn.ghost:hover{border-color:var(--purple); text-decoration:none; transform:translateY(-1px)}
+  .meta{font-size:13px; color:var(--muted); margin-top:10px}
+
+  section{padding:52px 0}
+  h2{font-size:30px; margin:0 0 8px; letter-spacing:-.4px}
+  .lead{color:var(--muted); margin:0 0 30px}
+  .grid{display:grid; gap:20px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .card{
+    background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line); border-radius:var(--radius); padding:24px;
+  }
+  .card h3{margin:0 0 8px; font-size:18px}
+  .card p{margin:0; color:var(--muted); font-size:14.5px}
+  .card .num{color:var(--purple-l); font-weight:700; font-size:13px; letter-spacing:1px; margin-bottom:6px}
+  .shots{display:grid; grid-template-columns:repeat(2,1fr); gap:18px; margin-top:26px}
+  .shot{border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#000}
+  .shot img{display:block; width:100%; height:auto}
+  .shot figcaption{font-size:13px; color:var(--muted); padding:9px 12px}
+  .video{position:relative; padding-top:56.25%; border-radius:16px; overflow:hidden; border:1px solid var(--line); background:#000}
+  .video iframe{position:absolute; inset:0; width:100%; height:100%; border:0}
+  .row{display:flex; gap:16px; flex-wrap:wrap}
+  .pill{font-size:13px; color:var(--muted); border:1px solid var(--line); padding:5px 12px; border-radius:99px}
+  .dl{display:grid; grid-template-columns:2fr 1fr; gap:18px}
+  .dl .big{padding:30px}
+  .dl .big h3{font-size:22px; margin:0 0 6px}
+  .dl .big .ver{color:var(--purple-l); font-size:13px; letter-spacing:1px}
+  .dl .big p{color:var(--muted); font-size:14.5px}
+  .dl .side{display:flex; flex-direction:column; gap:10px; justify-content:center}
+  .dl .side a{color:var(--muted); font-size:14px}
+  footer{border-top:1px solid var(--line); padding:34px 0 50px; color:var(--muted); font-size:13.5px}
+  .kbd{font-family:ui-monospace,Consolas,monospace; background:#241f2b; border:1px solid var(--line); padding:1px 7px; border-radius:6px; font-size:12.5px}
+  @media (max-width:860px){
+    .g3,.g2,.shots,.dl{grid-template-columns:1fr}
+    .hero h1{font-size:38px}
+    .nav .links{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <img src="icon.png" alt="Lyric2TTML 图标">
+    <b>Lyric2TTML</b>
+    <span class="tag">v1.2.1 · 开源</span>
+    <nav class="links">
+      <a href="#features">功能</a>
+      <a href="#shots">界面</a>
+      <a href="#video">演示</a>
+      <a href="#download">下载</a>
+      <a href="#docs">文档</a>
+      <a href="https://github.com/6hdj/lrc-ttml" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <img class="icon" src="icon.png" alt="应用图标">
+    <h1>Lyric2TTML</h1>
+    <p class="sub">普通歌词（TXT / LRC）＋ 歌曲音频，自动生成 Apple Music / AMLL <b style="color:#fff">逐字 TTML</b></p>
+    <p class="sub2">人工一小时的歌词对轴，现在几秒钟完成 · <b>全程离线</b> · 无需 API Key</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/6hdj/lrc-ttml/releases/download/v1.2.1/Lyric2TTML-winui-v1.2.1-portable.zip">⬇ 下载 Windows 便携版（415 MB）</a>
+      <a class="btn ghost" href="https://github.com/6hdj/lrc-ttml" target="_blank" rel="noopener">★ GitHub 源码</a>
+    </div>
+    <p class="meta">Windows 10/11 · 解压即用 · 首次使用需联网下载语音模型与 CUDA 运行库</p>
+  </div>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <h2>为什么用它</h2>
+    <p class="lead">把“听音、对轴、找边界”这种必须一个字一个字点的活，交给程序。</p>
+    <div class="grid g3">
+      <div class="card">
+        <div class="num">01 · 自动化</div>
+        <h3>告别一小时的手工对轴</h3>
+        <p>语音识别先听写，再用动态规划把歌词的每个字钉进音频时间轴；最繁重的点击与试听环节被整段省掉。</p>
+      </div>
+      <div class="card">
+        <div class="num">02 · 逐字精度</div>
+        <h3>真实音频，不是估算</h3>
+        <p>faster-whisper 识别 + 强制对齐，LRC 行级时间当锚点；有 LRC 时按乐句切片，把歌词本身当提示词回喂，精度更高。</p>
+      </div>
+      <div class="card">
+        <div class="num">03 · 对唱与和声</div>
+        <h3>分声部 / 拖音 / 和声</h3>
+        <p>CAM++ 声纹把行分给不同演唱者（与人工标注约九成一致）；句尾拖音用能量+基频连续性补回；括号和声自动变成 x-bg 层。</p>
+      </div>
+      <div class="card">
+        <div class="num">04 · 离线安全</div>
+        <h3>音频不出本机</h3>
+        <p>不需要 API Key，不上传任何数据；模型与运行库在软件内一键下载，装完后完全离线可用。</p>
+      </div>
+      <div class="card">
+        <div class="num">05 · 可精修</div>
+        <h3>内置逐字编辑台</h3>
+        <p>播放逐字高亮、改时间（±10ms）、改声部、改和声与文本；改动只写草稿，点保存才动正式 TTML。</p>
+      </div>
+      <div class="card">
+        <div class="num">06 · 规范自检</div>
+        <h3>直接能播放</h3>
+        <p>输出遵循 AMLL TTML Database 规范：时间格式、父子包含、同歌手不重叠、key 连续、元数据必填项全部校验。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="shots" style="padding-top:10px">
+  <div class="wrap">
+    <h2>真实界面（WinUI 3）</h2>
+    <p class="lead">原生 Windows 11 风格：工作台 / 编辑台 / 任务中心 / 模型 / 运行库 / 设置 / 诊断。</p>
+    <div class="shots">
+      <figure class="shot"><img src="winui/02-workspace.png" alt="歌词工作台"><figcaption>歌词工作台：选音频 + 歌词 → 参数 → 开始处理</figcaption></figure>
+      <figure class="shot"><img src="winui/03-editor.png" alt="歌词编辑台"><figcaption>歌词编辑台：逐字高亮、改时间、改声部、改和声</figcaption></figure>
+      <figure class="shot"><img src="winui/05-models.png" alt="模型管理"><figcaption>模型管理：来源 / 体积 / 许可 / 真实校验状态</figcaption></figure>
+      <figure class="shot"><img src="winui/06-runtime.png" alt="运行库"><figcaption>运行库：torch / CUDA / Demucs Worker 一键安装</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="video">
+  <div class="wrap">
+    <h2>4 分钟看懂整个流程</h2>
+    <p class="lead">从人工对轴的痛，到原理，再到实机演示。</p>
+    <div class="video">
+      <iframe src="https://player.bilibili.com/player.html?bvid=BV1Hdnu6EELK&page=1&high_quality=1&danmaku=0" scrolling="no" frameborder="0" allowfullscreen="true" title="Lyric2TTML 宣传片"></iframe>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <a class="pill" href="https://www.bilibili.com/video/BV1Hdnu6EELK" target="_blank" rel="noopener">在 B 站观看 ↗</a>
+      <span class="pill">抖音：@中二病-晚期</span>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <h2>下载</h2>
+    <p class="lead">便携版解压即用；首次按引导下载模型（约 3 GB）与 CUDA 运行库（527 MB），之后可完全离线。</p>
+    <div class="dl">
+      <div class="card big">
+        <div class="ver">WINDOWS · v1.2.1</div>
+        <h3>Lyric2TTML 便携版</h3>
+        <p>含 WinUI 3 外壳与 Python 后端。解压后双击 <span class="kbd">winui\Lyric2TTML.exe</span>。</p>
+        <div class="cta" style="justify-content:flex-start; margin-bottom:0">
+          <a class="btn primary" href="https://github.com/6hdj/lrc-ttml/releases/download/v1.2.1/Lyric2TTML-winui-v1.2.1-portable.zip">下载便携版（415 MB）</a>
+          <a class="btn ghost" href="https://github.com/6hdj/lrc-ttml/releases" target="_blank" rel="noopener">全部版本</a>
+        </div>
+      </div>
+      <div class="card side">
+        <a href="https://github.com/6hdj/lrc-ttml/releases/download/v1.1.1/Lyric2TTML-1.1.1-setup.exe">旧版 Qt 安装包（v1.1.1，190 MB）↗</a>
+        <a href="WinUI3-版本说明.md">WinUI 3 版本说明</a>
+        <a href="TTML1-AMLL歌词格式规范.md">TTML / AMLL 规范文档</a>
+        <a href="https://github.com/6hdj/lrc-ttml#readme" target="_blank" rel="noopener">README（完整说明）↗</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="docs" style="padding-top:10px">
+  <div class="wrap">
+    <h2>文档</h2>
+    <div class="grid g3">
+      <div class="card"><h3><a href="WinUI3-版本说明.md">WinUI 3 版本说明</a></h3><p>界面结构、模型与运行库、构建方式、已知问题。</p></div>
+      <div class="card"><h3><a href="TTML1-AMLL歌词格式规范.md">TTML / AMLL 规范</a></h3><p>W3C TTML1 条款、Apple / AMLL 约定、和声与对唱写法、症状对照表。</p></div>
+      <div class="card"><h3><a href="https://github.com/6hdj/lrc-ttml/blob/main/AGENTS.md" target="_blank" rel="noopener">AGENTS.md ↗</a></h3><p>输出铁律、验证流程、常见坑与实测数据。</p></div>
+      <div class="card"><h3><a href="模块说明.md">模块说明</a></h3><p>从源码自动生成的模块职责与公开 API。</p></div>
+      <div class="card"><h3><a href="声纹评估协议.md">声纹评估协议</a></h3><p>分声部准确率的评估方法、真值与已否决的方案。</p></div>
+      <div class="card"><h3><a href="https://github.com/6hdj/lrc-ttml/blob/main/README.md#常见问题" target="_blank" rel="noopener">常见问题 ↗</a></h3><p>安装、模型下载、显卡、保存位置等。</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between; align-items:center">
+      <div>
+        <b style="color:#fff">Lyric2TTML</b> · MIT License · 全程离线、无需 API Key<br>
+        输出遵循 <a href="https://github.com/amll-dev/amll-ttml-db" target="_blank" rel="noopener">AMLL TTML Database</a> 规范，可用于 AMLL Player / SPlayer 等播放器
+      </div>
+      <div class="row">
+        <a class="pill" href="https://github.com/6hdj/lrc-ttml" target="_blank" rel="noopener">GitHub ↗</a>
+        <a class="pill" href="https://github.com/6hdj/lrc-ttml/releases" target="_blank" rel="noopener">Releases ↗</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
