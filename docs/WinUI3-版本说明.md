@@ -39,12 +39,30 @@ python -m PyInstaller --noconfirm --onedir --console --name Lyric2TTML.Service `
   --add-data "models;models" --collect-all torch --collect-all demucs `
   --hidden-import numpy.core --hidden-import numpy.core.multiarray `
   --hidden-import desktop.services.model_manager --hidden-import doctor `
+  # ⚠️ 必须补：冻结后端里「运行时安装的 torch」要做 import 验证，
+  # 缺任一个都会报 ModuleNotFoundError（实测 timeit / pickletools）
+  --hidden-import timeit --hidden-import linecache --hidden-import pickletools `
+  --hidden-import struct --hidden-import site --hidden-import unittest --hidden-import unittest.mock `
+  --hidden-import encodings.aliases --hidden-import encodings.utf_8 --hidden-import encodings.utf_8_sig `
   service_main.py
 # 壳（需要 .NET 8 SDK + Windows App SDK；命令行 dotnet build 在部分环境有 MSB4062，用 VS Build Tools）
 pwsh tools/build_winui.ps1
 # 部署（程序运行时也能在线替换被锁文件）
 pwsh tools/deploy_winui.ps1
 ```
+
+## 发布前强制验证（冻结版）
+
+源码模式通过**不能**代替冻结版验证。发布便携包/安装包前，必须对**冻结后端 exe** 跑：
+
+```powershell
+python tools/verify_frozen_runtime.py dist-service-lite\Lyric2TTML.Service\Lyric2TTML.Service.exe
+```
+
+它会真的下载 118 MB torch wheel → SHA256 → 解包 → **在本进程 import torch 做真实加载验证**，
+再测首次加载 / 幂等重装 / 断点续传 / 升级位置。2026-10-18 线上事故（
+`ModuleNotFoundError: No module named 'timeit'`）就是漏跑这一步导致的——冻结环境里
+torch 导入用到的标准库模块必须在打包时 `--hidden-import` 补进去。
 
 ## 已知限制（如实说明）
 
