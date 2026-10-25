@@ -63,6 +63,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="输出模式" VerticalAlignment="Center" />
@@ -94,9 +95,19 @@
                             <ComboBoxItem Content="small" Tag="small" />
                         </ComboBox>
 
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="对齐引擎" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CbAlignEngine" Grid.Row="2" Grid.Column="1" HorizontalAlignment="Stretch">
+                            <ComboBoxItem Content="内置 Whisper（默认）" Tag="whisper" />
+                            <ComboBoxItem Content="TIFA 歌声对齐（实验）" Tag="timing-tifa" />
+                        </ComboBox>
+                        <TextBlock Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2"
+                                   Text="TIFA 需要逐句 LRC 和 models/tifa；缺失或失败会自动回退 Whisper"
+                                   TextWrapping="Wrap" VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" />
+
                         <!-- 三个开关**竖排** + Header 允许换行：横排时最后一项的长标题会被裁掉
                              （用户实测只显示"同歌手拖音"+半个字）。 -->
-                        <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Spacing="6">
+                        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Spacing="6">
                             <muxc:ToggleSwitch x:Name="TgSeparate" Header="人声分离（需要 Worker 运行库）">
                                 <muxc:ToggleSwitch.HeaderTemplate>
                                     <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="460" /></DataTemplate>
