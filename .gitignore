@@ -95,6 +95,8 @@ desktop/resources/build_info.json
 # 构建产物 / 运行包巨大（dist-winui 24 GB，dist-service 8 GB），不入库
 dist-winui/
 dist-service/
+dist-service-lite/
+dist-service-full/
 .cache/
 winui/**/bin/
 winui/**/obj/
@@ -102,3 +104,5 @@ winui/**/obj/
 theme-debug.log
 theme-smoke.txt
 pages-smoke.txt
+
+.video/
