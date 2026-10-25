@@ -56,6 +56,7 @@ public sealed partial class WorkspacePage : Page
         SelectTag(CbModel, s.Model.Length > 0 ? s.Model : "large-v3");
         SelectTag(CbLang, s.Language.Length > 0 ? s.Language : "auto");
         SelectTag(CbSinger, s.SingerMode.Length > 0 ? s.SingerMode : "off");
+        SelectTag(CbAlignEngine, s.AlignEngine.Length > 0 ? s.AlignEngine : "whisper");
         TgTails.IsOn = s.KeepTails;
         TgSameAgent.IsOn = s.SameAgentOverlap;
         // 输出目录：留空 = 后端默认（后端自己决定写哪）
@@ -190,7 +191,7 @@ public sealed partial class WorkspacePage : Page
 
             using var api = new ConversionApi(App.Backend.BaseUrl);
             _taskId = await api.StartAsync(_audio, _lyrics, Tag(CbModel), Tag(CbMode),
-                                           Tag(CbLang), Tag(CbSinger),
+                                           Tag(CbLang), Tag(CbSinger), Tag(CbAlignEngine),
                                            TgSeparate.IsOn, TgTails.IsOn, TgSameAgent.IsOn,
                                            SettingsHost.Current.OutputDir,
                                            autoSave: false);   // 必须用户点「保存 TTML」才落盘
