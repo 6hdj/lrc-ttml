@@ -130,6 +130,23 @@ def test_vocal_end():
     ok("间奏静音裁剪", 0.95 <= end <= 1.1, f"end={end:.3f}")
 
 
+def test_auto_harmony():
+    from asr import AsrWord
+    from matcher import AlignedLine, AlignReport, Unit
+    from timing_align import _add_auto_harmony
+    line = AlignedLine(text="主", agent="v1", begin=0.0, end=2.0,
+                       units=[Unit(core="主", start=0.0, end=1.0)])
+    report = AlignReport([line], 1, 1, True)
+    words = [AsrWord(text="主", start=0.0, end=1.0, prob=0.9),
+             AsrWord(text="和", start=0.5, end=0.8, prob=0.9),
+             AsrWord(text="声", start=0.8, end=1.2, prob=0.9)]
+    notes = []
+    added = _add_auto_harmony(report, words, notes, lambda m: None)
+    ok("自动转录和声写入 x-bg", added == 2 and len(line.bg_units) == 2,
+       f"added={added} bg={len(line.bg_units)}")
+    ok("自动和声有说明", any("自动转录和声" in n for n in notes))
+
+
 def test_bg_merge():
     from matcher import AlignedLine, AlignReport, Unit
     from timing_align import _merge_background_timings
@@ -173,6 +190,7 @@ def main():
     test_japanese_mapping()
     test_line_language()
     test_vocal_end()
+    test_auto_harmony()
     test_bg_merge()
     test_monotonic()
     print(f"\n全部通过 ✓（{len(PASS)} 项）")
