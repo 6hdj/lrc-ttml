@@ -59,6 +59,7 @@ _FIELDS = [
     ("language", _as_str, "zh"),
     ("model", _as_str, "large-v3"),
     ("device", _as_str, "auto"),
+    ("align_engine", _as_str, "whisper"),
     ("refine", _as_bool, True),
     ("chunked", _as_bool, True),
     ("skip_credits", _as_bool, True),
