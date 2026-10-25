@@ -91,7 +91,7 @@ def _scheduled_cleanup(install: str = "") -> bool:
     ⚠️⚠️ **判据不能只看 TEMP**（2026-10-14 改，真踩到）：
     清理脚本的落点是 `uninstall_core._pick_writable_dir()` —— 它会**逐个真写探针**
     挑一个可写目录。这台机器上 `TEMP`/`TMP` 指向
-    `C:\\Users\\<u>\\AppData\\Local\\Temp`，`os.access` 说可写、
+    `%TEMP%`，`os.access` 说可写、
     **真写就 PermissionError**（Windows 上 `os.access` 对 ACL 不可靠），
     于是脚本落到"安装目录的上一级"。旧判据只 `listdir(TEMP)` →
     **明明安排好了却报"没有安排清理助手"**（假失败，我为此查了三轮）。
