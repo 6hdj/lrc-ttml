@@ -213,7 +213,7 @@ def get_mae(gt, predict):
 
 它要装：`openai-whisper, transformers, librosa, soundfile, numba(→llvmlite), pandas, jiwer, opencc-python-reimplemented(需改名), chinese_converter`（另 `tqdm/pypinyin/demucs/torch` 我们已经有，且都是可选项）。
 
-**本机实测（该解释器 = `C:\Users\20876\AppData\Local\Programs\Python\Python314\python.exe`，3.14.6；安装时间全部是 2026-08-14，早于本次评估，不是在评估中装的）：**
+**本机实测（该解释器 = `<Python314 安装目录>\python.exe`，3.14.6；安装时间全部是 2026-08-14，早于本次评估，不是在评估中装的）：**
 
 | 包 | 目录体积（实测） | 状态 |
 | --- | --- | --- |
