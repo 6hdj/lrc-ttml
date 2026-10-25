@@ -238,13 +238,13 @@
       "download_policy": "on_demand",
       "recommended": false,
       "approx_size": 158603152,
-      "license": "TIFA 运行库 MIT（openvpi/TIFA）；TIFA-1.0-ST 模型/字典按上游发布包条款，不随本仓库分发",
-      "note": "实验引擎。通过模型管理下载（GitHub Release models-v1）；解包到 models/tifa。需要外部 Python + TIFA 依赖才能运行，缺任何一项自动回退 Whisper。",
+      "license": "⚠️ TIFA-1.0-ST 模型文件：CC BY-NC-SA 4.0（非商业，OpenVPI）；TIFA 运行库源码：MIT。本项目 MIT 不覆盖模型文件；商用请勿使用 TIFA。",
+      "note": "实验引擎。通过模型管理下载（GitHub Release models-v1）；解包到 models/tifa。需要外部 Python + TIFA 依赖才能运行，缺任何一项自动回退 Whisper。模型为 CC BY-NC-SA 4.0，非商业；详见 THIRD_PARTY_NOTICES.md。",
       "source": {
         "kind": "github_release",
         "repo": "6hdj/lrc-ttml",
         "tag": "models-v1",
-        "note": "TIFA 运行库源码 MIT；模型/字典按上游发布包条款"
+        "note": "TIFA 运行库源码 MIT；TIFA-1.0-ST 模型 CC BY-NC-SA 4.0（非商业）；词典按上游条款"
       },
       "verify": {
         "kind": "files_sha256",
@@ -276,8 +276,8 @@
         "files": [
           "tifa-aligner.tar"
         ],
-        "size": 171243520,
-        "sha256": "5c856fee3db888c8171b9959e348e6e9bae7e4ce8ef33f102dfc4f2e913582ea",
+        "size": 171253760,
+        "sha256": "ce21c8427f44e167d6d66bfcea16898af0895ad3c079e54a99573d5bd8f9938f",
         "dest": "models/tifa",
         "urls": [
           "https://gh-proxy.com/https://github.com/{repo}/releases/download/{tag}/{name}",
