@@ -304,6 +304,7 @@ class ConvertResult:
     notes: List[str] = field(default_factory=list)
     elapsed: float = 0.0
     output_path: Optional[str] = None
+    asr_words: List[AsrWord] = field(default_factory=list)
 
 
 class LyricToTTML:
@@ -397,10 +398,15 @@ class LyricToTTML:
                 # 混进主唱轨迹；Whisper 的 ASR/DP 对叠唱更稳。检测到歌词里有
                 # 背景层时，先跑一遍 Whisper，仅取其 bg 单元的时间。
                 hybrid_bg = None
+                auto_asr_words = []
                 has_bg = any(getattr(t, "is_background", False)
                              for l in lines for t in (getattr(l, "tokens", None) or []))
-                if has_bg:
-                    self.log("[1.5/6] 检测到和声层：跑 Whisper 和声对齐（主唱仍用 TIFA）")
+                auto_harmony = (os.environ.get("L2T_AUTO_HARMONY", "1").strip().lower()
+                                not in ("0", "false", "no", "off"))
+                if has_bg or auto_harmony:
+                    self.log("[1.5/6] 和声层：跑 Whisper 识别"
+                             + ("（已有和声标记，只取 x-bg 时间）" if has_bg
+                                else "（自动转录和声文本，实验）"))
                     try:
                         from dataclasses import replace
                         import tempfile, shutil as _sh
@@ -408,7 +414,14 @@ class LyricToTTML:
                             prefix="l2t-hybrid-",
                             dir=os.path.dirname(os.path.abspath(output_path or audio_path)))
                         try:
-                            _wopt = replace(self.opt, align_engine="whisper")
+                            _wopt = replace(
+                                self.opt, align_engine="whisper",
+                                # 自动转录和声时**不能用歌词提示的逐句切片**：
+                                # prompt 会把 ASR 拉回主唱歌词，叠唱部分直接消失。
+                                # 也不要用 Demucs 单轨：原混音里的叠唱更完整。
+                                chunked=(self.opt.chunked if has_bg else False),
+                                refine=(self.opt.refine if has_bg else False),
+                                separate_vocals=self.opt.separate_vocals)
                             _wr = LyricToTTML(_wopt, log=lambda m: None)
                             _res = _wr.convert(
                                 audio_path=audio_path, lyrics_text=lyrics_text,
@@ -420,6 +433,9 @@ class LyricToTTML:
                                 translation_lang=translation_lang,
                                 songwriters=songwriters)
                             hybrid_bg = _res.report
+                            auto_asr_words = list(_res.asr_words or [])
+                            self.log(f"      Whisper 原始词 {len(auto_asr_words)} 个"
+                                     f"（chunked={getattr(_wopt, 'chunked', None)}）")
                             notes.append("和声层：TIFA 主唱 + Whisper 叠唱识别")
                         finally:
                             _sh.rmtree(_tmpdir, ignore_errors=True)
@@ -459,6 +475,7 @@ class LyricToTTML:
                     language=self.opt.language,
                     crop_vocals=bool(sep_path),
                     bg_report=hybrid_bg,
+                    asr_words=auto_asr_words,
                     postprocess=_tifa_post,
                     log=self.log)
                 notes.extend(r.get("notes") or [])
@@ -737,6 +754,7 @@ class LyricToTTML:
             notes=notes,
             elapsed=time.time() - t_start,
             output_path=output_path,
+            asr_words=words,
         )
 
     def _enforce_agent_monotonic(self, lines: Sequence[AlignedLine],
