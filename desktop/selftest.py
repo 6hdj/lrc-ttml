@@ -326,9 +326,9 @@ def t_model_manifest():
         for k in ("id", "category", "name", "purpose", "download_policy",
                   "source", "verify"):
             ok(k in s, f"{s.get('id')} 缺字段 {k}")
-        ok(s["download_policy"] in ("first_run", "on_demand", "bundled"),
+        ok(s["download_policy"] in ("first_run", "on_demand", "bundled", "manual"),
            f"{s['id']} 的 download_policy 不认识：{s['download_policy']}")
-        ok(s["source"].get("kind") in ("hf", "http", "bundled"),
+        ok(s["source"].get("kind") in ("hf", "http", "bundled", "manual", "github_release"),
            f"{s['id']} 的 source.kind 不认识：{s['source'].get('kind')}")
         ok(s.get("license"), f"{s['id']} 没写许可信息")
 
