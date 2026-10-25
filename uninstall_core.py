@@ -462,7 +462,7 @@ def _schedule_cleanup(target: str) -> str:
     # 于是清理助手写不出来 → 卸载报"没删干净、请手动删"。
     #
     # 实测触发场景（我自己的机器上就复现了）：
-    #   * `TEMP` / `TMP` 都指向 `C:\Users\<u>\AppData\Local\Temp`；
+    #   * `TEMP` / `TMP` 都指向 `%TEMP%`；
     #   * `os.path.isdir()` 说存在、`os.access(W_OK)` 说可写
     #     （**Windows 上 `os.access` 对 ACL 不可靠**）；
     #   * 但真去 `open(..., "w")` 就是 `PermissionError: [Errno 13]`。
