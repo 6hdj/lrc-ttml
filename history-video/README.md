@@ -37,7 +37,7 @@ spawn esbuild service，而沙箱禁止"子进程 stdio:pipe"）。所以仓库�
 （实测第 78 帧报 `Permission denied`）：
 
 ```powershell
-$env:TMP='E:\HXJ\文档\OpenCode\AMLL\.tmp\remotion-tmp'; $env:TEMP=$env:TMP
+$env:TMP='<repo>\.tmp\remotion-tmp'; $env:TEMP=$env:TMP
 ```
 
 ---
