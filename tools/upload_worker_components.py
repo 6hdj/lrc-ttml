@@ -56,7 +56,7 @@ DEFAULT_REPO = "Hxj345/lyric2ttml-demucs-worker"
 REPO_TYPE = "model"
 
 # ⚠️⚠️ **必须在 import modelscope / 构造 HubApi 之前设好**（2026-10-15 用户实跑踩到）：
-# SDK 默认要在 `C:\Users\<你>\.modelscope` 建配置目录，用户那次报
+# SDK 默认要在 `%USERPROFILE%\.modelscope` 建配置目录，用户那次报
 # `PermissionError: [WinError 5] 拒绝访问` → `CacheError [E1022] Failed to create
 # SDK directories`，**在建目录这一步就崩了，跟 token 完全无关**。
 # SDK 支持 `MODELSCOPE_HOME`（配置）与 `MODELSCOPE_CACHE`（缓存）——
