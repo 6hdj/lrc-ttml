@@ -327,8 +327,20 @@ def _run_tifa(clips: List[_Clip], work: Path, log: Callable[[str], None],
     env = dict(os.environ)
     env["PYTHONPATH"] = str(runtime) + os.pathsep + env.get("PYTHONPATH", "")
     env["PYTHONUTF8"] = "1"
-    env.setdefault("TMP", str(work))
-    env.setdefault("TEMP", str(work))
+    # ⚠️ 必须**强制**覆盖 TMP/TEMP，不能 setdefault：便携版从父进程继承了
+    # 一个不可写的 C:\Users\...\Temp，torchmetrics 的 tempfile.gettempdir()
+    # 会直接 FileNotFoundError（用户实测）。work 已经由 _work_root() 做过写探测。
+    env["TMP"] = str(work)
+    env["TEMP"] = str(work)
+    env["TMPDIR"] = str(work)
+    # matplotlib 是 torchmetrics 的间接依赖：它必须有可写的配置缓存，
+    # 否则在受限账户下直接 OSError（实测用户便携版踩到）。numba 同理。
+    for sub in ("mplconfig", "numba", "xdg"):
+        (work / sub).mkdir(parents=True, exist_ok=True)
+    env["MPLCONFIGDIR"] = str(work / "mplconfig")
+    env["MPLBACKEND"] = "Agg"
+    env["NUMBA_CACHE_DIR"] = str(work / "numba")
+    env["XDG_CACHE_HOME"] = str(work / "xdg")
     g2p_path = _prepare_g2p(work, root)
     for lang, group in sorted(groups.items()):
         sub = work / f"lang_{re.sub(r'[^a-z-]', '_', lang)}"
@@ -512,6 +524,34 @@ def _enforce_agent_monotonic(lines: List[AlignedLine], notes: List[str],
     return fixed
 
 
+def _work_root() -> Path:
+    """TIFA 临时目录：必须可写。
+
+    冻结后端里 ``HERE`` 是 ``_internal``（可能只读/受管控）；优先用
+    L2T_DATA_DIR（service 已探针过可写），再退回程序目录/data，最后 HERE/.tmp。
+    """
+    cands = []
+    env = os.environ.get("L2T_DATA_DIR", "").strip()
+    if env:
+        cands.append(Path(env))
+    if getattr(sys, "frozen", False):
+        app = Path(sys.executable).resolve().parent
+        cands += [app / "data", app.parent / "data"]
+    cands.append(HERE / ".tmp")
+    for base in cands:
+        try:
+            p = base / "timing-tifa"
+            p.mkdir(parents=True, exist_ok=True)
+            probe = p / ".write_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            return p
+        except OSError:
+            continue
+    import tempfile
+    return Path(tempfile.mkdtemp(prefix="l2t-tifa-"))
+
+
 def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 *, title: str = "", artists: Optional[Sequence[str]] = None,
                 album: str = "", author: str = "", author_id: str = "",
@@ -570,7 +610,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
             line.line_end = min(duration, line.line_start + 0.5)
     log(f"      音频 {duration:.1f}s / {sr}Hz；逐句锚点 {len(lines)} 行")
 
-    work = HERE / ".tmp" / "timing-tifa" / (
+    work = _work_root() / (
         re.sub(r"[^\w-]+", "_", Path(output_path).stem)[:40] or "out")
     if work.exists():
         shutil.rmtree(work, ignore_errors=True)
