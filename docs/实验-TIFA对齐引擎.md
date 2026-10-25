@@ -169,7 +169,9 @@ TIFA 完成：11.2s，字级映射 100.0%
 2. **行级语言路由仍是基础版**：中英混唱用 `-l zh -L en`；逐行 ja/zh 切换要等 PFML；
 3. **人声分离/拖音依赖现有 Worker/Demucs**；没有分离轨时自动跳过；
 4. **冻结后端需要外部 Python**：设置里指定 `L2T_TIFA_PYTHON`（已实测可用）；没有 Python/依赖时自动回退 Whisper；
-5. 模型许可独立：TIFA 运行库 MIT，但 TIFA-1.0-ST 模型/字典按上游发布包条款，**不随 MIT 安装包分发**。
+5. 模型许可独立：TIFA 运行库 MIT，但 **TIFA-1.0-ST 模型文件是 CC BY-NC-SA 4.0（非商业）**；
+   `models-v1` Release 单独分发，不随 MIT 安装包捆绑；商用请勿使用 TIFA。详见根目录
+   [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
 
 ---
 
@@ -230,4 +232,6 @@ models/tifa/
 2. **打包版支持**：要么随包带一个最小 Python + TIFA 运行时（体积大），
    要么做成“外部引擎”安装项（用户装 Python 后指定解释器）；
 3. **继续评测**：补足 5 首以上、不同语种/混唱，用 `tools/eval_word_timing.py` 守住回归；
-4. **模型许可**：若要随产品分发 TIFA 权重，需要单独完成授权核对。
+4. **模型许可（重要）**：TIFA-1.0-ST 权重是 **CC BY-NC-SA 4.0（非商业）**，不是 OSI 开源；
+   MIT 只覆盖本项目代码与 TIFA runtime。商用/收费分发不能使用该模型，详见
+   [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
