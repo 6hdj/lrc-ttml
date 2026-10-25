@@ -130,6 +130,21 @@ def test_vocal_end():
     ok("间奏静音裁剪", 0.95 <= end <= 1.1, f"end={end:.3f}")
 
 
+def test_bg_merge():
+    from matcher import AlignedLine, AlignReport, Unit
+    from timing_align import _merge_background_timings
+    main = Unit(core="主", start=0.0, end=1.0)
+    tbg = Unit(core="和", start=1.0, end=4.0, is_bg=True)
+    line = AlignedLine(text="主(和)", agent="v1", units=[main, tbg], begin=0.0, end=4.0)
+    wbg = Unit(core="和", start=1.1, end=1.8, is_bg=True)
+    wline = AlignedLine(text="主(和)", agent="v1", units=[Unit(core="主", start=0.9, end=1.9), wbg], begin=0.9, end=1.9)
+    _merge_background_timings(
+        AlignReport([line], 2, 2, True), AlignReport([wline], 2, 2, True), [], lambda m: None)
+    ok("和声时间来自 Whisper", line.units[-1].start == 1.1 and line.units[-1].end == 1.8,
+       f"{line.units[-1].start}-{line.units[-1].end}")
+    ok("主唱时间保持 TIFA", line.units[0].start == 0.0 and line.units[0].end == 1.0)
+
+
 def test_monotonic():
     a = AlignedLine(text="a", agent="v1", begin=0.0, end=10.0,
                     units=[Unit(core="a", start=0.0, end=10.0)])
@@ -158,6 +173,7 @@ def main():
     test_japanese_mapping()
     test_line_language()
     test_vocal_end()
+    test_bg_merge()
     test_monotonic()
     print(f"\n全部通过 ✓（{len(PASS)} 项）")
     return 0
