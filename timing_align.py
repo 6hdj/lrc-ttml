@@ -605,6 +605,38 @@ def _vocal_end(samples, sr: int, start: float, end: float) -> float:
     return min(end, voice_end)
 
 
+def _merge_background_timings(report: AlignReport, bg_report: AlignReport,
+                              notes: List[str], log: Callable[[str], None]) -> int:
+    """TIFA 主唱 + Whisper 和声：只替换 x-bg 层的时间，主唱保持 TIFA。
+
+    TIFA 是单序列强制对齐，遇到和声（人声叠唱）会把和声字也吃进主唱轨迹；
+    Whisper 的 ASR/DP 在叠唱里能识别出和声字。这里按行文本匹配（不按行号，
+    避免 skip_credits/风格规范化造成错位），只把 bg 单元换成 Whisper 的。
+    """
+    merged = 0
+    if len(report.lines) != len(bg_report.lines):
+        notes.append("TIFA/Whisper 行数不一致，和声时间未合并")
+        return 0
+    for line, wline in zip(report.lines, bg_report.lines):
+        tbg = [u for u in line.units if u.is_bg]
+        wbg = [u for u in wline.units if u.is_bg]
+        if not tbg or not wbg:
+            continue
+        if "".join(u.text for u in tbg) != "".join(u.text for u in wbg):
+            continue
+        main = [u for u in line.units if not u.is_bg]
+        line.units = main + wbg
+        starts = [u.start for u in line.units if u.start is not None]
+        ends = [u.end for u in line.units if u.end is not None]
+        if starts and ends:
+            line.begin, line.end = min(starts), max(ends)
+        merged += 1
+    if merged:
+        notes.append(f"和声层时间来自 Whisper：{merged} 行（主唱仍用 TIFA）")
+        log(f"      [和声] 已用 Whisper 替换 {merged} 行的 x-bg 时间")
+    return merged
+
+
 def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 *, title: str = "", artists: Optional[Sequence[str]] = None,
                 album: str = "", author: str = "", author_id: str = "",
@@ -616,6 +648,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 song_part: str = "", keep_credits: bool = False,
                 language: str = "zh",
                 crop_vocals: bool = False,
+                bg_report: Optional[AlignReport] = None,
                 postprocess: Optional[Callable[[AlignReport], None]] = None,
                 log: Callable[[str], None] = print) -> dict:
     """TIFA 对齐并写出 TTML；返回 {ttml, check, report, notes, elapsed, duration}。"""
@@ -722,6 +755,9 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                          matched_units=matched_units, anchored=True,
                          warnings=[])
     _enforce_agent_monotonic(report.lines, notes, log)
+
+    if bg_report is not None:
+        _merge_background_timings(report, bg_report, notes, log)
 
     # TIFA 之后的可选后处理：声纹分声部 / 歌词标记（由 pipeline 注入）。
     # 放在写 TTML 之前，保证 agent 真正进文件。
