@@ -32,7 +32,7 @@ sys.path.insert(0, REPO)
 
 SNAP = os.path.join(REPO, ".tmp", "evaluation", "snapshot-run-02")
 BASE_PRED = os.path.join(REPO, ".tmp", "evaluation", "wo-bu-ceng-wang-ji", "baseline_prediction.ttml")
-TRUTH = r"C:\Users\20876\AppData\Roaming\LyricsBlossom\Lyrics\花玲 - 我不曾忘记 - 我不曾忘记.ttml"
+TRUTH = os.environ.get("L2T_LONG_TAIL_TRUTH", os.path.join(REPO, "refs", "花玲 - 我不曾忘记 - 我不曾忘记.ttml"))
 OUT3 = os.path.join(REPO, ".tmp", "evaluation", "long-tail-exp-03")
 STEM_GLOB = os.path.join(REPO, "outputs", "*我不曾忘记*htdemucs.vocals.wav")
 
