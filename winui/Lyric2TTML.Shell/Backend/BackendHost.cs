@@ -111,6 +111,12 @@ public sealed class BackendHost : IDisposable
         psi.Environment["L2T_HEADLESS"] = "1";
         psi.Environment["PYTHONIOENCODING"] = "utf-8";
         psi.Environment["PYTHONUTF8"] = "1";
+        // TIFA 实验引擎：外壳设置里的外部 Python 传给后端（后端据此拉起 TIFA infer.py）
+        var _tifa = SettingsHost.Current.TifaPython;
+        if (!string.IsNullOrWhiteSpace(_tifa))
+        {
+            psi.Environment["L2T_TIFA_PYTHON"] = _tifa.Trim();
+        }
         var dataDir = CliBridge.DataDirOverride();
         if (dataDir is not null)
         {
