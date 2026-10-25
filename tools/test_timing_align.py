@@ -118,6 +118,18 @@ def test_line_language():
     ok("语言检测 zh-en", _line_language("hello 世界") == "zh-en")
 
 
+def test_vocal_end():
+    import numpy as np
+    from timing_align import _vocal_end
+    sr = 16000
+    # 前 1.0s 有声（正弦），后面 3s 静音：应裁到 1.0s 附近
+    t = np.arange(int(1.0 * sr)) / sr
+    a = 0.5 * np.sin(2 * np.pi * 440 * t).astype(np.float32)
+    samples = np.concatenate([a, np.zeros(int(3.0 * sr), np.float32)])
+    end = _vocal_end(samples, sr, 0.0, 4.0)
+    ok("间奏静音裁剪", 0.95 <= end <= 1.1, f"end={end:.3f}")
+
+
 def test_monotonic():
     a = AlignedLine(text="a", agent="v1", begin=0.0, end=10.0,
                     units=[Unit(core="a", start=0.0, end=10.0)])
@@ -128,6 +140,14 @@ def test_monotonic():
     ok("同 agent 重叠压缩", fixed == 1 and abs(a.end - 5.0) < 1e-9,
        f"fixed={fixed} a.end={a.end}")
     ok("压缩后字仍在行内", a.units[0].start >= 0 and a.units[0].end <= a.end + 1e-9)
+    # 上一行整行都在下一行之后（注释行插错位置）：必须压成占位而不是留重叠
+    c = AlignedLine(text="c", agent="v1", begin=10.0, end=10.5,
+                    units=[Unit(core="c", start=10.0, end=10.5)])
+    d = AlignedLine(text="d", agent="v1", begin=9.8, end=11.0,
+                    units=[Unit(core="d", start=9.8, end=11.0)])
+    _enforce_agent_monotonic([c, d], [], lambda m: None)
+    ok("整行在下一行之后也能去重叠", c.end <= d.begin + 1e-9 and c.units[0].end <= c.end + 1e-9,
+       f"c.end={c.end} d.begin={d.begin}")
 
 
 def main():
@@ -137,6 +157,7 @@ def main():
     test_english_case_and_words()
     test_japanese_mapping()
     test_line_language()
+    test_vocal_end()
     test_monotonic()
     print(f"\n全部通过 ✓（{len(PASS)} 项）")
     return 0
