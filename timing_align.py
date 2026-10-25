@@ -39,7 +39,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
-from matcher import AlignedLine, AlignReport, scan_line
+from matcher import (AlignedLine, AlignReport, Unit, align_sequences,
+                     scan_line)
 from ttml_check import CheckResult, check_ttml
 from ttml_writer import TTMLWriter
 
@@ -637,6 +638,88 @@ def _merge_background_timings(report: AlignReport, bg_report: AlignReport,
     return merged
 
 
+def _add_auto_harmony(report: AlignReport, asr_words, notes: List[str],
+                      log: Callable[[str], None]) -> int:
+    """歌词没有和声标记时，从 Whisper 的 raw ASR 里捞“多出来的词”当 x-bg。
+
+    做法：把 TIFA 主唱单元当 target、Whisper 词当 source 做一次单调 DP；
+    没被主唱歌词吃掉的 source = 候选和声/伴奏误识别。再做保守过滤：
+    置信度、时长、黑名单、必须与某一行主唱时间重叠。
+    """
+    if any(u.is_bg for line in report.lines for u in line.units) or not asr_words:
+        return 0
+    main_units = [u for line in report.lines for u in line.units
+                  if not u.is_bg and (u.text or "").strip()]
+    if not main_units:
+        return 0
+    sources = []
+    for w in asr_words:
+        text = (getattr(w, "text", "") or "").strip()
+        start, end = getattr(w, "start", None), getattr(w, "end", None)
+        if not text or start is None or end is None or end <= start:
+            continue
+        if end - start > 4.0 or len(text) > 24:
+            continue
+        sources.append(Unit(core=text, start=float(start), end=float(end),
+                            prob=float(getattr(w, "prob", 0.0) or 0.0)))
+    if not sources:
+        return 0
+    mapping = align_sequences(main_units, sources)
+    matched = {j for j in mapping if j is not None}
+    extras = [s for j, s in enumerate(sources) if j not in matched]
+    if not extras:
+        return 0
+    # 先按“最近的主唱行 + 时间连续”聚成短语；单个字/短碎片不够可信。
+    extras.sort(key=lambda w: w.start)
+    groups: list = []
+    for w in extras:
+        best, best_ov = None, 0.0
+        for line in report.lines:
+            ov = min(w.end, line.end) - max(w.start, line.begin)
+            if ov > best_ov:
+                best, best_ov = line, ov
+        if best is None or best_ov < 0.06:
+            continue
+        if groups and groups[-1]["line"] is best and w.start - groups[-1]["words"][-1].end <= 0.35:
+            groups[-1]["words"].append(w)
+        else:
+            groups.append({"line": best, "words": [w]})
+    bad = re.compile(
+        r"字幕|优优|独播|点赞|订阅|转发|打赏|谢谢观看|感谢观看|明镜|栏目|"
+        r"下集|上集|片尾|片头|纯音乐|请欣赏|本期|欢迎收看|television|exclusive|"
+        r"series|subscribe|like")
+    all_main_norm = re.sub(
+        r"[^\w\u4e00-\u9fff]", "",
+        "".join(u.core for u in main_units).casefold())
+    added = 0
+    for g in groups:
+        words = g["words"]
+        text = "".join((w.core or "") for w in words)
+        norm = re.sub(r"[^\w\u4e00-\u9fff]", "", text.casefold())
+        span = words[-1].end - words[0].start
+        avg_prob = sum(float(getattr(w, "prob", 0.0) or 0.0) for w in words) / max(1, len(words))
+        if len(norm) < 2 or len(norm) > 24 or span < 0.12 or span > 6.0:
+            continue
+        if avg_prob and avg_prob < 0.45:
+            continue
+        if bad.search(norm) or norm in all_main_norm:
+            continue
+        for w in words:
+            g["line"].units.append(Unit(core=w.core, start=w.start, end=w.end,
+                                        is_bg=True, prob=w.prob, matched=False))
+            added += 1
+        starts = [x.start for x in g["line"].units if x.start is not None]
+        ends = [x.end for x in g["line"].units if x.end is not None]
+        if starts and ends:
+            g["line"].begin, g["line"].end = min(starts), max(ends)
+    if added:
+        report.total_units += added
+        report.matched_units += added
+        notes.append(f"自动转录和声：Whisper 多识别到 {added} 个词，已写入 x-bg（实验，请核对）")
+        log(f"      [和声] 自动转录 {added} 个和声词（来自 Whisper raw ASR，实验）")
+    return added
+
+
 def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 *, title: str = "", artists: Optional[Sequence[str]] = None,
                 album: str = "", author: str = "", author_id: str = "",
@@ -649,6 +732,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 language: str = "zh",
                 crop_vocals: bool = False,
                 bg_report: Optional[AlignReport] = None,
+                asr_words=None,
                 postprocess: Optional[Callable[[AlignReport], None]] = None,
                 log: Callable[[str], None] = print) -> dict:
     """TIFA 对齐并写出 TTML；返回 {ttml, check, report, notes, elapsed, duration}。"""
@@ -758,6 +842,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
 
     if bg_report is not None:
         _merge_background_timings(report, bg_report, notes, log)
+    _add_auto_harmony(report, asr_words, notes, log)
 
     # TIFA 之后的可选后处理：声纹分声部 / 歌词标记（由 pipeline 注入）。
     # 放在写 TTML 之前，保证 agent 真正进文件。
