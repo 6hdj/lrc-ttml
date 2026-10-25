@@ -16,6 +16,9 @@ public sealed record ShellSettings
     public string Model { get; init; } = "large-v3";
     public string Language { get; init; } = "auto";
     public string SingerMode { get; init; } = "off";
+    public string AlignEngine { get; init; } = "whisper";
+    /// <summary>TIFA 实验引擎使用的外部 Python（空 = 禁用 TIFA）。</summary>
+    public string TifaPython { get; init; } = "";
     public bool KeepTails { get; init; } = true;
     public bool VerifyAmll { get; init; } = true;
     public bool SameAgentOverlap { get; init; }
