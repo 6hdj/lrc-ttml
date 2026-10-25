@@ -96,6 +96,13 @@
                                        Margin="0,34,0,0" />
                         </Grid>
                     </Grid>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="TIFA Python 解释器（实验引擎，可选）" FontWeight="SemiBold" />
+                        <TextBox x:Name="EdTifaPython"
+                                 PlaceholderText="例如 C:\path\to\.venv\Scripts\python.exe；留空 = 禁用 TIFA" />
+                        <TextBlock Text="TIFA 引擎需要这个 Python 里已安装 TIFA 依赖（g2pflow/librosa 等），并在程序目录 models\tifa 放模型；留空时自动回退 Whisper。"
+                                   FontSize="{StaticResource CaptionSize}" Opacity="0.7" TextWrapping="Wrap" />
+                    </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="16">
                         <CheckBox x:Name="CkTails" Content="尾音延长（默认开）" />
                         <CheckBox x:Name="CkVerify" Content="AMLL 解析器复检（默认开）" />
