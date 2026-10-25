@@ -135,7 +135,7 @@ npx remotion render Lyric2TTML out/3s.mp4 --props='{\"videoSeconds\":3}'
    实测（`stdio` 三档对照）：`pipe → EPERM`；`ignore`/`inherit → 正常`（`esbuild --version` 能出 `0.28.1`）。
    ⇒ **要渲染就在沙箱外（普通终端）或对该条命令单次提权**，别在受限会话里反复试。
 2. **npm 缓存必须落在工作区内**（全局缓存目录不可写）：
-   `$env:npm_config_cache="E:\HXJ\文档\OpenCode\AMLL\.tmp\npm-cache"`；
+   `$env:npm_config_cache="<repo>\.tmp\npm-cache"`；
    npm 生命周期脚本会 spawn 子进程 ⇒ 用 `npm install --ignore-scripts`。
 3. **本机没有 Google Chrome**，只有 Edge。Remotion 需要 `chrome-headless-shell`
    （`npx remotion browser ensure` 自动下载）。若下载位置不可写，就把它放到工作区内并设
