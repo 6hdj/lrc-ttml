@@ -1,11 +1,16 @@
-"""用 QQ 音乐的 .qrc 逐字时间戳当**外部真值**，客观评我们的字级打轴。
+"""用 QQ 音乐的 .qrc 逐字时间戳当外部真值，对比 whisper 与 TIFA。
 
-.qrc 格式：``[行开始ms,行时长ms]字(开始ms,时长ms)字(...)...``
-时间都是**绝对毫秒**。最后那个单位的时长往往很长（1~2s），
-因为商业平台把**拖音算进尾字时长** —— 这正是我们被截断的地方。
+.qrc 格式：``[行开始ms,行时长ms]字(开始ms,时长ms)字(...)...``（绝对毫秒）。
+指标：
+  - 行结束偏差（我们 − QRC；负=提前结束）
+  - 逐字起始/结束偏差
+  - 去掉整体平移后的散布（不同录音常有整体偏移，散布才反映相对时间轴）
 
-指标：``我们的行结束 − QRC 的行结束``（秒）。为负 = 我们提前结束（被截断）。
+用法：
+  python tools/eval_word_timing.py                 # 三首歌：whisper 基线 + TIFA(若存在)
+  python tools/eval_word_timing.py --songs 失眠飞行
 """
+import argparse
 import io
 import os
 import re
@@ -16,7 +21,6 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 sys.path.insert(0, ".")
-# 注意：脚本在 tools/ 下，要回到项目根，否则 outputs/... 找不到
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BASE = "https://ghproxy.net/https://raw.githubusercontent.com/amll-dev/amll-ttml-db/main/"
@@ -24,6 +28,8 @@ CACHE = ".tmp/wordlevel"
 SONGS = {"让风告诉你": ("1818031620", "ncm"),
          "我不曾忘记": ("2014336709", "ncm"),
          "失眠飞行": ("1365898499", "ncm")}
+DEFAULT_BASE = "outputs/eval"
+DEFAULT_TIFA = "outputs/eval-tifa"
 
 
 def fetch(pid, plat):
@@ -46,7 +52,6 @@ def parse_qrc(text):
         if not m:
             continue
         start, dur, body = int(m.group(1)), int(m.group(2)), m.group(3)
-        # 组：1=字，2=开始ms，3=时长ms
         words = [(w.group(1), int(w.group(2)), int(w.group(3)))
                  for w in re.finditer(r"([^\(\)]*)\((\d+),(\d+)\)", body)]
         txt = "".join(w[0] for w in words)
@@ -64,7 +69,8 @@ def local(t):
 
 def secs(t):
     p = [float(x) for x in str(t).split(":")]
-    return p[0] * 3600 + p[1] * 60 + p[2] if len(p) == 3 else (p[0] * 60 + p[1] if len(p) == 2 else p[0])
+    return p[0] * 3600 + p[1] * 60 + p[2] if len(p) == 3 else (
+        p[0] * 60 + p[1] if len(p) == 2 else p[0])
 
 
 def parse_ours(path):
@@ -80,9 +86,8 @@ def parse_ours(path):
             continue
         out.append({"begin": secs(p.get("begin")), "end": secs(p.get("end")),
                     "text": txt,
-                    "last_end": max(secs(s.get("end")) for s in main),
-                    # 逐字起始 + 原文，供"起始前置"对比
                     "word_starts": [secs(s.get("begin")) for s in main],
+                    "word_ends": [secs(s.get("end")) for s in main],
                     "word_texts": ["".join(s.itertext()) for s in main]})
     out.sort(key=lambda x: x["begin"])
     return out
@@ -93,7 +98,6 @@ def norm(s):
 
 
 def pair(qrc, ours):
-    """按文本相似度配对（两边行数可能不同）"""
     from difflib import SequenceMatcher
     res, used = [], set()
     for o in ours:
@@ -110,63 +114,104 @@ def pair(qrc, ours):
     return res
 
 
-def report(name, path, qrc):
+def _expand(text, starts, ends):
+    """把词级 span 展开成逐字（中文一字一个 span；英文按字符重复词起点）。"""
+    chars = []
+    for t, a, b in zip(text, starts, ends):
+        for ch in t:
+            if norm(ch):
+                chars.append((ch, a, b))
+    return chars
+
+
+def evaluate(path, qrc, label, verbose=True):
     if not os.path.exists(path):
+        if verbose:
+            print(f"  {label:<14} 文件不存在，跳过（{path}）")
         return None
     ours = parse_ours(path)
     prs = pair(qrc, ours)
     if len(prs) < 5:
-        print(f"  {name}: 配对不足（{len(prs)}），跳过")
+        print(f"  {label:<14} 配对不足（{len(prs)}），跳过")
         return None
-    d = np.array([o["end"] - q["end"] for o, q, _ in prs])
-    # ⚠️ 必须剔除配对失败的离群值：文本相似的重复段（副歌）会被配错行，
-    # 产生几十秒的假偏差，把均值整个带跑。中位数本身抗离群，均值不行。
-    bad = np.abs(d) > 3.0
-    d_ok = d[~bad]
+    line_err = np.array([o["end"] - q["end"] for o, q, _ in prs])
+    bad = np.abs(line_err) > 3.0
+    line_ok = line_err[~bad]
     keep = [p for p, b in zip(prs, bad) if not b]
-    # ⚠️ 关键诊断：如果偏差几乎是**常数**，那是"录音不同导致的整体时间偏移"，
-    # 不是我们的打轴错。这里把中位偏移减掉，看**去掉整体平移后的散布**。
-    # 散布小 = 我们的相对时间轴是对的；散布大 = 才是真的打轴不准。
-    spread = d_ok - np.median(d_ok)
 
-    # 逐字**起始**偏差（用户反馈的问题 1：起始时间前置）
-    # 只比 QRC 里是**单字单位**的位置（多字单位只有一个起始时间，没法逐字比）
-    starts = []
+    starts, ends = [], []
     for o, q, _ in keep:
-        qi = 0
-        for ch in norm(o["text"]):
-            if qi >= len(q["units"]):
-                break
-            u = q["units"][qi]
-            if len(u[0]) == 1:
-                # 找我们这一行里同序号的字
-                if qi < len(o["word_starts"]):
-                    starts.append(o["word_starts"][qi] - u[1])
-                qi += 1
-            else:
-                qi += len(u[0])
-    s = np.array(starts) if starts else np.array([])
-    s_ok = s[np.abs(s) <= 3.0] if len(s) else s
-    stxt = ""
-    if len(s_ok):
-        stxt = (f" | **逐字起始** 中位 {np.median(s_ok):+.3f}s"
-                f" 去掉整体平移后散布 {np.abs(s_ok - np.median(s_ok)).mean():.3f}s"
-                f"（n={len(s_ok)}）")
+        oc = _expand(o["word_texts"], o["word_starts"], o["word_ends"])
+        qc = []
+        for u in q["units"]:
+            for ch in u[0]:
+                if norm(ch):
+                    qc.append((ch, u[1], u[2]))
+        for (ch_o, a_o, b_o), (ch_q, a_q, b_q) in zip(oc, qc):
+            if ch_o == ch_q:
+                starts.append(a_o - a_q)
+                ends.append(b_o - b_q)
+    s = np.array(starts)
+    e = np.array(ends)
+    s = s[np.abs(s) <= 3.0]
+    e = e[np.abs(e) <= 3.0]
+    s_med = float(np.median(s)) if len(s) else 0.0
+    e_med = float(np.median(e)) if len(e) else 0.0
+    s_dev = float(np.abs(s - s_med).mean()) if len(s) else 0.0
+    e_dev = float(np.abs(e - e_med).mean()) if len(e) else 0.0
+    within01 = float((np.abs(s - s_med) <= 0.1).mean() * 100) if len(s) else 0.0
+    within02 = float((np.abs(s - s_med) <= 0.2).mean() * 100) if len(s) else 0.0
+    line_dev = float(np.abs(line_ok - np.median(line_ok)).mean())
+    row = {"label": label, "pairs": len(prs), "dropped": int(bad.sum()),
+           "line_med": float(np.median(line_ok)), "line_dev": line_dev,
+           "n": len(s), "start_med": s_med, "start_dev": s_dev,
+           "end_med": e_med, "end_dev": e_dev,
+           "within01": within01, "within02": within02}
+    if verbose:
+        print(f"  {label:<14} 配对 {row['pairs']:>3} 行（剔除 {row['dropped']}）"
+              f" | 行结束 中位 {row['line_med']:+.3f}s 散布 {row['line_dev']:.3f}s"
+              f" | 逐字起始 中位 {row['start_med']:+.3f}s 散布 {row['start_dev']:.3f}s"
+              f" | 逐字结束 散布 {row['end_dev']:.3f}s"
+              f" | ≤0.1s {row['within01']:.1f}% ≤0.2s {row['within02']:.1f}% (n={row['n']})")
+    return row
 
-    print(f"  {name:<14} 配对 {len(prs):>3} 行（剔除 {int(bad.sum())}）"
-          f" | 行结束 中位 {np.median(d_ok):+.3f}s"
-          f" 散布 {np.abs(spread).mean():.3f}s{stxt}")
-    return d_ok
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="QRC 真值评测：whisper vs TIFA")
+    ap.add_argument("--songs", default="", help="逗号分隔，默认全部三首")
+    ap.add_argument("--baseline-dir", default=DEFAULT_BASE)
+    ap.add_argument("--tifa-dir", default=DEFAULT_TIFA)
+    args = ap.parse_args(argv)
+    songs = [s.strip() for s in args.songs.split(",") if s.strip()] or list(SONGS)
+    rows = {}
+    for song in songs:
+        if song not in SONGS:
+            print(f"未知歌曲：{song}")
+            continue
+        pid, plat = SONGS[song]
+        print(f"\n【{song}】QRC 真值")
+        qrc = parse_qrc(fetch(pid, plat))
+        last_units = [q["units"][-1][2] - q["units"][-1][1] for q in qrc]
+        print(f"  QRC {len(qrc)} 行，末单位时长：中位 {np.median(last_units):.2f}s"
+              f" 最长 {max(last_units):.2f}s")
+        base = evaluate(os.path.join(args.baseline_dir, f"{song}.ttml"), qrc, "whisper")
+        tifa = evaluate(os.path.join(args.tifa_dir, f"{song}.ttml"), qrc, "TIFA")
+        rows[song] = (base, tifa)
+        if base and tifa:
+            print(f"  → 逐字起始散布：whisper {base['start_dev']:.3f}s → "
+                  f"TIFA {tifa['start_dev']:.3f}s；≤0.2s："
+                  f"{base['within02']:.1f}% → {tifa['within02']:.1f}%")
+
+    print("\n" + "=" * 78)
+    print("汇总（逐字起始，去掉整体平移后）")
+    print(f"{'歌曲':<10}{'whisper 散布':>14}{'TIFA 散布':>14}{'whisper ≤0.2s':>16}{'TIFA ≤0.2s':>14}")
+    for song, (b, t) in rows.items():
+        if not (b and t):
+            continue
+        print(f"{song:<10}{b['start_dev']:>13.3f}s{t['start_dev']:>13.3f}s"
+              f"{b['within02']:>15.1f}%{t['within02']:>13.1f}%")
+    return 0
 
 
-for song, (pid, plat) in SONGS.items():
-    print(f"\n【{song}】QRC 真值")
-    qrc = parse_qrc(fetch(pid, plat))
-    last_units = [q["units"][-1][2] - q["units"][-1][1] for q in qrc]
-    print(f"  QRC {len(qrc)} 行，末单位时长：中位 {np.median(last_units):.2f}s"
-          f" 最长 {max(last_units):.2f}s")
-    before = report("改前", f"outputs/eval/{song}.ttml", qrc)
-    after = report("改后(尾音补全)", f"outputs/eval/{song}.tail.ttml", qrc)
-    if before is not None and after is not None:
-        print(f"  → 中位偏差 {np.median(before):+.3f}s → {np.median(after):+.3f}s；"
-              f"提前结束的行 {int((before < -0.15).sum())} → {int((after < -0.15).sum())}")
+if __name__ == "__main__":
+    sys.exit(main())
