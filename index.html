@@ -359,6 +359,15 @@
             </select>
           </div>
           <div class="form-group">
+            <label>对齐引擎</label>
+            <select id="alignEngine">
+              <option value="whisper" selected>内置 Whisper（默认，支持纯文本）</option>
+              <option value="timing-tifa">TIFA 歌声对齐（实验：需逐句 LRC + 模型）</option>
+            </select>
+            <div class="hint">TIFA 是歌声音素对齐引擎，实测逐字比 Whisper 更准；<br>
+              需要逐句 LRC 和 <code>models/tifa</code>，缺失或失败会自动回退 Whisper。</div>
+          </div>
+          <div class="form-group">
             <label>计算设备</label>
             <select id="device">
               <option value="cuda" selected>GPU (CUDA) · 必选</option>
@@ -756,6 +765,7 @@ function startConversion() {
     audio: audioServerPath, lyrics: lyricsServerPath,
     translation: translationServerPath || '',
     language: val('language'), mode: val('mode'), model: val('model'), device: val('device'),
+    align_engine: val('alignEngine') || 'whisper',
     markers: val('markers'), line_id: val('lineId'),
     translation_style: val('translationStyle'), time_format: val('timeFormat'),
     translation_lang: val('transLang'),
