@@ -393,6 +393,41 @@ class LyricToTTML:
                         tifa_audio = sep_path
                         self.log("[1.5/6] TIFA 使用分离后的人声轨")
 
+                # 和声（x-bg）：TIFA 是单序列强制对齐，叠唱时会把和声字
+                # 混进主唱轨迹；Whisper 的 ASR/DP 对叠唱更稳。检测到歌词里有
+                # 背景层时，先跑一遍 Whisper，仅取其 bg 单元的时间。
+                hybrid_bg = None
+                has_bg = any(getattr(t, "is_background", False)
+                             for l in lines for t in (getattr(l, "tokens", None) or []))
+                if has_bg:
+                    self.log("[1.5/6] 检测到和声层：跑 Whisper 和声对齐（主唱仍用 TIFA）")
+                    try:
+                        from dataclasses import replace
+                        import tempfile, shutil as _sh
+                        _tmpdir = tempfile.mkdtemp(
+                            prefix="l2t-hybrid-",
+                            dir=os.path.dirname(os.path.abspath(output_path or audio_path)))
+                        try:
+                            _wopt = replace(self.opt, align_engine="whisper")
+                            _wr = LyricToTTML(_wopt, log=lambda m: None)
+                            _res = _wr.convert(
+                                audio_path=audio_path, lyrics_text=lyrics_text,
+                                song_title=song_title, artists=artists, album=album,
+                                author=author, author_id=author_id,
+                                platform_ids=platform_ids,
+                                output_path=os.path.join(_tmpdir, "whisper-bg.ttml"),
+                                translation_text=translation_text,
+                                translation_lang=translation_lang,
+                                songwriters=songwriters)
+                            hybrid_bg = _res.report
+                            notes.append("和声层：TIFA 主唱 + Whisper 叠唱识别")
+                        finally:
+                            _sh.rmtree(_tmpdir, ignore_errors=True)
+                    except Exception as e:                  # noqa: BLE001
+                        self.log(f"      Whisper 和声对齐失败（{type(e).__name__}: {e}），"
+                                 f"和声仍用 TIFA")
+                        notes.append(f"和声层 Whisper 对齐失败：{e}")
+
                 # TIFA 结果之后再跑声纹/歌词标记（写 TTML 之前注入，保证 agent 进文件）
                 def _tifa_post(report: AlignReport) -> None:
                     forced = self.opt.forced_singers()
@@ -423,6 +458,7 @@ class LyricToTTML:
                     keep_credits=not self.opt.skip_credits,
                     language=self.opt.language,
                     crop_vocals=bool(sep_path),
+                    bg_report=hybrid_bg,
                     postprocess=_tifa_post,
                     log=self.log)
                 notes.extend(r.get("notes") or [])
