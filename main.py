@@ -48,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="计算设备：cuda（默认，本项目强制用 GPU）/ auto（等价于 cuda）。"
                         "⚠️ 故意不提供 CPU —— 用 CPU 处理一首歌要几分钟，"
                         "静默降级只会让人觉得程序很慢，所以没有可用的显卡时直接明确报错")
+    p.add_argument("--align-engine", choices=["whisper", "timing-tifa"], default="whisper",
+                   help="对齐引擎：whisper=默认（faster-whisper + DP，支持纯文本）；"
+                        "timing-tifa=实验（TIFA 歌声音素对齐，需要逐句 LRC + models/tifa 模型，"
+                        "当前按中文普通话配置）")
     p.add_argument("--title", default="", help="歌曲名")
     p.add_argument("--artist", action="append", default=[], help="歌手（可重复）")
     p.add_argument("--album", default="", help="专辑名")
@@ -203,6 +207,7 @@ def main(argv=None) -> int:
         language=args.language,
         model=args.model,
         device=args.device,
+        align_engine=args.align_engine,
         refine=not args.no_refine,
         chunked=not args.no_chunked,
         skip_credits=not args.keep_credits,
@@ -231,6 +236,7 @@ def main(argv=None) -> int:
             print(f"错误：找不到翻译文件 {args.translation}")
             return 2
         translation_text = textread.read_text(args.translation)
+
 
     print("=" * 64)
     print(" Lyric2TTML · 普通歌词 → Apple Music 逐字 TTML")
