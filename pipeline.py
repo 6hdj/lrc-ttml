@@ -384,7 +384,6 @@ class LyricToTTML:
             self.log("[1.5/6] 尝试 TIFA 实验引擎（歌声音素对齐）")
             try:
                 import timing_align
-                import tail_extend
 
                 tifa_audio = audio_path
                 sep_path = None
@@ -403,13 +402,10 @@ class LyricToTTML:
                     else:
                         self._use_lyric_markers(lines, report, notes, artists)
                     if self.opt.extend_tails and sep_path:
-                        tail_audio = self._load_audio_for_tail(sep_path)
-                        fixes = tail_extend.extend_line_tails(
-                            report.lines, tail_audio,
-                            allow_same_agent_overlap=self.opt.allow_same_agent_overlap,
-                            log=self.log)
-                        if fixes:
-                            notes.append("句尾拖音补全：" + tail_extend.summarize(fixes))
+                        # TIFA 自家音素边界已经是真实发音终点；Whisper 时代
+                        # 的“能量/基频续尾”启发式会把准确尾音再拉长。
+                        # 用户实测 TIFA 更准 ⇒ TIFA 分支默认不做尾音补全。
+                        notes.append("TIFA 自带音素级边界，已跳过 Whisper 的尾音补全启发式")
 
                 r = timing_align.align_lines(
                     lyrics_text, tifa_audio, output_path or "",
@@ -426,6 +422,7 @@ class LyricToTTML:
                     song_part=self.opt.song_part,
                     keep_credits=not self.opt.skip_credits,
                     language=self.opt.language,
+                    crop_vocals=bool(sep_path),
                     postprocess=_tifa_post,
                     log=self.log)
                 notes.extend(r.get("notes") or [])
