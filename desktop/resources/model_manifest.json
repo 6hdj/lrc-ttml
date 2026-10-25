@@ -224,6 +224,67 @@
         "size": 84141911,
         "sha256": "8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4"
       }
+    },
+    {
+      "id": "tifa-aligner",
+      "category": "aligner",
+      "name": "TIFA 歌声对齐（实验）",
+      "purpose": "音素级歌声对齐，实测逐字比 Whisper 更准；需要逐句 LRC",
+      "required_for": [
+        "lyrics_alignment",
+        "word_timing"
+      ],
+      "default": false,
+      "download_policy": "on_demand",
+      "recommended": false,
+      "approx_size": 158603152,
+      "license": "TIFA 运行库 MIT（openvpi/TIFA）；TIFA-1.0-ST 模型/字典按上游发布包条款，不随本仓库分发",
+      "note": "实验引擎。通过模型管理下载（GitHub Release models-v1）；解包到 models/tifa。需要外部 Python + TIFA 依赖才能运行，缺任何一项自动回退 Whisper。",
+      "source": {
+        "kind": "github_release",
+        "repo": "6hdj/lrc-ttml",
+        "tag": "models-v1",
+        "note": "TIFA 运行库源码 MIT；模型/字典按上游发布包条款"
+      },
+      "verify": {
+        "kind": "files_sha256",
+        "target": "models/tifa",
+        "files": {
+          "model.pt": {
+            "sha256": "8d9bf896da1827f36bf135f80c7ab1fc4f3c1d48f328818b8402c9527c0f014b",
+            "size": 158588551
+          },
+          "config.yaml": {
+            "sha256": "b4bdfd5c73ca3a01ff8675ca353c54d4c14eefa75a188eac9a22ab94e147f8ac",
+            "size": 1567
+          },
+          "vocabulary.json": {
+            "sha256": "644c85ac28cfe4f26fcf60de5a6d1fe192c11a6a837746119ef2dbc6dac9246c",
+            "size": 4115
+          },
+          "runtime/infer.py": {
+            "sha256": "575097aab0778cc8a0e929f845a27b48c9c1c4501704a40a6ff5ea9e9a5e9388",
+            "size": 8919
+          }
+        }
+      },
+      "mirror": {
+        "kind": "github_release",
+        "repo": "6hdj/lrc-ttml",
+        "tag": "models-v1",
+        "archive": "tifa-aligner.tar",
+        "files": [
+          "tifa-aligner.tar"
+        ],
+        "size": 171243520,
+        "sha256": "5c856fee3db888c8171b9959e348e6e9bae7e4ce8ef33f102dfc4f2e913582ea",
+        "dest": "models/tifa",
+        "urls": [
+          "https://gh-proxy.com/https://github.com/{repo}/releases/download/{tag}/{name}",
+          "https://github.boki.moe/https://github.com/{repo}/releases/download/{tag}/{name}",
+          "https://ghproxy.net/https://github.com/{repo}/releases/download/{tag}/{name}"
+        ]
+      }
     }
   ]
 }
