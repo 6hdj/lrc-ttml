@@ -864,6 +864,7 @@ def _run_task(task: Task):
             language=p.get("language", "zh"),
             model=p.get("model", "large-v3"),
             device=p.get("device", "auto"),
+            align_engine=str(p.get("align_engine") or "whisper"),
             refine=bool(p.get("refine", True)),
             chunked=bool(p.get("chunked", True)),
             skip_credits=bool(p.get("skip_credits", True)),
