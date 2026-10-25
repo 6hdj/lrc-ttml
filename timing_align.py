@@ -493,9 +493,10 @@ def _enforce_agent_monotonic(lines: List[AlignedLine], notes: List[str],
                              log: Callable[[str], None]) -> int:
     """同一 agent 相邻行不重叠（TTML 铁律 4）。
 
-    TIFA 是逐行独立对齐的，clip 又带了 ±0.2s 上下文，行尾/行首可能越过
-    相邻行。这里只压同 agent 的行（不同歌手的叠唱允许重叠），整行按比例
-    缩放，避免多个越界字全落到同一个 limit 上造成字间重叠。
+    TIFA 逐字边界是准的，**不能像 Whisper 那样整行按比例缩放**（那会把
+    本来准确的每个字都拉偏）。这里只压缩越界的那一小段尾字：
+    找到第一个越界的字，从它到行尾按比例压进 [first.start, next.begin]。
+    前面的字保持 TIFA 原值。
     """
     fixed = 0
     last: dict = {}
@@ -503,24 +504,49 @@ def _enforce_agent_monotonic(lines: List[AlignedLine], notes: List[str],
         ag = line.agent or ""
         prev = last.get(ag)
         if prev is not None and prev[1] > line.begin:
-            j, prev_end = prev
+            j, _prev_end = prev
             a, b = lines[j], line
             limit = float(b.begin)
-            span_old = a.end - a.begin
-            span_new = limit - a.begin
-            if span_old > 0 and span_new > 0:
-                scale = span_new / span_old
-                for u in a.units:
-                    if u.start is not None:
-                        u.start = a.begin + (u.start - a.begin) * scale
-                    if u.end is not None:
-                        u.end = a.begin + (u.end - a.begin) * scale
+            units = [u for u in a.units if u.start is not None]
+            first = None
+            for idx, u in enumerate(units):
+                if u.end is not None and u.end > limit:
+                    first = idx
+                    break
+            if first is not None:
+                # 越界的字可能整段都在 limit 之后（TIFA clip 上下文造成）：
+                # 往前多包一个字，保证压缩区间还有正的宽度。
+                while first > 0 and units[first].start >= limit:
+                    first -= 1
+            if units and first is not None and limit > units[first].start:
+                tail = units[first:]
+                old_start = tail[0].start
+                old_end = tail[-1].end
+                new_span = limit - old_start
+                if old_end > old_start and new_span > 0:
+                    scale = new_span / (old_end - old_start)
+                    for u in tail:
+                        u.start = old_start + (u.start - old_start) * scale
+                        u.end = old_start + (u.end - old_start) * scale
+                    a.end = limit
+                    fixed += 1
+                    log(f"      [重叠] L{j + 1} 只压缩越界尾段到 {limit:.3f}"
+                        f"（同歌手 L{i + 1} 开始；前面字保留 TIFA 原值）")
+            elif units and first is not None:
+                # 上一行整行都在 limit 之后（常见于 LRC 里插进来的短注释行），
+                # 没有可压缩的宽度：把它压成 limit 前 1ms 的占位，保证不重叠。
+                a.begin = max(0.0, limit - 0.001)
                 a.end = limit
+                step = 0.001 / max(1, len(units))
+                for k, u in enumerate(units):
+                    u.start = a.begin + step * k
+                    u.end = min(limit, a.begin + step * (k + 1))
                 fixed += 1
-                log(f"      [重叠] L{j + 1} 行尾压到 {limit:.3f}（同歌手 L{i + 1} 开始）")
+                log(f"      [重叠] L{j + 1} 整行在下一行之后，压成 1ms 占位"
+                    f"（同歌手 L{i + 1} 开始）")
         last[ag] = (i, line.end)
     if fixed:
-        notes.append(f"修正同歌手行重叠 {fixed} 处")
+        notes.append(f"修正同歌手行重叠 {fixed} 处（只压缩越界尾段）")
     return fixed
 
 
@@ -552,6 +578,33 @@ def _work_root() -> Path:
     return Path(tempfile.mkdtemp(prefix="l2t-tifa-"))
 
 
+def _vocal_end(samples, sr: int, start: float, end: float) -> float:
+    """在 [start,end] 内找最后一个明显有声的 20ms 帧；找不到返回 end。
+
+    用于 TIFA 切窗：LRC 的下一行开始常在长间奏之后，直接拿它当 clip 右边界
+    会让 TIFA 把最后 2~3 个音素拉过整段间奏（用户实测“拖到下一句才结束”）。
+    只对人声轨做这个裁剪（原曲间奏本身有音乐能量，会把静音判成有声）。
+    """
+    import numpy as np
+    a = max(0, int(start * sr))
+    b = min(len(samples), int(end * sr))
+    frame = max(1, int(0.02 * sr))
+    n = (b - a) // frame
+    if n < 5:
+        return end
+    block = np.asarray(samples[a:a + n * frame], dtype=np.float32).reshape(n, frame)
+    rms = np.sqrt(np.mean(block * block, axis=1))
+    peak = float(np.percentile(rms, 95))
+    if peak <= 0:
+        return end
+    thr = max(peak * 10 ** (-26 / 20.0), 10 ** (-55 / 20.0))
+    active = np.flatnonzero(rms > thr)
+    if not len(active):
+        return end
+    voice_end = (a + (int(active[-1]) + 1) * frame) / sr
+    return min(end, voice_end)
+
+
 def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 *, title: str = "", artists: Optional[Sequence[str]] = None,
                 album: str = "", author: str = "", author_id: str = "",
@@ -562,6 +615,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 translation_style: str = "head", time_format: str = "clock",
                 song_part: str = "", keep_credits: bool = False,
                 language: str = "zh",
+                crop_vocals: bool = False,
                 postprocess: Optional[Callable[[AlignReport], None]] = None,
                 log: Callable[[str], None] = print) -> dict:
     """TIFA 对齐并写出 TTML；返回 {ttml, check, report, notes, elapsed, duration}。"""
@@ -620,6 +674,13 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
     for i, line in enumerate(lines):
         start = max(0.0, float(line.line_start) - 0.2)
         end = min(duration, float(line.line_end) + 0.2)
+        if crop_vocals:
+            ve = _vocal_end(audio, sr, float(line.line_start), float(line.line_end))
+            if float(line.line_end) - ve > 1.5:
+                cropped = min(end, ve + 0.4)
+                log(f"      [间奏裁剪] 第 {i + 1} 行尾静音 {float(line.line_end) - ve:.1f}s，"
+                    f"clip 收到 {cropped:.2f}s（避免尾字拖过间奏）")
+                end = cropped
         if end - start < 0.2:
             end = min(duration, start + 0.2)
         a, b = int(start * sr), int(end * sr)
