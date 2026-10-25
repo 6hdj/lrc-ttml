@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""timing_align 纯函数回归（不加载 TIFA 模型）。
+
+覆盖：
+- TextGrid texts tier 解析
+- TIFA 逐字边界 → 原文字符映射（含空格/标点）
+- scan_line 单元定位（空格不会让后续字错位）
+- 同 agent 行重叠按比例压缩
+
+运行：python tools/test_timing_align.py
+"""
+import os
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, HERE)
+
+from timing_align import (  # noqa: E402
+    _build_line, _enforce_agent_monotonic, _map_tifa_line, _parse_textgrid,
+)
+from matcher import AlignedLine, Unit  # noqa: E402
+
+PASS = []
+
+
+def ok(name, cond, detail=""):
+    if not cond:
+        raise AssertionError(f"FAIL {name} {detail}")
+    PASS.append(name)
+    print(f"  OK   {name}" + (f"  —— {detail}" if detail else ""))
+
+
+def test_textgrid():
+    sample = '''File type = "ooTextFile"
+Object class = "TextGrid"
+
+xmin = 0.0
+xmax = 4.13
+tiers? <exists>
+size = 1
+item []:
+    item [1]:
+        class = "IntervalTier"
+        name = "texts"
+        xmin = 0
+        xmax = 4.13
+        intervals: size = 2
+            intervals [1]:
+                xmin = 0.0
+                xmax = 1.0
+                text = "站"
+            intervals [2]:
+                xmin = 1.0
+                xmax = 2.0
+                text = "在"
+'''
+    with tempfile.NamedTemporaryFile("w", suffix=".TextGrid", delete=False,
+                                     encoding="utf-8") as f:
+        f.write(sample)
+        path = f.name
+    try:
+        from pathlib import Path
+        tiers = _parse_textgrid(Path(path))
+        ok("TextGrid 解析", tiers.get("texts") == [(0.0, 1.0, "站"), (1.0, 2.0, "在")],
+           str(tiers.get("texts")))
+    finally:
+        os.unlink(path)
+
+
+def test_mapping_with_spaces():
+    text = "面对 下一个 岔路口"
+    intervals = [(0.0, 0.4, "面"), (0.4, 0.9, "对"), (0.9, 1.2, "下"),
+                 (1.2, 1.5, "一"), (1.5, 2.0, "个"), (2.0, 2.6, "岔"),
+                 (2.6, 3.0, "路"), (3.0, 3.8, "口")]
+    ct, matched = _map_tifa_line(text, intervals, 10.0, (10.0, 14.0), print)
+    ok("TIFA 映射成功", matched)
+    ok("空格/标点不参与发音", ct[2] is not None and ct[6] is not None)
+    ok("首字时间", ct[0] == (10.0, 10.4), str(ct[0]))
+    line = _build_line(text, "v1", "", 0, ct, True, (10.0, 14.0))
+    # 空格的 unit 被 scan_line 折叠，不能让后续字错位
+    ok("含空格行映射", line.units[2].core == "下" and line.units[2].start == 10.9,
+       f"{line.units[2].core} {line.units[2].start}")
+    ok("行尾字", line.units[-1].core == "口" and line.units[-1].end == 13.8,
+       f"{line.units[-1].core} {line.units[-1].end}")
+
+
+def test_mismatch():
+    ct, matched = _map_tifa_line("你好", [(0.0, 1.0, "再见")], 0.0, (0.0, 2.0), print)
+    ok("不匹配不伪造", (not matched) and ct is None)
+
+
+def test_english_case_and_words():
+    text = "Hello world, this is a test."
+    intervals = [(0.0, 0.5, "hello"), (0.5, 1.0, "world"),
+                 (1.2, 1.5, "this"), (1.5, 1.7, "is"),
+                 (1.7, 1.9, "a"), (1.9, 2.2, "test")]
+    ct, matched = _map_tifa_line(text, intervals, 0.0, (0.0, 2.2), print)
+    ok("英文大小写无关映射", matched)
+    ok("英文 Hello 起始", ct and ct[0] == (0.0, 0.1), str(ct[0] if ct else None))
+    # 多字 word 内部按字符均分，不能所有字符同一区间（否则同层字重叠）
+    ok("英文多字词不共用区间", ct and ct[1][0] >= ct[0][1] and ct[2][0] >= ct[1][1])
+
+
+def test_japanese_mapping():
+    text = "こんにちは世界"
+    intervals = [(0.0, 0.3, "こ"), (0.3, 0.6, "ん"), (0.6, 0.9, "に"),
+                 (0.9, 1.2, "ち"), (1.2, 1.5, "は"), (1.5, 1.8, "世"), (1.8, 2.1, "界")]
+    ct, matched = _map_tifa_line(text, intervals, 0.0, (0.0, 2.1), print)
+    ok("日文映射", matched and ct and ct[0] == (0.0, 0.3), str(ct[0] if ct else None))
+
+
+def test_line_language():
+    from timing_align import _line_language
+    ok("语言检测 en", _line_language("hello world") == "en")
+    ok("语言检测 zh", _line_language("你好世界") == "zh")
+    ok("语言检测 ja", _line_language("こんにちは") == "ja")
+    ok("语言检测 zh-en", _line_language("hello 世界") == "zh-en")
+
+
+def test_monotonic():
+    a = AlignedLine(text="a", agent="v1", begin=0.0, end=10.0,
+                    units=[Unit(core="a", start=0.0, end=10.0)])
+    b = AlignedLine(text="b", agent="v1", begin=5.0, end=8.0,
+                    units=[Unit(core="b", start=5.0, end=8.0)])
+    notes = []
+    fixed = _enforce_agent_monotonic([a, b], notes, lambda m: None)
+    ok("同 agent 重叠压缩", fixed == 1 and abs(a.end - 5.0) < 1e-9,
+       f"fixed={fixed} a.end={a.end}")
+    ok("压缩后字仍在行内", a.units[0].start >= 0 and a.units[0].end <= a.end + 1e-9)
+
+
+def main():
+    test_textgrid()
+    test_mapping_with_spaces()
+    test_mismatch()
+    test_english_case_and_words()
+    test_japanese_mapping()
+    test_line_language()
+    test_monotonic()
+    print(f"\n全部通过 ✓（{len(PASS)} 项）")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
