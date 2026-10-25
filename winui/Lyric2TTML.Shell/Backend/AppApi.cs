@@ -39,7 +39,8 @@ public sealed class ConversionApi : IDisposable
 
     /// <summary>提交转换。返回 task_id（拿不到就是失败，不编）。</summary>
     public async Task<string> StartAsync(string audio, string lyrics, string model, string mode,
-                                         string language, string singerMode, bool separate,
+                                         string language, string singerMode, string alignEngine,
+                                         bool separate,
                                          bool extendTails, bool allowSameAgentOverlap = false,
                                          string outputDir = "", bool autoSave = true)
     {
@@ -51,6 +52,7 @@ public sealed class ConversionApi : IDisposable
             mode,
             language,
             singer_mode = singerMode,
+            align_engine = alignEngine,
             separate_vocals = separate,
             extend_tails = extendTails,
             allow_same_agent_overlap = allowSameAgentOverlap,
