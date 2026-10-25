@@ -48,6 +48,7 @@ public sealed partial class SettingsPage : Page
         CkVerify.IsChecked = s.VerifyAmll;
         CkSameAgent.IsChecked = s.SameAgentOverlap;
         EdOutput.Text = s.OutputDir;
+        EdTifaPython.Text = s.TifaPython;
 
         if (!string.IsNullOrEmpty(loadError))
         {
@@ -68,6 +69,7 @@ public sealed partial class SettingsPage : Page
         VerifyAmll = CkVerify.IsChecked == true,
         SameAgentOverlap = CkSameAgent.IsChecked == true,
         OutputDir = EdOutput.Text.Trim(),
+        TifaPython = EdTifaPython.Text.Trim(),
     };
 
     private void ShowAbout()
