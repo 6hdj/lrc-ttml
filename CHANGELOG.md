@@ -8,6 +8,108 @@
 
 ---
 
+## [未发布]
+
+**修复 WinUI 编辑台三个用户反馈缺陷：删不掉词、声部角色错位、文本操作全失败。**
+
+### 修复
+
+- **编辑台没有删除入口**：生成出来的歌词里多余的字/行以前无法删除。工具栏新增
+  「🗑 删除这个字」「🗑 删除这一行」（先选字/行，二次确认）。时间分配（同层后字往前顶）
+  与 key 重编号**全部走服务端** `delete_word` / `delete_line`，前端不自己算时间。
+- **改声部后 Apple Music 左右分栏错位**（用户实测："选 1 声部显示成 2 声部，
+  选 2 声部显示成 1 声部"）：有两个独立原因，都已修：
+  1. 改 `ttm:agent` 时**没有同步行级 `ttm:role`**（`x-duet-a/b`），写出
+     `ttm:agent="v2" ttm:role="x-duet-a"` 这种自相矛盾的行，而 Apple Music 按 role
+     分栏 ⇒ 整行跑到相反那一栏。现在改声部时 role 同步更新（v1→x-duet-a /
+     v2→x-duet-b / 旁白→x-narration / 合唱→清空）；且 **agent 没变但 role 已矛盾**
+     的行也允许保存 ⇒ 把声部重新选一遍即可修复旧文件。
+  2. **声部编号本身没有稳定语义**：自动分声部直接用 k-means 簇号（`v{lab+1}`），
+     簇号任意 ⇒ 先开口的声部可能被编成 v2；而 Apple Music 的对唱左右栏按声部
+     **首次出现的顺序**排栏 ⇒ v1 的行走到了第二栏。现在 `pipeline` 按「首次出现」
+     重排 v1/v2（`renumber_by_first_seen`）；`ttml_writer` 的 head agent 声明也
+     改成**升序 v1, v2, v3…**（原来按首次出现，v2 先唱就排在最前）。
+     旧文件用 `tools/fix_agent_order.py` 批量重排（支持 `.ttml` 与编辑台草稿
+     `.edit.json`，自动备份，回写前比对新旧错误集合、不引入新错误）。
+- **WinUI 的文本/和声操作一直失败**：`HttpEditBackend.TextOpAsync` 把 payload
+  **平铺**在请求体根上，后端 `_post_text` 只读 `payload` 嵌套 ⇒ 每次都以
+  "找不到这一行"被拒（保存和声、删除和声、以及新增的删除都受影响）。已按后端契约
+  改为嵌套，并抽出纯函数 `TextOpBody.Build` 让测试锁住请求体形状。
+- **编辑台试听播 1~2 秒就停**：本地直读把路径转成 `file://` URI，而 Media Foundation
+  对**非 ASCII（中文）路径**的 percent-encoded URL 解析失败（实测
+  `HRESULT 0x80070003 / SourceNotSupported`；同一文件放 ASCII 路径就正常）⇒ 回退 HTTP
+  流；60+MB 的无损 FLAC 边播边供供不上，于是播一两秒就停。改用
+  `StorageFile.GetFileFromPathAsync` + `MediaSource.CreateFromStorageFile`
+  （Unicode 路径原生支持）——实测同一中文路径 238s 正常打开、播放位置正常前进。
+- **帮助/诊断的"5 项需要处理"是误报**（两个原因都修）：
+  1. 页面把后端字段读错了（读 `scope`，实际字段是 `level`），也**没有按级别区分** ——
+     把"打包版不含 torch/demucs"这类**可选**项都算成"需要处理"；
+  2. 冻结后端的 `doctor` 搜索路径**不包含运行库安装目录**
+     （`%LOCALAPPDATA%\Lyric2TTML\runtime\…`），torch/CUDA 明明已装好、运行库页
+     也显示"真实加载通过"，医生仍报缺失。
+  现在正确解析 `key/name/why/level/ok/detail/fix`（必需/可选/信息三档），并用
+  「运行库 / 分离 Worker」的**真实状态**校正（torch→运行库 torch、cuBLAS→运行库 cuda、
+  demucs→Worker）；缺的才计数，cuDNN 确实没装（可选）就如实显示。处理建议也改成
+  本界面能点到的「运行库 → 安装/修复」（不再照抄安装器的"开始补全"）。
+- **人声分离报 `invalid_output：写出/校验失败：Error: file does not start with RIFF id`**
+  （FLAC/MP3 输入时必现）：反汇编 Worker 0.1.0 确认根因 —— 它在算"输入时长"时用
+  **stdlib `wave` 打开输入文件**（`getnframes()/getframerate()`），而 `wave` 只认
+  RIFF/WAV，输入 FLAC 时直接抛 `file does not start with RIFF id`，被包装成
+  "写出/校验失败"，于是分离/句尾拖音补全整体跳过。Worker 是外部冻结包（源码不在本仓库），
+  改字节码风险太高 ⇒ 新增**输入格式包装器**：`DemucsWorker.exe` 发现输入不是 WAV 时
+  先用 ffmpeg 转成 16-bit PCM WAV 再转发给真实 Worker（原 exe 改名
+  `DemucsWorker.core.exe` 保留），`--selftest/--version` 原样转发（运行库页校验不受影响），
+  临时文件用完即删。实测：同一 FLAC 分离成功（ok:true, 输出 6.8MB RIFF WAV），
+  端到端转换 `[分离] 完成（Worker cuda，9.8s）`、句尾拖音补全 24 处、匹配率 100%。
+  部署/回滚脚本：`tools/deploy_worker_wrapper.ps1`（源码 `tools/demucs_worker_wrapper/`）。
+  ⚠️ 在「运行库」页卸载/重装 Worker 会覆盖包装器，重装后需重跑一次部署脚本；
+  根本修复应在 Worker 侧改用 `soundfile` 读输入时长。
+
+### 新增
+
+- `tools/fix_agent_role.py`：**批量修复已有坏文件**，不必逐行重选声部。只修自相矛盾的
+  duet 角色（v1↔x-duet-b、v2↔x-duet-a、v1000 带 duet 角色）；空 role / 旁白 /
+  非 duet 角色原样保留，不改任何时间；首次写回自动备份 `.bak-agent-role`，`--dry` 只报告。
+  实测：2 处矛盾修复正确、二次运行幂等、AMLL 模式（不写 role）自动跳过。
+- `tools/fix_agent_order.py`：**批量修复已有文件的声部编号顺序**（按首次出现重排
+  v1/v2，让「一声部」稳定对应 Apple Music 第一栏）。支持最终 `.ttml` 与编辑台草稿
+  `.edit.json`；首次写回自动备份 `.bak-agent-order`；回写前比对新旧自检错误集合，
+  **不引入新错误**才落盘；`--dry` 只报告。实测：真文件 v2→v1/v1→v2 正确交换、
+  head 升序、行数/文本/时间不变、二次运行幂等。
+- WinUI 纯逻辑测试新增 59 条（agent↔role 映射、`/api/text` 请求体形状、删字的层内下标
+  换算、doctor JSON 字段/级别/运行库校正）；`selftest` 新增 head agent 声明顺序、
+  簇编号按首次出现重排的断言。总数：C# 137 → **196/196**；Python 自检全绿。
+  三类"故意弄坏"的变异对照都能被 C# 测试抓到（含 doctor 校正：拿不到运行库状态时
+  不得乱校正的阴性对照）。
+
+---
+
+## [1.2.0] - 2026-10-25
+
+**TIFA 歌声对齐实验引擎（可选）+ 评测/模型管理配套。**
+
+### 新增
+
+- 新增 `timing_align.py`：接入 TIFA-1.0-ST 歌声音素对齐（实验后端），
+  按 LRC 行锚点切 clip、解析 TextGrid texts tier、映射回本项目的 Unit/TTML；
+  失败自动回退 Whisper。
+- CLI `--align-engine timing-tifa`；Web/WinUI 工作台新增「对齐引擎」选项。
+- 模型管理新增 `tifa-aligner` 条目：只做文件 + SHA256 校验，手动安装（模型不随包分发）。
+- `tools/eval_word_timing.py` 支持 whisper vs TIFA 的 QRC 真值对比。
+- WinUI 冻结后端支持「外部 Python 引擎」：设置里指定 TIFA Python，
+  后端通过 `L2T_TIFA_PYTHON` 拉起 TIFA；逐行语言路由（zh/ja/en）也已接入。
+
+### 实测
+
+- 《让风告诉你》《我不曾忘记》《失眠飞行》三首：逐字起始散布
+  whisper 0.268/0.188/0.137s → TIFA 0.138/0.111/0.088s；
+  ≤0.2s 命中率 54.9/61.0/76.7% → 81.0/85.7/93.6%。
+
+### 限制
+
+- TIFA 分支需要逐句 LRC；当前按中文普通话为主（混唱加了 `-L en`）；
+  暂不跑人声分离/拖音补全；模型许可独立，不能随 MIT 安装包分发。
+
 ## [1.1.1] - 2026-10-14
 
 **安装阶段不再要求下载大件；中国大陆可以正常下载 GPU 运行时。**
