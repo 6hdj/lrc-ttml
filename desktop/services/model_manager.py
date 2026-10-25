@@ -433,6 +433,53 @@ class ModelManager:
             st.detail = f"文件完整（SHA256 已核对，{human(st.present_bytes)}）"
             return st
 
+        if kind == "files_sha256":
+            # 多文件组件（如 TIFA 实验引擎）：逐个文件核对大小 + SHA256。
+            # 这类组件不随安装包分发，也不由这里下载（source.kind=manual）。
+            rel = verify["target"]
+            base = self._resolve_target(rel)
+            files = verify.get("files") or {}
+            if not base:
+                st.status = NOT_INSTALLED
+                st.detail = f"没有找到 {rel}"
+                st.can_download = bool(spec.get("mirror"))
+                st.download_hint = ("点「下载」从 GitHub Release 补齐"
+                                    if spec.get("mirror") else
+                                    "按 docs/实验-TIFA对齐引擎.md 手动安装（模型不随包分发）")
+                return st
+            st.location = base
+            missing, bad, total = [], [], 0
+            for name, meta in files.items():
+                p = os.path.join(base, name.replace("/", os.sep))
+                if not os.path.isfile(p):
+                    missing.append(name)
+                    continue
+                size = os.path.getsize(p)
+                total += size
+                want_size = meta.get("size")
+                if want_size and size != want_size:
+                    bad.append(f"{name}（应为 {want_size} 字节，实际 {size}）")
+                    continue
+                want_sha = meta.get("sha256")
+                if want_sha and sha256_file(p).lower() != str(want_sha).lower():
+                    bad.append(f"{name}（SHA256 不匹配）")
+            st.present_bytes = total
+            st.missing, st.size_mismatch = missing, bad
+            st.can_download = bool(spec.get("mirror"))
+            st.download_hint = ("点「下载」从 GitHub Release 补齐"
+                                if spec.get("mirror") else
+                                "手动组件：按 docs/实验-TIFA对齐引擎.md 放到 models/tifa")
+            if missing:
+                st.status = FAILED
+                st.detail = "缺文件：" + "、".join(missing)
+            elif bad:
+                st.status = FAILED
+                st.detail = "文件损坏：" + "、".join(bad)
+            else:
+                st.status = READY
+                st.detail = f"文件齐全，SHA256 已核对（{human(total)}，实验组件）"
+            return st
+
         if kind == "files_exist":
             rel = verify["target"]
             need = verify.get("must_have") or []
@@ -538,6 +585,12 @@ class ModelManager:
                 return self._download_hf(spec, log, p, _stop)
             if kind == "http":
                 return self._download_http(spec, log, p, _stop)
+            if kind == "github_release":
+                return self._download_mirror(spec, log, p, _stop)
+            if kind == "manual":
+                raise ValueError(
+                    f"{model_id}: 这是手动组件（实验），请按说明安装；"
+                    "不提供一键下载，避免把未确认许可的模型打进安装包")
             raise ValueError(f"{model_id}: 不知道怎么下载（kind={kind!r}）")
         finally:
             self.invalidate(model_id)
@@ -663,12 +716,26 @@ class ModelManager:
         paths.ensure_dir(stage)
         archive = os.path.join(stage, str(mirror.get("archive") or (spec["id"] + ".tar")))
         parts = []
+        # 先试 manifest 给的镜像（国内可用的 gh-proxy 等），最后直连 GitHub。
+        bases = [str(x) for x in (mirror.get("urls") or [])] + [self.MIRROR_URL]
         for name in names:
-            url = self.MIRROR_URL.format(repo=repo, tag=tag, name=name)
+            last_err = None
             dst = os.path.join(stage, name)
-            log(f"GitHub 镜像：{url.split('/')[2]} / {name}")
-            p(None, f"下载 {name} …")
-            _http_get_to_file(url, dst, log=log, p=p, stop=stop, label=name)
+            for base in bases:
+                url = base.format(repo=repo, tag=tag, name=name)
+                log(f"GitHub 镜像：{url.split('/')[2]} / {name}")
+                p(None, f"下载 {name} …")
+                try:
+                    _http_get_to_file(url, dst, log=log, p=p, stop=stop, label=name)
+                    last_err = None
+                    break
+                except DownloadCancelled:
+                    raise
+                except Exception as e:                 # noqa: BLE001
+                    last_err = e
+                    log(f"  地址失败：{type(e).__name__}: {str(e)[:120]}")
+            if last_err is not None:
+                raise last_err
             parts.append(dst)
         stop()
         if len(parts) > 1:
@@ -690,8 +757,21 @@ class ModelManager:
                 raise RuntimeError(f"镜像包 SHA256 不匹配（{digest[:16]}…）")
             log("镜像包 SHA256 一致 ✓")
         p(None, "解包到模型缓存…")
-        with tarfile.open(archive, "r") as tf:
-            tf.extractall(hub)
+        # mirror.dest: 非 HF 缓存布局的组件（如 TIFA）直接解包到程序目录。
+        # 压缩包内路径约定为 "models/tifa/..."，所以解到 app_dir 根。
+        dest_rel = str(mirror.get("dest") or "").strip()
+        if dest_rel:
+            dest = self._target_for_write(dest_rel)
+            app_root = os.path.dirname(os.path.dirname(dest))
+            with tarfile.open(archive, "r") as tf:
+                for member in tf.getmembers():
+                    target = os.path.abspath(os.path.join(app_root, member.name))
+                    if not target.startswith(os.path.abspath(app_root) + os.sep):
+                        raise RuntimeError(f"镜像包含非法路径：{member.name}")
+                tf.extractall(app_root)
+        else:
+            with tarfile.open(archive, "r") as tf:
+                tf.extractall(hub)
         for part in parts:
             _safe_remove(part)
         self.invalidate(spec["id"])
