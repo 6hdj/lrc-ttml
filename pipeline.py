@@ -102,6 +102,24 @@ def duet_hint(artists: Optional[Sequence[str]], n_singers: int,
             f"或把「演唱者分段」设为强制双声部（CLI：--singer-mode 2）。")
 
 
+def renumber_by_first_seen(labels: Sequence[int]) -> Dict[int, int]:
+    """把 k-means 的**任意**簇编号重排成「首次出现顺序 → 1, 2, …」的序号（1 起）。
+
+    为什么需要：簇编号只是聚类算法的产物，同一首歌重跑就可能把**先开口**的声部
+    编成任意号。而 Apple Music 的对唱左右栏按声部首次出现的顺序排栏 —— 若 v2 唱在
+    第一句，编辑台里「一声部」(v1) 的行就会显示到第二栏（用户实测：
+    "选 1 声部显示成 2 声部，选 2 声部显示成 1 声部"）。
+
+    返回 ``{旧簇号: 新序号}``；``labels`` 按**歌词行顺序**给，不能按时间排序后再传
+    （行顺序才是"谁先唱"的判据）。
+    """
+    order: List[int] = []
+    for lab in labels:
+        if lab not in order:
+            order.append(lab)
+    return {lab: i + 1 for i, lab in enumerate(order)}
+
+
 def build_overlap_evidence(ttml: str, lines, *, task_id: str = "") -> dict:
     """从**生成侧边标记**构造拖音证据（不写文件、不改任何状态）。
 
@@ -182,6 +200,10 @@ class ConvertOptions:
     language: str = "zh"            # zh / en / ja / ko ...
     model: str = "large-v3"
     device: str = "auto"
+    # 对齐引擎：whisper=默认（faster-whisper + DP，支持纯文本）；
+    # timing-tifa=实验（TIFA 歌声音素对齐，需要 models/tifa + 逐句 LRC）。
+    # 失败时自动回退 whisper（见 convert() 的 1.5 步）。
+    align_engine: str = "whisper"
     refine: bool = True             # 低匹配率行二次精修
     refine_threshold: float = 0.6   # 匹配率低于该值触发精修
     max_refine_lines: int = 12      # 单次转换最多精修多少行（控制耗时）
@@ -354,6 +376,72 @@ class LyricToTTML:
             notes.append("输入为纯文本歌词：所有行时间由音频推断，建议提供 LRC 以获得更高精度。")
 
         duration = audio_duration(audio_path)
+
+        # 1.5 实验引擎：TIFA 歌声音素对齐（需要逐句 LRC + models/tifa）----------
+        # 失败/缺模型/纯文本 → 记一条 note，回退到下面的 whisper 主流程。
+        if str(self.opt.align_engine or "whisper").strip().lower() in (
+                "timing-tifa", "timing", "tifa"):
+            self.log("[1.5/6] 尝试 TIFA 实验引擎（歌声音素对齐）")
+            try:
+                import timing_align
+                import tail_extend
+
+                tifa_audio = audio_path
+                sep_path = None
+                if self.opt.separate_vocals:
+                    sep_path = self._separate_vocals(audio_path, song_title, notes)
+                    if sep_path:
+                        tifa_audio = sep_path
+                        self.log("[1.5/6] TIFA 使用分离后的人声轨")
+
+                # TIFA 结果之后再跑声纹/歌词标记（写 TTML 之前注入，保证 agent 进文件）
+                def _tifa_post(report: AlignReport) -> None:
+                    forced = self.opt.forced_singers()
+                    if forced:
+                        self._split_singers(lines, report, audio_path, notes,
+                                            artists, forced)
+                    else:
+                        self._use_lyric_markers(lines, report, notes, artists)
+                    if self.opt.extend_tails and sep_path:
+                        tail_audio = self._load_audio_for_tail(sep_path)
+                        fixes = tail_extend.extend_line_tails(
+                            report.lines, tail_audio,
+                            allow_same_agent_overlap=self.opt.allow_same_agent_overlap,
+                            log=self.log)
+                        if fixes:
+                            notes.append("句尾拖音补全：" + tail_extend.summarize(fixes))
+
+                r = timing_align.align_lines(
+                    lyrics_text, tifa_audio, output_path or "",
+                    title=song_title, artists=artists, album=album,
+                    author=author, author_id=author_id,
+                    platform_ids=platform_ids,
+                    translation_text=translation_text,
+                    translation_lang=translation_lang,
+                    songwriters=songwriters,
+                    mode=self.opt.mode, markers=self.opt.markers,
+                    line_id=self.opt.line_id,
+                    translation_style=self.opt.translation_style,
+                    time_format=self.opt.time_format,
+                    song_part=self.opt.song_part,
+                    keep_credits=not self.opt.skip_credits,
+                    language=self.opt.language,
+                    postprocess=_tifa_post,
+                    log=self.log)
+                notes.extend(r.get("notes") or [])
+                if translation_text:
+                    notes.append("TIFA 实验引擎暂不写翻译层（已忽略 --translation）")
+                self.log(f"[1.5/6] TIFA 完成：{r['elapsed']:.1f}s，"
+                         f"字级映射 {r['report'].match_rate:.1%}")
+                return ConvertResult(
+                    ttml=r["ttml"], check=r["check"], report=r["report"],
+                    duration=r.get("duration") or duration, notes=notes,
+                    elapsed=time.time() - t_start,
+                    output_path=output_path)
+            except Exception as e:                      # noqa: BLE001
+                msg = f"TIFA 引擎不可用（{type(e).__name__}: {e}），已自动回退 whisper"
+                self.log("      " + msg)
+                notes.append(msg)
         if duration:
             self.log(f"      音频时长 {duration:.1f}s")
 
@@ -1289,11 +1377,18 @@ class LyricToTTML:
                 self.log("      " + hint)
             return
 
-        role_of = {0: "x-duet-a", 1: "x-duet-b"}
+        # 簇编号（``res.labels`` 里的 0/1/…）是 k-means 输出，**与"谁先唱"无关** ——
+        # 同一份音频重跑就可能把先开口的人编成 1 号。而 Apple Music 的对唱左右栏按
+        # 声部**首次出现的顺序**排栏 ⇒ 第一个开口的声部必须是 v1；否则编辑台里选
+        # 「一声部」（v1）的行会在 Apple Music 显示到第二栏（用户实测 bug：
+        # "选 1 声部显示成 2 声部，选 2 声部显示成 1 声部"）。
+        remap = renumber_by_first_seen(res.labels)       # {旧簇号: 新 v 序号(1 起)}
+        role_of = {"v1": "x-duet-a", "v2": "x-duet-b"}
         for al, lab in zip(report.lines, res.labels):
-            al.agent = f"v{lab + 1}"
-            al.role = role_of.get(lab, "")
-        counts = {f"v{i+1}": res.labels.count(i) for i in range(res.n_singers)}
+            agent = f"v{remap[lab]}"
+            al.agent = agent
+            al.role = role_of.get(agent, "")
+        counts = {f"v{remap[lab]}": res.labels.count(lab) for lab in remap}
         notes.append("分声部结果：" + "，".join(f"{k} {v} 行" for k, v in counts.items())
                      + "（如与听感不符可手动加 [v1]/[v2] 标记覆盖）")
         notes.append("两个人同时张嘴的齐唱/和声仍无法拆分（一行里混了两个声纹）")
