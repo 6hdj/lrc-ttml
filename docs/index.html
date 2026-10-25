@@ -57,19 +57,19 @@
     </h1>
     <p class="hero-sub reveal" data-delay="2">
       普通歌词（TXT / LRC）＋ 歌曲音频，自动生成 <b>Apple Music / AMLL 逐字 TTML</b>。
-      <br class="only-desktop">识别、对齐、分声部、拖音补全、规范自检 —— 一条流水线跑完。
+      <br class="only-desktop">Whisper + 实验性 TIFA 双引擎、和声 x-bg、逐字编辑与规范自检 —— 一条流水线跑完。
     </p>
     <div class="hero-cta reveal" data-delay="3">
       <a class="btn btn-primary btn-lg" href="https://github.com/6hdj/lrc-ttml/releases/download/v1.2.1/Lyric2TTML-winui-v1.2.1-portable.zip">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4.5-4.5M12 15 7.5 10.5M4 20h16"/></svg>
-        下载便携版 <span class="btn-meta">415 MB</span>
+        下载便携版 <span class="btn-meta">326 MB</span>
       </a>
       <a class="btn btn-ghost btn-lg" href="#watch">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         看 4 分钟演示
       </a>
     </div>
-    <div class="hero-meta reveal" data-delay="4">无需管理员 · 解压即用 · 首次使用按引导下载模型（约 3 GB）</div>
+    <div class="hero-meta reveal" data-delay="4">⚠️ 建议右键「以管理员身份运行」 · 解压即用 · 首次使用按引导下载模型（约 3 GB）</div>
   </div>
 
   <!-- 逐字时间轴演示 -->
@@ -82,9 +82,10 @@
     <div class="tl-ruler"><span>00:00</span><span>01:00</span><span>02:00</span><span>03:00</span><span>04:00</span></div>
     <div class="tl-foot">
       <span class="tl-pill">faster-whisper</span>
+      <span class="tl-pill">TIFA 实验引擎</span>
       <span class="tl-pill">强制对齐</span>
       <span class="tl-pill">CAM++</span>
-      <span class="tl-pill">拖音补全</span>
+      <span class="tl-pill">和声 x-bg</span>
       <span class="tl-pill">AMLL 自检</span>
     </div>
   </div>
@@ -120,8 +121,8 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 19V5m0 14h16M8 15l3-4 3 3 4-6"/></svg>
       </div>
       <h3>真实音频，不是估算</h3>
-      <p>faster-whisper 识别 + 动态规划强制对齐；有 LRC 时按乐句切片，把歌词本身当提示词回喂。</p>
-      <div class="card-foot"><span class="tag">逐字精度</span></div>
+      <p>默认 faster-whisper + DP；实验 TIFA 歌声音素对齐逐字更准。有 LRC 时按乐句切片，把歌词本身当提示词回喂；长间奏会裁掉尾字拖音，保留三点倒数 gap。</p>
+      <div class="card-foot"><span class="tag">逐字精度</span><span class="tag">TIFA 实验</span></div>
     </article>
 
     <article class="card reveal" data-delay="2">
@@ -129,8 +130,8 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="9" cy="9" r="3.2"/><circle cx="15.5" cy="15" r="3.2"/><path d="M4 3v18M20 3v18" opacity=".5"/></svg>
       </div>
       <h3>分声部 · 拖音 · 和声</h3>
-      <p>CAM++ 声纹把每一行分给不同演唱者（与人工标注约九成一致）；句尾拖音按能量与基频连续性补回；括号和声自动变成 x-bg 层。</p>
-      <div class="card-foot"><span class="tag">对唱友好</span></div>
+      <p>CAM++ 声纹把每一行分给不同演唱者；和声标记时 TIFA 主唱 + Whisper x-bg，没有标记时可用 Whisper 自动转录和声（实验）。括号和声自动变成 x-bg 层。</p>
+      <div class="card-foot"><span class="tag">对唱友好</span><span class="tag">和声</span></div>
     </article>
 
     <article class="card card-wide reveal">
@@ -261,13 +262,13 @@
       </div>
       <div class="dl-name">Lyric2TTML-winui-v1.2.1-portable.zip</div>
       <div class="dl-meta">
-        <span>415 MB</span><span class="dot-sep"></span><span>WinUI 3 外壳 + Python 后端</span><span class="dot-sep"></span><span>MIT License</span>
+        <span>326 MB</span><span class="dot-sep"></span><span>WinUI 3 外壳 + Python 后端</span><span class="dot-sep"></span><span>代码 MIT · 模型另有许可</span>
       </div>
       <div class="dl-actions">
         <a class="btn btn-primary btn-lg" href="https://github.com/6hdj/lrc-ttml/releases/download/v1.2.1/Lyric2TTML-winui-v1.2.1-portable.zip">立即下载</a>
         <button class="btn btn-ghost" id="copyLink" data-link="https://github.com/6hdj/lrc-ttml/releases/download/v1.2.1/Lyric2TTML-winui-v1.2.1-portable.zip">复制下载链接</button>
       </div>
-      <div class="dl-hash"><span class="muted">解压后双击</span> <code>winui\Lyric2TTML.exe</code></div>
+      <div class="dl-hash"><span class="muted">解压后右键「以管理员身份运行」</span> <code>winui\Lyric2TTML.exe</code></div>
     </div>
     <div class="dl-side reveal" data-delay="1">
       <a class="dl-item" href="https://github.com/6hdj/lrc-ttml/releases" target="_blank" rel="noopener">
@@ -280,7 +281,7 @@
         <span>从源码运行 / 构建</span><span class="arrow">↗</span>
       </a>
       <div class="dl-note">
-        <span class="dot"></span> 无管理员权限、不弹 UAC；模型与运行库在软件内下载。
+        <span class="dot"></span> 建议右键「以管理员身份运行」；模型与运行库在软件内下载。TIFA 模型为 CC BY-NC-SA 4.0（非商业），详见 <a href="https://github.com/6hdj/lrc-ttml/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">第三方声明</a>。
       </div>
     </div>
   </div>
@@ -344,12 +345,12 @@
     </div>
     <div class="f-cols">
       <div><h4>项目</h4><a href="https://github.com/6hdj/lrc-ttml" target="_blank" rel="noopener">GitHub</a><a href="https://github.com/6hdj/lrc-ttml/releases" target="_blank" rel="noopener">Releases</a><a href="https://github.com/6hdj/lrc-ttml/issues" target="_blank" rel="noopener">Issues</a></div>
-      <div><h4>文档</h4><a href="https://github.com/6hdj/lrc-ttml#readme" target="_blank" rel="noopener">README</a><a href="https://github.com/6hdj/lrc-ttml/blob/main/docs/WinUI3-版本说明.md" target="_blank" rel="noopener">WinUI 3</a><a href="https://github.com/6hdj/lrc-ttml/blob/main/docs/TTML1-AMLL歌词格式规范.md" target="_blank" rel="noopener">TTML 规范</a></div>
+      <div><h4>文档</h4><a href="https://github.com/6hdj/lrc-ttml#readme" target="_blank" rel="noopener">README</a><a href="https://github.com/6hdj/lrc-ttml/blob/main/docs/README.md" target="_blank" rel="noopener">文档索引</a><a href="https://github.com/6hdj/lrc-ttml/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">第三方声明</a><a href="https://github.com/6hdj/lrc-ttml/blob/main/docs/TTML1-AMLL歌词格式规范.md" target="_blank" rel="noopener">TTML 规范</a></div>
       <div><h4>更多</h4><a href="https://www.bilibili.com/video/BV1Hdnu6EELK" target="_blank" rel="noopener">B 站</a><a href="https://github.com/amll-dev/amll-ttml-db" target="_blank" rel="noopener">AMLL DB</a></div>
     </div>
   </div>
   <div class="f-bottom">
-    <span>MIT License · 全程离线 · 无需 API Key</span>
+    <span>代码 MIT · 模型/第三方资产另有许可 · 全程离线</span>
     <span>输出遵循 AMLL TTML Database 规范</span>
   </div>
 </footer>
