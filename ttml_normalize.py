@@ -147,7 +147,8 @@ def overlap_pair(units_a: Sequence, units_b: Sequence, a_begin: float,
 
 
 def clamp_units_into_line(units: Sequence, begin: float, end: float,
-                          min_dur: float = MIN_UNIT_DURATION):
+                          min_dur: float = MIN_UNIT_DURATION,
+                          layered: bool = False):
     """最后一道保险：任何字都落在行的 ``begin/end`` 之内，且按文本顺序单调。
 
     返回修正后的 ``(begin, end)``。
@@ -172,6 +173,10 @@ def clamp_units_into_line(units: Sequence, begin: float, end: float,
         if not group:
             continue
         group.sort(key=lambda u: u.index)
+
+        # 分层歌词：x-bg 允许超出主唱 <p>，不要把它夹回行内
+        if layered and is_bg:
+            continue
 
         cursor = begin
         for u in group:
@@ -501,6 +506,7 @@ def check_overlap_evidence(doc: EditDoc, overlap_evidence, *, policy_version: in
 
 
 def normalize_timeline(doc: EditDoc, policy: str = "auto", *,
+                       layered: bool = False,
                        overlap_evidence=None, evidence_policy_version: int = 1,
                        evidence_identity=None) -> NormalizeReport:
     """规范化一份 ``EditDoc``，返回改动清单。
@@ -555,6 +561,7 @@ def normalize_timeline(doc: EditDoc, policy: str = "auto", *,
                 normalize_group(tr, line.begin, line.end)
 
         # ---------- 行间：R4 同 agent 相邻行不重叠 ----------
+        # 分层歌词（layered）：同 agent 行允许重叠，不执行 R4。
         # 仅当显式传入 overlap_evidence 时，才可能跳过**通过全部校验**的边；
         # overlap_evidence=None ⇒ 走原有逻辑，一行不改（默认行为零变化的保证）。
         protected_edges = set()
@@ -565,6 +572,8 @@ def normalize_timeline(doc: EditDoc, policy: str = "auto", *,
                 if _dec.get("allowed") and _dec.get("edge_index") is not None:
                     protected_edges.add(int(_dec["edge_index"]))
         for _edge_index, (a, b) in enumerate(zip(work.lines, work.lines[1:])):
+            if layered:
+                break
             if a.agent != b.agent or a.locked or b.locked:
                 continue
             if _edge_index in protected_edges:
@@ -577,7 +586,8 @@ def normalize_timeline(doc: EditDoc, policy: str = "auto", *,
         for line in work.lines:
             if line.locked:
                 continue
-            line.begin, line.end = clamp_units_into_line(line.words, line.begin, line.end)
+            line.begin, line.end = clamp_units_into_line(line.words, line.begin, line.end,
+                                                          layered=layered)
 
     # ---------- R7：行内长停顿（不自动修，只提示）----------
     for line in work.lines:
