@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
 from matcher import (AlignedLine, AlignReport, Unit, align_sequences,
-                     scan_line)
+                     similarity, scan_line)
 from ttml_check import CheckResult, check_ttml
 from ttml_writer import TTMLWriter
 
@@ -381,12 +381,16 @@ def _norm_char(ch: str) -> str:
 
 
 def _map_tifa_line(text: str, intervals: Sequence[tuple], offset: float,
-                   anchors: tuple, log: Callable[[str], None]):
+                   anchors: tuple, log: Callable[[str], None],
+                   phones: Optional[Sequence[tuple]] = None):
     """把 TIFA texts tier 映射成「原文字符 → (start,end)」。
 
     返回 (char_times, matched)；char_times 是与 text 等长的列表，
     标点/空格为 None；映射不上返回 (None, False)，由调用方占位。
     英文按大小写无关比较（TIFA 可能返回 hello/Hello），日文按 NFKC 比较。
+
+    多字 TIFA word 的切分：优先用 ``phones`` tier 的真实音素边界，而不是
+    按字数均分。中文通常一个 interval 一个字，不受影响；日文/多字词会明显更准。
     """
     n = len(text)
     char_times: List[Optional[tuple]] = [None] * n
@@ -398,27 +402,77 @@ def _map_tifa_line(text: str, intervals: Sequence[tuple], offset: float,
     targets = [i for i, ch in enumerate(text) if _kept(ch)]
     target_seq = "".join(_norm_char(text[i]) for i in targets)
     model_seq = "".join(c for c, _, _ in model_chars)
-    if model_seq != target_seq:
-        # TIFA 偶尔把标点/撇号/大小写归一化得和原文不同：先按 NFKC+casefold
-        # 比，仍不匹配才回退（不硬造时间）。
-        return None, False
     if not targets:
         return None, False
-    # 每个 model 字一个边界；多字 word 在 word 内部按字数均分，保证同层字不重叠
+    if model_seq != target_seq:
+        # TIFA 偶尔漏/改一个字（ASR 式解码、标点归一化）：用单调 DP 做模糊映射，
+        # 不要因为一个字符不一致就把整行退化成 LRC 均分。
+        tgt = [Unit(core=c) for c in target_seq]
+        src = [Unit(core=c) for c, _, _ in model_chars]
+        mapping = align_sequences(tgt, src)
+        pairs = [(i, j) for i, j in enumerate(mapping)
+                 if j is not None and similarity(target_seq[i], model_seq[j]) > 0.5]
+        if len(pairs) < max(1, int(0.6 * len(targets))):
+            return None, False
+        for i, j in pairs:
+            char_times[targets[i]] = (model_chars[j][1], model_chars[j][2])
+        # 未匹配字：夹在前后匹配字之间；没有邻居时用 clip 边界，保证 span 合法
+        for k, idx in enumerate(targets):
+            if char_times[idx] is not None:
+                continue
+            prev = next((char_times[targets[x]] for x in range(k - 1, -1, -1)
+                         if char_times[targets[x]] is not None), None)
+            nxt = next((char_times[targets[x]] for x in range(k + 1, len(targets))
+                        if char_times[targets[x]] is not None), None)
+            s = prev[1] if prev else anchors[0]
+            e = nxt[0] if nxt else anchors[1]
+            if e <= s:
+                e = s + 0.001
+            char_times[idx] = (s, e)
+        # 模糊路径不再做音素细分（音素边界已不可信），但保留标点归属
+        last = None
+        for i in range(n):
+            if char_times[i] is not None:
+                last = char_times[i]
+            elif last is not None:
+                char_times[i] = (last[1], last[1] + 0.001)
+        return char_times, True
+    # 每个 model 字一个边界；多字 word 在 word 内部按**音素边界**切，保证同层字不重叠
+    use_phones = os.environ.get("L2T_TIFA_PHONE_SPLIT", "1").strip().lower() not in (
+        "0", "false", "no", "off")
     pos = 0
-    for _ch, a, b in model_chars:
-        # 找到该 model 字所属的 interval 内位置：按连续相同 (a,b) 分组
-        # （model_chars 是逐字展开的，同一 TIFA word 的边界相同）
+    while pos < len(model_chars):
+        a, b = model_chars[pos][1], model_chars[pos][2]
         group = []
         j = pos
         while j < len(model_chars) and model_chars[j][1:] == (a, b):
             group.append(model_chars[j])
             j += 1
-        span = (b - a) / max(1, len(group))
-        for k in range(len(group)):
-            idx = targets[pos + k]
-            char_times[idx] = (a + span * k, a + span * (k + 1))
-        pos += len(group)
+        # 收集这个 word 内的音素；phones 的标签可能为空（边界静音）
+        rel = []
+        if use_phones:
+            for pa, pb, pt in (phones or []):
+                if pb <= a + 0.005 or pa >= b - 0.005 or pb <= pa:
+                    continue
+                if (pt or "").strip():
+                    rel.append((max(a, pa + offset), min(b, pb + offset)))
+            rel.sort()
+        if len(group) > 1 and len(rel) >= len(group):
+            # 把音素按顺序分配到字；每字覆盖 1..n 个完整音素
+            cuts = [round(k * len(rel) / len(group)) for k in range(len(group) + 1)]
+            cuts[0], cuts[-1] = 0, len(rel)
+            for k in range(len(group)):
+                s0 = rel[cuts[k]][0]
+                s1 = rel[max(cuts[k], cuts[k + 1] - 1)][1]
+                if s1 <= s0:
+                    s0, s1 = a + offset, b + offset
+                char_times[targets[pos + k]] = (s0, s1)
+        else:
+            span = (b - a) / max(1, len(group))
+            for k in range(len(group)):
+                idx = targets[pos + k]
+                char_times[idx] = (a + span * k, a + span * (k + 1))
+        pos = j
     # 标点/空格：用前一个有效字的结束时间做一个 1ms 的占位（只影响 span 归属，
     # 不伪造发音时长；writer 会把标点并进相邻字的 span）
     last = None
@@ -788,9 +842,13 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
     work.mkdir(parents=True)
     clips: List[_Clip] = []
     clip_info = {}
+    # 句首/句尾上下文：默认 0.2s。LRC 锚点偶尔早/晚一点，0.35~0.5s 通常更稳；
+    # 但过长会把上一句/下一句的咬字带进 clip，所以保留可调（实验/诊断）。
+    ctx_before = max(0.0, min(1.0, float(os.environ.get("L2T_TIFA_CTX_BEFORE", "0.2"))))
+    ctx_after = max(0.0, min(1.0, float(os.environ.get("L2T_TIFA_CTX_AFTER", "0.2"))))
     for i, line in enumerate(lines):
-        start = max(0.0, float(line.line_start) - 0.2)
-        end = min(duration, float(line.line_end) + 0.2)
+        start = max(0.0, float(line.line_start) - ctx_before)
+        end = min(duration, float(line.line_end) + ctx_after)
         if crop_vocals:
             ve = _vocal_end(audio, sr, float(line.line_start), float(line.line_end))
             if float(line.line_end) - ve > 1.5:
@@ -823,7 +881,8 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
             tiers = _parse_textgrid(grid)
             intervals = tiers.get("texts", [])
             char_times, matched = _map_tifa_line(
-                line.text, intervals, clip.start, (clip.start, clip.end), log)
+                line.text, intervals, clip.start, (clip.start, clip.end), log,
+                phones=tiers.get("phones", []))
             if not matched:
                 unmatched.append(i)
         if not matched or char_times is None:
