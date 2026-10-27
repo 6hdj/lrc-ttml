@@ -120,6 +120,12 @@
                                     <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="460" /></DataTemplate>
                                 </muxc:ToggleSwitch.HeaderTemplate>
                             </muxc:ToggleSwitch>
+                            <muxc:ToggleSwitch x:Name="TgLayered"
+                                               Header="分层歌词（允许主歌词/和声/附加句同时出现；不再压缩同一声部重叠）">
+                                <muxc:ToggleSwitch.HeaderTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="460" /></DataTemplate>
+                                </muxc:ToggleSwitch.HeaderTemplate>
+                            </muxc:ToggleSwitch>
                         </StackPanel>
                     </Grid>
                 </StackPanel>
