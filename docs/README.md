@@ -17,6 +17,7 @@
 | 文档 | 内容 |
 |---|---|
 | [TTML1-AMLL歌词格式规范.md](TTML1-AMLL歌词格式规范.md) | TTML1 + AMLL 规范逐条对照、常见错误 |
+| [AppleMusic-TTML-样例规范.md](AppleMusic-TTML-样例规范.md) | Apple Music 真实样例结构、MM:SS/无 xml:lang 的宽松写法、和声嵌套 |
 | [模块说明.md](模块说明.md) | 各 Python 模块职责与数据流 |
 
 ## 桌面 / 版本
