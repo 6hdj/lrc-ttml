@@ -739,11 +739,15 @@ class LyricMatcher:
             if new_a_end is not None:
                 a.end = min(a.end, new_a_end)
 
-    def _clamp_units_into_lines(self, lines: List[AlignedLine]):
-        """最后一道保险：任何字的时间都必须落在所属行的 begin/end 之内，且按文本顺序单调"""
+    def _clamp_units_into_lines(self, lines: List[AlignedLine], layered: bool = False):
+        """最后一道保险：任何字的时间都必须落在所属行的 begin/end 之内，且按文本顺序单调
+
+        ``layered=True`` 时 x-bg 允许超出主唱 `<p>`。
+        """
         for al in lines:
             al.begin, al.end = clamp_units_into_line(al.units, al.begin, al.end,
-                                                     self.min_unit_duration)
+                                                     self.min_unit_duration,
+                                                     layered=layered)
 
 
     # ------------------------------------------------------------ 单行精修
