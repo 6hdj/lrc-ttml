@@ -213,6 +213,18 @@ def _infer_write_options(root, body_el, doc: EditDoc, head_trans: Dict[str, str]
     has_itunes_meta = any(_local(e.tag) == "iTunesMetadata" for e in root.iter())
     opts["mode"] = "apple" if has_itunes_meta else "amll"
 
+    # Apple 内部最小导出：无 xml:lang / 无 itunes:timing / 单 div / p 没有 xml:id
+    divs = [e for e in root.iter() if _local(e.tag) == "div"]
+    ps = [e for e in root.iter() if _local(e.tag) == "p"]
+    xml_lang = root.get("{http://www.w3.org/XML/1998/namespace}lang")
+    timing = None
+    for ns in ("http://music.apple.com/lyric-ttml-internal",
+               "http://itunes.apple.com/lyric-ttml-extensions"):
+        timing = timing or root.get("{" + ns + "}timing")
+    if (xml_lang is None and timing is None and len(divs) <= 1
+            and all(not p.get("{http://www.w3.org/XML/1998/namespace}id") for p in ps)):
+        opts["mode"] = "apple-internal"
+
     # markers：看 <p> 上到底有没有 ttm:agent / ttm:role
     ps = [e for e in root.iter() if _local(e.tag) == "p"]
     has_agent = any(_get(p, "agent") for p in ps)
