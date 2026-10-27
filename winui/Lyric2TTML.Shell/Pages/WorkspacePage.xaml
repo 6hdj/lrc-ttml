@@ -127,8 +127,8 @@
                                     <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="460" /></DataTemplate>
                                 </muxc:ToggleSwitch.HeaderTemplate>
                             </muxc:ToggleSwitch>
-                            <muxc:ToggleSwitch x:Name="TgAsrSupplement" IsOn="True"
-                                               Header="自动补充缺失歌词（ASR：音频里有、原歌词没写的句子也显示）">
+                            <muxc:ToggleSwitch x:Name="TgAsrSupplement"
+                                               Header="自动补充缺失歌词（ASR：音频里有、原歌词没写的句子也显示；可能带入错字）">
                                 <muxc:ToggleSwitch.HeaderTemplate>
                                     <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="460" /></DataTemplate>
                                 </muxc:ToggleSwitch.HeaderTemplate>
