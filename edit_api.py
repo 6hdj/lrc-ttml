@@ -549,10 +549,12 @@ def validate(doc: EditDoc, policy: str = "auto", *, edit_path: Optional[str] = N
     tid = verdict.get("task_id") or ""
     filtered = _evidence_for_normalize(doc, evidence, verdict["allowed_indices"], tid)
     layered = bool((getattr(doc, "write_options", {}) or {}).get("layered"))
+    apple_internal = ((getattr(doc, "write_options", {}) or {}).get("mode") == "apple-internal")
+    layered = layered or apple_internal
     work = copy.deepcopy(doc)
     rep = normalize_timeline(work, policy=policy, overlap_evidence=filtered,
                              layered=layered, evidence_identity=tid or None)
-    res = check_ttml(_safe_ttml(work), strict=True, layered=layered,
+    res = check_ttml(_safe_ttml(work), strict=True, layered=layered, apple_internal=apple_internal,
                      allowed_overlaps=_allowed_overlaps_for_check(doc, verdict["allowed_indices"]))
     return {"normalize": _report_dict(rep), "check": _check_dict(res),
             "doc": work.to_dict(), "version": work.version, "stats": work.stats(),
@@ -583,10 +585,12 @@ def apply_doc(doc: EditDoc, edit_path: str, ttml_path: Optional[str] = None,
                                sidecar_adopted=(ev_reason == "adopted_from_sidecar"))
     filtered = _evidence_for_normalize(doc, evidence, verdict["allowed_indices"], tid)
     layered = bool((getattr(doc, "write_options", {}) or {}).get("layered"))
+    apple_internal = ((getattr(doc, "write_options", {}) or {}).get("mode") == "apple-internal")
+    layered = layered or apple_internal
     rep = normalize_timeline(doc, policy=policy, overlap_evidence=filtered,
                              layered=layered, evidence_identity=tid or None)
     ttml = _safe_ttml(doc)
-    res = check_ttml(ttml, strict=True, layered=layered,
+    res = check_ttml(ttml, strict=True, layered=layered, apple_internal=apple_internal,
                      allowed_overlaps=_allowed_overlaps_for_check(doc, verdict["allowed_indices"]))
     doc.version = int(getattr(doc, "version", 0) or 0) + 1
     ttml = _safe_ttml(doc)           # version 变化不影响正文，但保持同源
