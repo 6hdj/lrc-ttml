@@ -20,7 +20,7 @@
 ### Windows 便携版（推荐）
 
 **[`Lyric2TTML-winui-v1.2.1-portable.zip`](https://github.com/6hdj/lrc-ttml/releases/download/v1.2.1/Lyric2TTML-winui-v1.2.1-portable.zip)**
-（约 **321 MB**，WinUI 3 外壳 + Python 后端，解压即用，不含模型与 CUDA）
+（约 **326 MB**，WinUI 3 外壳 + Python 后端，解压即用，不含模型与 CUDA）
 
 1. 解压整个 zip，**保留 `winui\` 目录结构**（不要只拷 exe）；
 2. **右键 `winui\Lyric2TTML.exe` → 以管理员身份运行**；
