@@ -221,6 +221,7 @@ class TTMLWriter:
         inline_translation_lang: str = "",
         agent_types: Optional[Dict[str, str]] = None,
         label_sections: bool = True,
+        layered: bool = False,
     ):
         """
         ``mode``         ``amll``=AMLL DB 格式；``apple``=按段落分 div 的提交格式
@@ -233,6 +234,10 @@ class TTMLWriter:
         ``time_format``  ``clock``(HH:MM:SS.mmm，W3C 合法，默认) / ``mmss``(MM:SS.mmm，仅 AMLL)
                          / ``seconds``(SS.mmm，仅 AMLL)
         ``song_part``    固定写入 div 的 itunes:songPart（留空=按段落/重复自动判断）
+        ``layered``      **分层歌词**：允许同一 agent 的 `<p>` 时间重叠；`<p>` 的
+                         begin/end 只按主唱单元算，`x-bg` 可以伸到 `<p>` 外。
+                         这对应真实 Apple/AMLL 的“主歌词/和声/附加句同时出现”，
+                         默认关闭，严格 W3C 行为不变。
 
         关于 Apple 内部角色 ``x-duet-a/b``：``markers`` 要求时**挂在行的 `<p>` 上**，
         这是唯一安全的位置。**绝不要**写成包住主唱 span 的包装层 ——
@@ -265,6 +270,7 @@ class TTMLWriter:
         self.song_part = song_part
         # False = 不猜段落名（回写源文件本来没有 songPart 的情况，见 _split_sections）
         self.label_sections = label_sections
+        self.layered = bool(layered)
         self.inline_translation_lang = inline_translation_lang
         # agent id → type 的覆盖表（例如参考文件里 v2 是 type="other"）
         self.agent_types: Dict[str, str] = dict(agent_types or {})
@@ -311,7 +317,7 @@ class TTMLWriter:
         self._paragraphs = [getattr(l, "paragraph", 0) for l in lines]
 
         # 归一化每行的时间区间：保证 begin < end，且 span ⊆ p ⊆ div（TTML1 §10.4 / AMLL 规范 §6）
-        intervals = [self._line_interval(l) for l in lines]
+        intervals = [self._line_interval(l, self.layered) for l in lines]
         content_end = max(e for _, e in intervals)
         # 规范：单曲时专辑名应与歌曲名相同
         if not album and title:
@@ -528,10 +534,14 @@ class TTMLWriter:
 
     # -------------------------------------------------------------- 时间区间
     @staticmethod
-    def _line_interval(line: AlignedLine) -> Tuple[float, float]:
-        """一行的有效时间区间：由行内所有 span 推导，并保证 begin < end（TTML1 §10.4）。"""
-        starts = [float(u.start) for u in line.units if u.start is not None]
-        ends = [float(u.end) for u in line.units if u.end is not None]
+    def _line_interval(line: AlignedLine, main_only: bool = False) -> Tuple[float, float]:
+        """一行的有效时间区间：由行内所有 span 推导，并保证 begin < end（TTML1 §10.4）。
+
+        ``main_only``（分层歌词）：只按主唱层算 `<p>` 的区间，`x-bg` 可以伸到 p 外。
+        """
+        units = [u for u in line.units if not (main_only and u.is_bg)]
+        starts = [float(u.start) for u in units if u.start is not None]
+        ends = [float(u.end) for u in units if u.end is not None]
         begin = max(0.0, min(starts) if starts else float(line.begin or 0.0))
         end = max(ends) if ends else float(line.end or 0.0)
         if end <= begin:
@@ -552,7 +562,7 @@ class TTMLWriter:
                   begin: Optional[float] = None, end: Optional[float] = None) -> str:
         """一行歌词 → 单行内联 XML（span 之间不能有换行，否则空白会丢）"""
         if begin is None or end is None:
-            begin, end = self._line_interval(line)
+            begin, end = self._line_interval(line, self.layered)
         key = f"L{key_index}"
         attrs = [("begin", self.t(begin)), ("end", self.t(end))]
         if self.markers in ("agent", "both") and line.agent:
@@ -567,8 +577,15 @@ class TTMLWriter:
             attrs.append(("itunes:key", key))
         head = "<p " + " ".join(f"{k}={_attr(v)}" for k, v in attrs) + ">"
 
-        def span_xml(u: Unit, prefix: str = "", suffix: str = "") -> str:
-            s0, s1 = self._unit_interval(u, begin, end)
+        def span_xml(u: Unit, prefix: str = "", suffix: str = "",
+                     clamp: bool = True) -> str:
+            if clamp:
+                s0, s1 = self._unit_interval(u, begin, end)
+            else:
+                s0 = float(u.start) if u.start is not None else begin
+                s1 = float(u.end) if u.end is not None else end
+                if s1 <= s0:
+                    s1 = s0 + MIN_INTERVAL
             return self._span_inline(u, s0, s1, prefix=prefix, suffix=suffix)
 
         body: List[str] = []
@@ -584,6 +601,12 @@ class TTMLWriter:
             bounds: List[Tuple[float, float]] = []
             for i, u in enumerate(bg):
                 s0, s1 = self._unit_interval(u, begin, end)
+                if self.layered:
+                    # 分层歌词：和声允许伸到主唱 <p> 之外
+                    s0 = float(u.start) if u.start is not None else begin
+                    s1 = float(u.end) if u.end is not None else end
+                    if s1 <= s0:
+                        s1 = s0 + MIN_INTERVAL
                 bounds.append((s0, s1))
                 parts.append(self._span_inline(
                     u, s0, s1,
@@ -627,4 +650,5 @@ class TTMLWriter:
 
 def write_ttml(lines, **kwargs) -> str:
     mode = kwargs.pop("mode", "amll")
-    return TTMLWriter(mode=mode).write(lines, **kwargs)
+    layered = bool(kwargs.pop("layered", False))
+    return TTMLWriter(mode=mode, layered=layered).write(lines, **kwargs)
