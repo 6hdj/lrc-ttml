@@ -130,6 +130,28 @@ def test_vocal_end():
     ok("间奏静音裁剪", 0.95 <= end <= 1.1, f"end={end:.3f}")
 
 
+def test_fuzzy_mapping():
+    from timing_align import _map_tifa_line
+    times, matched = _map_tifa_line(
+        "abc", [(0.0, 1.0, "a"), (1.0, 2.0, "c")], 0.0, (0.0, 2.0), lambda m: None)
+    ok("TIFA 漏字模糊映射", matched and times is not None
+       and times[0] == (0.0, 1.0) and times[2] == (1.0, 2.0)
+       and times[1][0] == 1.0 and times[1][1] == 1.0 + 0.001,
+       f"{times}")
+
+
+def test_phone_split():
+    from timing_align import _map_tifa_line
+    times, matched = _map_tifa_line(
+        "かな", [(0.0, 1.0, "かな")], 0.0, (0.0, 1.0), lambda m: None,
+        phones=[(0.0, 0.2, "k"), (0.2, 0.5, "a"),
+                (0.5, 0.7, "n"), (0.7, 1.0, "a")])
+    ok("多字词按音素切分", matched and times is not None
+       and abs(times[0][0] - 0.0) < 1e-6 and abs(times[0][1] - 0.5) < 1e-6
+       and abs(times[1][0] - 0.5) < 1e-6 and abs(times[1][1] - 1.0) < 1e-6,
+       f"{times}")
+
+
 def test_auto_harmony():
     from asr import AsrWord
     from matcher import AlignedLine, AlignReport, Unit
@@ -190,6 +212,8 @@ def main():
     test_japanese_mapping()
     test_line_language()
     test_vocal_end()
+    test_phone_split()
+    test_fuzzy_mapping()
     test_auto_harmony()
     test_bg_merge()
     test_monotonic()
