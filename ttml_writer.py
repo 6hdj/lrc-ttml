@@ -339,11 +339,18 @@ class TTMLWriter:
         if not self.apple_internal:
             out.append('<?xml version="1.0" encoding="UTF-8"?>')
         if self.apple_internal:
+            # 真实 Apple Music 应用比 AMLL DB 的“最小样例”更严格：
+            # 没有 itunes:timing="Word" 时只按行显示（用户实测“没有逐字”），
+            # 没有 xml:lang/tts 时甚至可能整份不加载。这里保留 MM:SS/单 div/
+            # 匿名式 p，但补齐 Apple Music 需要的根属性。
             tt_attrs = [
                 ("xmlns", NS_TTML),
                 ("xmlns:ttm", NS_TTM),
+                ("xmlns:tts", NS_TTS),
                 ("xmlns:itunes", NS_ITUNES),
                 ("xmlns:amll", NS_AMLL),
+                ("xml:lang", language or "zh-Hans"),
+                ("itunes:timing", "Word"),
             ]
         else:
             tt_attrs = [
