@@ -130,6 +130,25 @@ def test_vocal_end():
     ok("间奏静音裁剪", 0.95 <= end <= 1.1, f"end={end:.3f}")
 
 
+def test_layered_lyrics():
+    from matcher import AlignedLine, Unit
+    from ttml_writer import TTMLWriter
+    from ttml_check import check_ttml
+    l1 = AlignedLine(text="主(和)", agent="v1", begin=0.0, end=3.5, units=[
+        Unit(core="主", start=0.0, end=2.0),
+        Unit(core="和", start=2.5, end=3.5, is_bg=True)])
+    l2 = AlignedLine(text="副", agent="v1", begin=1.5, end=2.8,
+                     units=[Unit(core="副", start=1.5, end=2.8)])
+    strict = TTMLWriter(mode="amll", line_id="itunes:key").write(
+        [l1, l2], title="t", artists=["a"], duration=4.0)
+    layered = TTMLWriter(mode="amll", line_id="itunes:key", layered=True).write(
+        [l1, l2], title="t", artists=["a"], duration=4.0)
+    ok("分层：严格模式仍报同行重叠",
+       bool(check_ttml(strict, strict=False).errors))
+    ok("分层：layered 模式允许同行重叠/和声出界",
+       not check_ttml(layered, strict=False, layered=True).errors)
+
+
 def test_fuzzy_mapping():
     from timing_align import _map_tifa_line
     times, matched = _map_tifa_line(
@@ -213,6 +232,7 @@ def main():
     test_line_language()
     test_vocal_end()
     test_phone_split()
+    test_layered_lyrics()
     test_fuzzy_mapping()
     test_auto_harmony()
     test_bg_merge()
