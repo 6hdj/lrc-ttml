@@ -193,15 +193,49 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
    - 另一处 `x-bg begin="00:00.000" end="00:00.000"`；
    - 这些是**数据错误/占位**，不要当作规则；我们的生成器会拒绝零时长 span，不应模仿。
 
+## 6. 七份样例汇总：主导格式其实很明确
+
+把 7 份真实文件放在一起看，**6 份是同一个“最小 Apple 内部导出”**：
+
+| 项 | 6 份主导格式 | 第 2 份（完整导出） |
+|---|---|---|
+| 根 | 只有 `ttml/ttm/itunes/amll`；无 `xml:lang`/`itunes:timing`/`tts` | 严格根属性 |
+| 时间 | 统一 `MM:SS.mmm` | 混合 `SS` / `M:SS` / `body` |
+| div | **整首 1 个**（可能有 `xmlns=""`） | 6 个 + `itunes:songPart` |
+| p | `begin end ttm:agent itunes:key`，无 `xml:id` | 同左，另有不同属性顺序 |
+| agent | 自闭合、无 `ttm:name`；常见 v1 person / v2 other | 仅 v1 person |
+| 文本 | 中文逐字 span；英文按词；空格位置不固定 | 英文按音节，空格在 span 外 |
+| 翻译 | 多数没有；有的用行内 `x-translation` | 头部 `iTunesMetadata` 4 语言 |
+| 和声 | 可选 `x-bg`；可含行内翻译 | 无 |
+
+### 样本集里出现的差异/异常
+
+- **空格位置不固定**：同一个文件里既有 `<span>幕 </span>`（空格在 span 内），也有
+  `<span>Keep</span> <span>waving</span>`（空格在 span 外）。解析器按拼接文本处理，
+  两种都能工作；关键是不能丢空格。
+- **p 可以是纯文本**：有些短句 `Ha` / `Yeah` 直接写
+  `<p …>Ha</p>`，没有 `<span>`。这说明 Apple/AMLL 接受“没有逐字时间”的行，
+  但我们自己的生成器仍优先输出逐字 span；不要把纯文本 p 当作标准写法。
+- **异常占位**：零时长 `p`、零时长 `x-bg`、`p begin=end` 等是数据错误；
+  `begin < end` 仍是硬规则。
+- **翻译嵌套**：`x-translation` 可以出现在 `p` 末尾，也可以出现在 `x-bg` 内
+  （翻译和声）；头部翻译和行内翻译两种方式都出现过。
+- **元数据自由度高**：`musicName/artists/album` 可以重复多语言；
+  平台 ID 可多值；`作词/作曲/制作人/…` 这类中文 key 也出现过。
+
+> 如果要把本项目的输出做成“与多数真实文件一致”，优先目标应是：
+> **最小根属性 + MM:SS + 单 div + p 仅 itunes:key/agent + span 逐字/词 + 可选 x-bg**；
+> 头部翻译、songPart、多 div 属于完整导出变体，不是必需。
+
 ### 结论：没有一份“唯一正确”的 Apple 文件
 
-- 第一、第三份是**最小 Apple 内部导出**：无 xml:lang/tts、MM:SS、单 div、匿名 agent；
+- 多数样例是**最小 Apple 内部导出**：无 xml:lang/tts、MM:SS、单 div、匿名 agent；
 - 第二份是**完整 AMLL/Apple 导出**：严格根属性、混合自由时间、多 div/songPart、多语翻译；
 - 翻译既可以在 head 的 `iTunesMetadata`，也可以在行内 `x-translation`（甚至 x-bg 内）；
-- 三份共同的不变量才是硬规则：`tt > head/metadata + body`、`p` 有 `itunes:key` 和
-  `ttm:agent`、`span ⊆ p ⊆ div ⊆ body@dur`、key 连续、文本/空格一致、翻译标签对齐。
+- 七份共同的不变量才是硬规则：`tt > head/metadata + body`、`p` 有 `itunes:key` 和
+  `ttm:agent`、`span ⊆ p ⊆ div ⊆ body@dur`、`begin < end`、key 连续、文本/空格一致、翻译标签对齐。
 
-## 6. 提交前检查清单
+## 7. 提交前检查清单
 
 - [ ] `<p>` 都有 `itunes:key`（L1 连续），都有 `ttm:agent`，head 定义了该 agent
 - [ ] 每行文本与 span 文本完全一致（空格也要保留）
