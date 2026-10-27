@@ -545,7 +545,8 @@ def _build_line(text: str, agent: str, role: str, paragraph: int,
 
 
 def _enforce_agent_monotonic(lines: List[AlignedLine], notes: List[str],
-                             log: Callable[[str], None]) -> int:
+                             log: Callable[[str], None],
+                             layered: bool = False) -> int:
     """同一 agent 相邻行不重叠（TTML 铁律 4）。
 
     TIFA 逐字边界是准的，**不能像 Whisper 那样整行按比例缩放**（那会把
@@ -561,6 +562,11 @@ def _enforce_agent_monotonic(lines: List[AlignedLine], notes: List[str],
         if prev is not None and prev[1] > line.begin:
             j, _prev_end = prev
             a, b = lines[j], line
+            if layered and (any(getattr(u, "is_bg", False) for u in (a.units or []))
+                            or any(getattr(u, "is_bg", False) for u in (b.units or []))):
+                # 含和声的分层行：允许主唱 p 与相邻行重叠
+                last[ag] = (i, line.end)
+                continue
             limit = float(b.begin)
             units = [u for u in a.units if u.start is not None]
             first = None
@@ -656,6 +662,32 @@ def _vocal_end(samples, sr: int, start: float, end: float) -> float:
     active = np.flatnonzero(rms > thr)
     if not len(active):
         return end
+
+    # 把 active 帧合并成连续人声段。LRC 的下一行常紧贴在本行 line_end 上，
+    # 直接取"最后一个 active 帧"会把下一行的开口也算进来 —— 真踩过：
+    # 「也始终没离开」line_end=197.5，下一行 197.3 开口，结果本行拖到 197.4。
+    # 对非末行，取**第一个持续 >=0.35s 的人声段**的结束；末行保留最后一段。
+    runs = []
+    st = int(active[0])
+    prev = int(active[0])
+    for x in active[1:]:
+        x = int(x)
+        if x - prev > 1:                       # 断开（20ms 帧，>20ms 即新段）
+            runs.append((st, prev))
+            st = x
+        prev = x
+    runs.append((st, prev))
+    merged = []
+    for s0, e0 in runs:
+        if merged and (s0 - merged[-1][1]) * frame / sr <= 0.40:
+            merged[-1] = (merged[-1][0], e0)
+        else:
+            merged.append((s0, e0))
+    is_last = end >= (len(samples) / float(sr)) - 0.10
+    if not is_last:
+        for s0, e0 in merged:
+            if (e0 - s0 + 1) * frame / sr >= 0.35:
+                return min(end, (a + (e0 + 1) * frame) / sr)
     voice_end = (a + (int(active[-1]) + 1) * frame) / sr
     return min(end, voice_end)
 
@@ -901,8 +933,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
     report = AlignReport(lines=report_lines, total_units=total,
                          matched_units=matched_units, anchored=True,
                          warnings=[])
-    if not layered:
-        _enforce_agent_monotonic(report.lines, notes, log)
+    _enforce_agent_monotonic(report.lines, notes, log, layered=layered)
 
     if bg_report is not None:
         _merge_background_timings(report, bg_report, notes, log)
