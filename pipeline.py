@@ -239,8 +239,8 @@ class ConvertOptions:
     # 分层歌词：允许同 agent 的 <p> 时间重叠；p 只包主唱，x-bg 可伸到 p 外。
     # 对应真实 Apple/AMLL 的“主歌词/和声/附加句同时出现”，默认关闭。
     layered_lyrics: bool = False
-    # 用 ASR 把“音频里有、原歌词没写”的句子补成新行（默认开）
-    asr_supplement: bool = True
+    # 用 ASR 把“音频里有、原歌词没写”的句子补成新行（默认关，避免 ASR 错字污染）
+    asr_supplement: bool = False
     extend_tails: bool = True       # 句尾拖音补全（用分离后人声轨的能量接回被切掉的尾音）
     demucs_model: str = "htdemucs"  # htdemucs / htdemucs_ft / htdemucs_6s / mdx_extra
     # ⚠️ Worker 分离的超时**不做成 ConvertOptions 字段**（2026-10-15）：
@@ -350,6 +350,19 @@ class LyricToTTML:
         snapshot.init()   # 只读诊断开关：未设 L2T_SNAPSHOT_DIR 时立即返回 False，零行为差异
         notes: List[str] = []
         artists = list(artists or [])
+        # Apple Music 内部导出：metadata 缺失会直接导致 Apple Music 不显示歌词。
+        # WinUI 没有歌名/艺人输入框，这里从文件名兜底（用户后续可在编辑台改）。
+        if self.opt.mode == "apple-internal" and (not song_title or not artists):
+            try:
+                from desktop.fileguess import split_title_artists
+                guess_title, guess_artists = split_title_artists(audio_path)
+                song_title = song_title or guess_title
+                artists = artists or guess_artists
+            except Exception:
+                if not song_title:
+                    song_title = os.path.splitext(os.path.basename(audio_path))[0]
+        if self.opt.mode == "apple-internal" and not album:
+            album = song_title
 
         if not audio_path or not os.path.exists(audio_path):
             raise FileNotFoundError(f"找不到音频文件: {audio_path}")
@@ -480,6 +493,7 @@ class LyricToTTML:
                     language=self.opt.language,
                     crop_vocals=bool(sep_path),
                     layered=self.opt.layered_lyrics,
+                    asr_supplement=self.opt.asr_supplement,
                     bg_report=hybrid_bg,
                     asr_words=auto_asr_words,
                     postprocess=_tifa_post,
@@ -806,13 +820,26 @@ class LyricToTTML:
             if prev is not None and prev[1] > line.begin and not edge_ok:
                 j, prev_end = prev
                 a, b = lines[j], line
+                if getattr(b, "asr_added", False) or getattr(a, "asr_added", False):
+                    last_of[ag] = (i, line.end)
+                    continue
                 if layered and (any(getattr(u, "is_bg", False) for u in (a.units or []))
                                 or any(getattr(u, "is_bg", False) for u in (b.units or []))):
                     last_of[ag] = (i, line.end)
                     continue
                 limit = float(b.begin)
                 span_old, span_new = a.end - a.begin, limit - a.begin
+                if layered and span_new < max(0.12, 0.045 * max(1, len(a.units or []))):
+                    last_of[ag] = (i, line.end)
+                    continue
                 if span_old > 0 and span_new > 0:
+                    scale = span_new / span_old
+                    if layered:
+                        min_tail = min(max(1e-6, (u.end or u.start) - (u.start or 0))
+                                       for u in (a.units or []))
+                        if scale * min_tail < 0.030 or span_new < 0.075 * len(a.units or []):
+                            last_of[ag] = (i, line.end)
+                            continue
                     # **整行按比例缩放**到 [begin, limit]。
                     # ⚠️ 不能逐字 `end = min(end, limit)`：多个越界的字会全落到同一个
                     # limit，而它们的 start 还保持原顺序 → 立刻"字时间重叠"（真踩过：
