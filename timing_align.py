@@ -785,6 +785,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 song_part: str = "", keep_credits: bool = False,
                 language: str = "zh",
                 crop_vocals: bool = False,
+                layered: bool = False,
                 bg_report: Optional[AlignReport] = None,
                 asr_words=None,
                 postprocess: Optional[Callable[[AlignReport], None]] = None,
@@ -897,7 +898,8 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
     report = AlignReport(lines=report_lines, total_units=total,
                          matched_units=matched_units, anchored=True,
                          warnings=[])
-    _enforce_agent_monotonic(report.lines, notes, log)
+    if not layered:
+        _enforce_agent_monotonic(report.lines, notes, log)
 
     if bg_report is not None:
         _merge_background_timings(report, bg_report, notes, log)
@@ -916,14 +918,15 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
     writer = TTMLWriter(mode=mode, markers=markers, line_id=line_id,
                         translation_style=translation_style,
                         time_format=time_format, song_part=song_part,
-                        inline_translation_lang=translation_lang or "zh-Hans")
+                        inline_translation_lang=translation_lang or "zh-Hans",
+                        layered=layered)
     ttml = writer.write(
         report.lines, title=title, artists=list(artists or []), album=album,
         language="zh-Hans", platform_ids=platform_ids or {}, author=author,
         author_id=author_id, duration=duration,
         translation_lang=translation_lang or "zh-Hans",
         songwriters=list(songwriters or []))
-    check = check_ttml(ttml, strict=(time_format == "clock"))
+    check = check_ttml(ttml, strict=(time_format == "clock"), layered=layered)
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         Path(output_path).write_text(ttml, encoding="utf-8", newline="\n")
