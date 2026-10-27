@@ -1,6 +1,6 @@
 # Apple Music 歌词 TTML 示例格式（对照分析）
 
-> 本文依据一份真实的 Apple Music / AMLL TTML DB 歌词文件整理，用于区分
+> 本文依据两份真实的 Apple Music / AMLL TTML DB 歌词文件整理，用于区分
 > **Apple Music 内部导出格式**、**AMLL TTML DB 格式** 与 **W3C TTML1 严格格式**。
 > 本项目自身的默认输出仍以 W3C TTML1 + AMLL 规范为准；本文是“样例事实”，
 > 不是 W3C 规范原文。
@@ -119,7 +119,61 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
 > Apple 内部样例，应新增一个独立的 `apple-internal` 输出 profile，而不是改默认
 > `amll`/`apple` 行为（否则会破坏现有严格校验与 AMLL DB 约定）。
 
-## 5. 提交前检查清单
+## 5. 第二份样例：完整 AMLL / Apple 导出
+
+第二份样例（英文歌 + 多语翻译 + 段落）与第一份**不是同一种风格**：
+
+| 项 | 第一份（中文单曲） | 第二份（英文歌 + 翻译） |
+|---|---|---|
+| 根属性 | 无 `xml:lang` / 无 `itunes:timing` / 无 `tts` | `xml:lang="en"`、`itunes:timing="Word"`、有 `tts` |
+| `body dur` | `04:28.790` | `2:53.540` |
+| div | **1 个整首** | **6 个**，带 `itunes:songPart="Verse/Chorus/FalseChorus/FinalChorus"` |
+| 时间写法 | 全部 `MM:SS.mmm` | **混合**：`32.130`（<1min 裸秒）、`1:04.600`（≥1min 用 `M:SS.mmm`） |
+| p 属性顺序 | `begin end ttm:agent itunes:key` | `begin end itunes:key ttm:agent` |
+| agent | v1 person + v2 other，自闭合 | 只有 v1 person，自闭合 |
+| 英文 span | —（中文） | 按**音节/片段**切：`Cor`+`rupt`、`bi`+`na`+`ry`；**空格在 span 外** |
+| 元数据 | 双语 musicName/album + 平台 ID | 更多重复的 musicName/album/平台 ID + 中文 credit key（作词/作曲/制作人/录音/混音…） |
+| 翻译 | 无 | `iTunesMetadata/translations`：ja / ko / zh-Hant / zh-Hans |
+| 和声 | 5 段 x-bg | 无 |
+| 对唱 | v1/v2 | 无（全 v1） |
+
+### 从第二份样例补充的规则
+
+1. **Apple/AMLL 不是只有一种时间格式**：
+   - 同一文件里 `<1min` 可以写裸秒 `32.130`；
+   - `≥1min` 写 `1:04.600`；
+   - 另一份样例统一写 `00:04.250` / `04:28.790`；
+   - 说明 Apple/AMLL 解析器接受 **`SS.mmm` / `M:SS.mmm` / `MM:SS.mmm` / `HH:MM:SS.mmm`** 这类宽松写法；
+   - 但 W3C TTML1 只认 `HH:MM:SS.mmm` / offset-time。
+
+2. **英文 span 可以比“单词”更细**：
+   - 样例把 `Corrupt` 拆成 `Cor` + `rupt`，`binary` 拆成 `bi`+`na`+`ry`；
+   - **空格是 span 之间的普通文本**，不在 span 内（中文没有空格，所以第一份看不到）；
+   - `AMLL` 解析器按文本拼接后仍然是正常单词；逐字时间轴因此可以精确到音节；
+   - 本项目当前英文按“词”一个 span；要完全贴近样例，需要用 TIFA `phones`/音节边界再细分。
+
+3. **div 的段落是可选信息**：
+   - 第二份用 6 个 div + `itunes:songPart`；
+   - 第一份整首 1 个 div、无 songPart；
+   - 两种都能被解析；段落划分不是硬性要求，但 `songPart` 有助于 Apple 的段落展示。
+
+4. **中文 credit 可以写进 `amll:meta`**：
+   - 第二份有 `作词` / `作曲` / `制作人` / `录音` / `母带处理` / `混音` / `演唱` / `编曲` 等 key；
+   - 这些是 AMLL DB 的扩展元数据，不是 TTML1 元素；写不写不影响播放，但提交 AMLL DB 时应保留。
+
+5. **翻译是整首一组**：
+   - `<iTunesMetadata><translations><translation type="subtitle" xml:lang="ja"><text for="L1">…</text>...`
+   - `for` 必须对应 `<p>` 的 `itunes:key`；第二份示例有 4 种语言。
+   - `<transliterations/>` 可以为空；`<songwriters>` 单独列。
+
+### 结论：没有一份“唯一正确”的 Apple 文件
+
+- 第一份是**最小 Apple 内部导出**：无 xml:lang/tts、MM:SS、单 div、匿名 agent；
+- 第二份是**完整 AMLL/Apple 导出**：严格根属性、混合自由时间、多 div/songPart、多语翻译；
+- 两者共同的不变量才是硬规则：`tt > head/metadata + body`、`p` 有 `itunes:key` 和
+  `ttm:agent`、`span ⊆ p ⊆ div ⊆ body@dur`、key 连续、文本/空格一致、翻译 `for` 对齐。
+
+## 6. 提交前检查清单
 
 - [ ] `<p>` 都有 `itunes:key`（L1 连续），都有 `ttm:agent`，head 定义了该 agent
 - [ ] 每行文本与 span 文本完全一致（空格也要保留）
