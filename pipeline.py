@@ -239,6 +239,8 @@ class ConvertOptions:
     # 分层歌词：允许同 agent 的 <p> 时间重叠；p 只包主唱，x-bg 可伸到 p 外。
     # 对应真实 Apple/AMLL 的“主歌词/和声/附加句同时出现”，默认关闭。
     layered_lyrics: bool = False
+    # 用 ASR 把“音频里有、原歌词没写”的句子补成新行（默认开）
+    asr_supplement: bool = True
     extend_tails: bool = True       # 句尾拖音补全（用分离后人声轨的能量接回被切掉的尾音）
     demucs_model: str = "htdemucs"  # htdemucs / htdemucs_ft / htdemucs_6s / mdx_extra
     # ⚠️ Worker 分离的超时**不做成 ConvertOptions 字段**（2026-10-15）：
@@ -585,6 +587,16 @@ class LyricToTTML:
             self._split_singers(lines, report, diar_audio, notes, artists, forced_n)
         else:
             self._use_lyric_markers(lines, report, notes, artists)
+
+        # 5.55 ASR 补词：音频里有、原歌词没写的句子 -----------------------
+        if self.opt.asr_supplement and words:
+            from asr_supplement import supplement_report
+            n = supplement_report(report, words, log=self.log)
+            if n:
+                notes.append(f"ASR 补充 {n} 行原歌词没有的句子")
+                snapshot.dump_lines("asr_supplement", report.lines, source="pipeline.py",
+                                    function="asr_supplement.supplement_report",
+                                    note="ASR 补词之后")
 
         # 5.6 消音词检测（Apple：被屏蔽的词用星号替换）----------------------
         if self.opt.detect_muted:
