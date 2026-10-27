@@ -1009,7 +1009,7 @@ function findWordsAt(t) {
   const out = [];
   for (let i = last; i >= 0; i--) {
     if (wordMaxEnd[i] <= t) break;         // 前面不可能还有在唱的字
-    if (wordIndex[i].e > t) out.push(wordIndex[i]);
+    if (wordIndex[i].hold > t) out.push(wordIndex[i]);
   }
   return out;
 }
@@ -1156,21 +1156,31 @@ function indexWords() {
     // 超过中位字长的部分就是拖音段（见 wordPhase）。
     const durs = ws.map(w => w.end - w.begin).sort((a, b) => a - b);
     const med = durs.length ? durs[durs.length >> 1] : 0.35;
+    // 每个字唱完后，高亮保持到**下一个字开始**（同一行/同一层）；
+    // 最后一个字保持到本行 end。否则字与字之间的空隙会让字提前灭掉。
+    const holds = new Map();
+    for (const isBg of [false, true]) {
+      const layer = ws.filter(w => !!w.is_bg === isBg).sort((a, b) => a.begin - b.begin);
+      layer.forEach((w, i) => {
+        const next = layer[i + 1];
+        holds.set(w, Math.max(w.end, next ? next.begin : line.end));
+      });
+    }
     ws.forEach(w => {
       const wi = (line.words || []).indexOf(w);
       // ⚠️ 必须把 text / matched / prob / is_bg 一起带进来：播放器读数要用它们，
       // 之前只存了时间，读数显示成「当前：undefined」（也是运行时测试抓到的）。
-      wordIndex.push({ b: w.begin, e: w.end, li, wi,
+      wordIndex.push({ b: w.begin, e: w.end, hold: holds.get(w) || w.end, li, wi,
                        text: w.text, matched: w.matched, prob: w.prob,
                        is_bg: w.is_bg, med,
                        lineBegin: line.begin, lineEnd: line.end });
     });
   });
   wordIndex.sort((x, y) => x.b - y.b);
-  // 后缀最大 end —— findWordsAt 靠它安全早退（end 本身不是有序的）
+  // 后缀最大 hold —— findWordsAt 靠它安全早退（end 本身不是有序的）
   wordMaxEnd = new Array(wordIndex.length).fill(-Infinity);
   for (let i = wordIndex.length - 1; i >= 0; i--) {
-    wordMaxEnd[i] = Math.max(wordIndex[i].e,
+    wordMaxEnd[i] = Math.max(wordIndex[i].hold,
                              i + 1 < wordIndex.length ? wordMaxEnd[i + 1] : -Infinity);
   }
 }
