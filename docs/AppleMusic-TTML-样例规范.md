@@ -112,7 +112,8 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
 - `body dur`、`div/p/span` 时间统一 `MM:SS.mmm`；
 - 整首一个 `<div xmlns="" begin end>`；
 - `<p>` 只写 `begin/end/ttm:agent/itunes:key`（不写 `xml:id`）；
-- agent 匿名自闭合，v2 默认 `type="other"`；
+- agent 仍保留 person/name（强制双声部时 Apple Music 才会显示左右分栏）；
+- `x-bg` **默认仍包在主唱 `<p>` 内**（Apple Music 显示和声层需要）；样例里“x-bg 伸到 p 外”的特例不默认复刻；
 - 元数据保留 `musicName/artists/album` 与平台 ID/ISRC/作者 GitHub。
 
 > 默认 `amll` / `apple` 行为不变；`apple-internal` 是独立 profile。
@@ -326,8 +327,9 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
 
 默认模式仍是严格 W3C；显式打开 **`--layered-lyrics`**（CLI / Web / WinUI）后：
 
-- 允许同一个 `<p>` 与前后 `<p>` 在时间上重叠（编辑台并行高亮支持多行同时亮）；
-- `<p>` 的 begin/end 只按**主唱单元**计算，`x-bg` 可以超出主唱 `<p>`；
+- 允许同一个 `<p>` 与前后 `<p>` 在时间上重叠，但**只对含 `x-bg` 的分层行放宽**；
+  纯主唱行的意外尾音重叠仍会压掉（否则 TIFA 的尾字越界会让每句都叠唱）；
+- `x-bg` 默认仍包在主唱 `<p>` 内；样例里“x-bg 伸出 p”属于特例，不默认复刻；
 - `pipeline` 不再执行 `_enforce_agent_monotonic` 的同 agent 压缩；
 - `ttml_check(..., layered=True)` 允许同 agent 行重叠、`x-bg` 出界；
 - `ttml_reader` 会从“行重叠 / x-bg 出界”自动推断`layered`，`doc_to_ttml` 回写时保留；
