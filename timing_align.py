@@ -535,6 +535,17 @@ def _build_line(text: str, agent: str, role: str, paragraph: int,
         cursor = pos + len(seg)
         u.matched = matched
         u.prob = 1.0 if matched else 0.0
+    # TIFA 偶尔把连续几个字压到 1~20ms（尤其 LRC 行距很短的对话/对唱段）。
+    # 给非标点字一个最小可见时长，避免播放器里最后几个字一闪而过。
+    prev = None
+    for u in units:
+        if u.is_bg or not (u.core or "").strip():
+            continue
+        if prev is not None and u.start < prev.end:
+            u.start = prev.end
+        if u.end < u.start + 0.08:
+            u.end = u.start + 0.08
+        prev = u
     begin = min((u.start for u in units), default=anchors[0])
     end = max((u.end for u in units), default=anchors[1])
     if end <= begin:
@@ -562,6 +573,15 @@ def _enforce_agent_monotonic(lines: List[AlignedLine], notes: List[str],
         if prev is not None and prev[1] > line.begin:
             j, _prev_end = prev
             a, b = lines[j], line
+            if getattr(b, "asr_added", False) or getattr(a, "asr_added", False):
+                # ASR 补出的行不能反过来压缩原歌词尾音
+                last[ag] = (i, line.end)
+                continue
+            if getattr(a, "short_window", False) or getattr(b, "short_window", False):
+                # LRC 锚点本身短于歌词字数所需（对唱/对话密集段），
+                # 不强行压成 1ms，保留 TIFA 的真实字长。
+                last[ag] = (i, line.end)
+                continue
             if layered and (any(getattr(u, "is_bg", False) for u in (a.units or []))
                             or any(getattr(u, "is_bg", False) for u in (b.units or []))):
                 # 含和声的分层行：允许主唱 p 与相邻行重叠
@@ -584,8 +604,22 @@ def _enforce_agent_monotonic(lines: List[AlignedLine], notes: List[str],
                 old_start = tail[0].start
                 old_end = tail[-1].end
                 new_span = limit - old_start
+                # 需要压的尾巴太长时，压缩会把最后几个字压成几毫秒
+                # （用户实测“最后三个字很快结束”）。分层模式下宁可保留
+                # 与下一行的重叠，也不把字压没。
+                if layered and new_span < max(0.12, 0.045 * len(tail)):
+                    last[ag] = (i, line.end)
+                    continue
                 if old_end > old_start and new_span > 0:
                     scale = new_span / (old_end - old_start)
+                    min_tail = min(max(1e-6, (u.end or u.start) - (u.start or 0))
+                                   for u in tail)
+                    # 压缩后任何一个尾字小于 30ms ⇒ 字会被压没；
+                    # 分层模式下保留重叠，不压。
+                    if layered and (scale * min_tail < 0.030
+                                    or new_span < 0.075 * len(tail)):
+                        last[ag] = (i, line.end)
+                        continue
                     for u in tail:
                         u.start = old_start + (u.start - old_start) * scale
                         u.end = old_start + (u.end - old_start) * scale
@@ -818,6 +852,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 language: str = "zh",
                 crop_vocals: bool = False,
                 layered: bool = False,
+                asr_supplement: bool = False,
                 bg_report: Optional[AlignReport] = None,
                 asr_words=None,
                 postprocess: Optional[Callable[[AlignReport], None]] = None,
@@ -884,12 +919,23 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
     ctx_after = max(0.0, min(1.0, float(os.environ.get("L2T_TIFA_CTX_AFTER", "0.2"))))
     for i, line in enumerate(lines):
         start = max(0.0, float(line.line_start) - ctx_before)
-        end = min(duration, float(line.line_end) + ctx_after)
+        # LRC 里对唱/对话常常只差 0.3s，按“下一行开始”硬切会把 10 个字
+        # 压进 0.5s（用户实测每句最后几个字一闪而过）。按字数估一个
+        # 最短窗口；真正是否叠唱交给 layered/agent 处理。
+        speech_len = len(re.sub(r"[\s\.,，。!?！？、;；:：'\"“”‘’()（）\[\]【】\-—…♪♫]+",
+                                "", line.text or ""))
+        need_end = float(line.line_start) + max(1.0, min(8.0, speech_len * 0.30))
+        line_end = max(float(line.line_end), need_end)
+        if line_end > float(line.line_end) + 0.05:
+            log(f"      [短窗口扩展] 第 {i + 1} 行 {speech_len} 字，"
+                f"按下一行锚点只有 {float(line.line_end) - float(line.line_start):.2f}s，"
+                f"扩到 {line_end - float(line.line_start):.2f}s")
+        end = min(duration, line_end + ctx_after)
         if crop_vocals:
-            ve = _vocal_end(audio, sr, float(line.line_start), float(line.line_end))
-            if float(line.line_end) - ve > 1.5:
+            ve = _vocal_end(audio, sr, float(line.line_start), min(duration, line_end))
+            if min(duration, line_end) - ve > 1.5:
                 cropped = min(end, ve + 0.4)
-                log(f"      [间奏裁剪] 第 {i + 1} 行尾静音 {float(line.line_end) - ve:.1f}s，"
+                log(f"      [间奏裁剪] 第 {i + 1} 行尾静音 {min(duration, line_end) - ve:.1f}s，"
                     f"clip 收到 {cropped:.2f}s（避免尾字拖过间奏）")
                 end = cropped
         if end - start < 0.2:
@@ -924,17 +970,24 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
         if not matched or char_times is None:
             char_times = _fallback_times(line.text, float(line.line_start), float(line.line_end))
             notes.append(f"第 {i + 1} 行 TIFA 映射失败，保留 LRC 整句时间作占位（需人工补轴）")
-        report_lines.append(_build_line(
+        al = _build_line(
             line.text, line.agent, line.role, line.paragraph, char_times,
-            matched, (float(line.line_start), float(line.line_end))))
+            matched, (float(line.line_start), float(line.line_end)))
+        speech_len = len(re.sub(r"[\s\.,，。!?！？、;；:：'\"“”‘’()（）\[\]【】\-—…♪♫]+",
+                                "", line.text or ""))
+        if (float(line.line_end) - float(line.line_start)
+                < max(1.0, min(8.0, speech_len * 0.30)) * 0.75):
+            al.short_window = True
+        report_lines.append(al)
 
     total = sum(l.total for l in report_lines)
     matched_units = sum(l.matched for l in report_lines)
     report = AlignReport(lines=report_lines, total_units=total,
                          matched_units=matched_units, anchored=True,
                          warnings=[])
-    _enforce_agent_monotonic(report.lines, notes, log, layered=layered)
-
+    # 先合并和声/自动和声/声纹，再按最终 agent 压同歌手重叠。
+    # ⚠️ 不能在声纹之前压：TIFA 初始所有行都是 v1，会把双人交替的行
+    # 全当同一人压缩 → 每句最后几个字被压得很短（用户实测）。
     if bg_report is not None:
         _merge_background_timings(report, bg_report, notes, log)
     _add_auto_harmony(report, asr_words, notes, log)
@@ -948,13 +1001,15 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
             notes.append(f"TIFA 后处理失败（{type(e).__name__}: {e}），保留原声部")
             log(f"      TIFA 后处理失败：{e}")
 
+    _enforce_agent_monotonic(report.lines, notes, log, layered=layered)
+
     log("      写 TTML + 自检…")
     writer = TTMLWriter(mode=mode, markers=markers, line_id=line_id,
                         translation_style=translation_style,
                         time_format=time_format, song_part=song_part,
                         inline_translation_lang=translation_lang or "zh-Hans",
                         layered=layered)
-    if asr_words:
+    if asr_supplement and asr_words:
         try:
             from asr_supplement import supplement_report
             n = supplement_report(report, asr_words, log=log)
