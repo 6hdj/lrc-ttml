@@ -69,7 +69,7 @@ python main.py --help
 | 🎼 **背景人声 / 对唱** | `（和声）` → `x-bg`；`[v1]/[v2]` → `ttm:agent` |
 | 🧩 **分层歌词** | `--layered-lyrics`：允许主歌词/和声/附加句同时出现，同 agent 的 `<p>` 可重叠；`x-bg` 默认仍包在 `p` 内 |
 | 🍎 **Apple 内部导出** | `--mode apple-internal`：按真实 Apple/AMLL 样例输出（无 xml:lang/tts、MM:SS、单 div、仅 itunes:key、默认分层） |
-| 🤖 **自动补充缺失歌词** | 默认开启 `--asr-supplement`：原歌词没写、但音频里识别到的句子补成新行，并继承邻近声部；关闭用 `--no-asr-supplement` |
+| 🤖 **自动补充缺失歌词** | 可选 `--asr-supplement`：原歌词没写、但音频里识别到的句子补成新行，并继承邻近声部；默认关闭，避免 ASR 错字污染 |
 | 🌐 **翻译 / 音译** | Apple Music `<iTunesMetadata>` 或行内 `x-translation` |
 | ✅ **确定性自检** | AMLL 规范校验 + 真 AMLL 解析器验收（开发环境） |
 | 🪟 **WinUI 3 桌面** | 工作台 / 编辑台 / 任务 / 模型 / 运行库 / 设置 / 诊断，深浅色主题 |
