@@ -235,7 +235,10 @@ class ConvertOptions:
     verify_amll: bool = True        # 生成后用真 AMLL 解析器验一遍"播放器里能不能显示"
     diarize_on: str = "mix"         # 声纹用哪条音轨：mix=原始混音（默认，实测准得多）/ vocals=分离轨
     separate_vocals: bool = False
-    allow_same_agent_overlap: bool = False   # 实验：允许有证据的同歌手跨行重叠（默认关闭）   # 先用 Demucs 分离人声，再用干净人声轨识别/提声纹
+    allow_same_agent_overlap: bool = False   # 实验：允许有证据的同歌手跨行重叠（默认关闭）
+    # 分层歌词：允许同 agent 的 <p> 时间重叠；p 只包主唱，x-bg 可伸到 p 外。
+    # 对应真实 Apple/AMLL 的“主歌词/和声/附加句同时出现”，默认关闭。
+    layered_lyrics: bool = False
     extend_tails: bool = True       # 句尾拖音补全（用分离后人声轨的能量接回被切掉的尾音）
     demucs_model: str = "htdemucs"  # htdemucs / htdemucs_ft / htdemucs_6s / mdx_extra
     # ⚠️ Worker 分离的超时**不做成 ConvertOptions 字段**（2026-10-15）：
@@ -474,6 +477,7 @@ class LyricToTTML:
                     keep_credits=not self.opt.skip_credits,
                     language=self.opt.language,
                     crop_vocals=bool(sep_path),
+                    layered=self.opt.layered_lyrics,
                     bg_report=hybrid_bg,
                     asr_words=auto_asr_words,
                     postprocess=_tifa_post,
@@ -630,9 +634,11 @@ class LyricToTTML:
         # 5.8 同歌手行不许重叠（铁律 4）--------------------------------------
         # 放在尾音补全**之后**：补全本身已按"同歌手不越过下一行"设了上限，
         # 但对齐原本就可能产出重叠（实测《让风告诉你》L35/L36），这里是兜底。
-        self._enforce_agent_monotonic(report.lines, notes)
-        snapshot.dump_lines("agent_monotonic", report.lines, source="pipeline.py",
-                            function="Pipeline._enforce_agent_monotonic", note="同歌手去重叠之后")
+        # 分层歌词（layered_lyrics）允许同时出现，不做这一步压缩。
+        if not self.opt.layered_lyrics:
+            self._enforce_agent_monotonic(report.lines, notes)
+            snapshot.dump_lines("agent_monotonic", report.lines, source="pipeline.py",
+                                function="Pipeline._enforce_agent_monotonic", note="同歌手去重叠之后")
 
         # 6. 输出 + 自检 ---------------------------------------------------
         if translation_text:
@@ -655,6 +661,7 @@ class LyricToTTML:
             song_part=self.opt.song_part,
             inline_translation_lang=translation_lang or self._ttml_lang(),
             agent_types=getattr(self, "_ref_agent_types", None),
+            layered=self.opt.layered_lyrics,
         )
         snapshot.dump_lines("final_write", report.lines, source="pipeline.py",
                             function="TTMLWriter.write", note="写入 TTML 前的最终值")
@@ -686,7 +693,8 @@ class LyricToTTML:
         # 只有 clock(HH:MM:SS.mmm) 是 W3C TTML1 合法写法；mmss/seconds 是 AMLL 宽松写法，
         # 用户显式选择时按宽松模式校验（降级为警告），避免自检把故意的格式判成错误
         check = check_ttml(ttml, strict=(self.opt.time_format == "clock"),
-                           allowed_overlaps=overlap_bundle["allowed_overlaps"])
+                           allowed_overlaps=overlap_bundle["allowed_overlaps"],
+                           layered=self.opt.layered_lyrics)
         self.log("      " + check.summary())
         if not check.ok:
             for e in check.errors[:5]:
