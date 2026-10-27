@@ -42,6 +42,7 @@ public sealed class ConversionApi : IDisposable
                                          string language, string singerMode, string alignEngine,
                                          bool separate,
                                          bool extendTails, bool allowSameAgentOverlap = false,
+                                         bool layeredLyrics = false,
                                          string outputDir = "", bool autoSave = true)
     {
         var body = new
@@ -56,6 +57,7 @@ public sealed class ConversionApi : IDisposable
             separate_vocals = separate,
             extend_tails = extendTails,
             allow_same_agent_overlap = allowSameAgentOverlap,
+            layered_lyrics = layeredLyrics,
             output_dir = outputDir,
             auto_save = autoSave,
         };
