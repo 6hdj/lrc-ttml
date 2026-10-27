@@ -37,8 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--audio", "-a", help="音频文件（mp3/wav/flac/m4a…）")
     p.add_argument("--lyrics", "-l", help="歌词文件（.lrc 或 .txt，UTF-8）")
     p.add_argument("--output", "-o", default=None, help="输出 TTML 路径（默认与歌词同名 .ttml）")
-    p.add_argument("--mode", "-m", choices=["amll", "apple"], default="amll",
-                   help="amll=AMLL 社区格式（默认，播放器直接用）；apple=Apple 官方提交格式")
+    p.add_argument("--mode", "-m", choices=["amll", "apple", "apple-internal"], default="amll",
+                   help="amll=AMLL 社区格式（默认，播放器直接用）；apple=Apple 官方提交格式；"
+                        "apple-internal=按真实 Apple 内部样例导出（无 xml:lang/tts、MM:SS、单 div、"
+                        "仅 itunes:key、匿名 agent、默认分层）")
     p.add_argument("--language", default="zh",
                    help="识别语言：auto=让 whisper 自己检测（中英混唱用它）/ zh / en / ja / ko。"
                         "⚠️ 界面默认是 auto；**命令行默认仍是 zh**，"
@@ -132,10 +134,12 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def cmd_check_only(path: str, strict: bool = False, layered: bool = False) -> int:
+def cmd_check_only(path: str, strict: bool = False, layered: bool = False,
+                   apple_internal: bool = False) -> int:
     from ttml_check import check_ttml
     text = open(path, encoding="utf-8").read()
-    res = check_ttml(text, strict=strict, layered=layered)
+    res = check_ttml(text, strict=strict, layered=layered,
+                     apple_internal=apple_internal)
     print(res.summary())
     for e in res.errors:
         print(f"  ✗ [{e.where}] {e.issue}")
@@ -181,7 +185,8 @@ def main(argv=None) -> int:
 
     if args.check_only:
         return cmd_check_only(args.check_only, strict=args.strict_time,
-                              layered=args.layered_lyrics)
+                              layered=args.layered_lyrics,
+                              apple_internal=(args.mode == "apple-internal"))
 
     if not args.audio or not args.lyrics:
         print("错误：需要同时提供 --audio 和 --lyrics（或使用 --check-only）\n")
