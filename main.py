@@ -109,6 +109,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-same-agent-overlap", dest="allow_same_agent_overlap",
                    action="store_true", default=False,
                    help="【实验/诊断】允许有证据的同歌手跨行叠唱并越过下一行 begin（上限 nxt.begin+1.5s）。⚠️ 产出 TTML 会触发『同一演唱者行时间重叠』校验错误，不要当成品发布；默认关闭")
+    p.add_argument("--layered-lyrics", dest="layered_lyrics", action="store_true", default=False,
+                   help="分层歌词：允许同 agent 的 <p> 时间重叠；<p> 只包主唱，x-bg 可伸到 p 外。"
+                        "对应 Apple/AMLL 的“主歌词/和声/附加句同时出现”，默认关闭")
     p.add_argument("--separate-vocals", action="store_true",
                    help="先用 Demucs 分离出人声轨，再用它做识别与声纹（更准，但要多花时间）")
     p.add_argument("--extend-tails", dest="extend_tails", action="store_true",
@@ -129,10 +132,10 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def cmd_check_only(path: str, strict: bool = False) -> int:
+def cmd_check_only(path: str, strict: bool = False, layered: bool = False) -> int:
     from ttml_check import check_ttml
     text = open(path, encoding="utf-8").read()
-    res = check_ttml(text, strict=strict)
+    res = check_ttml(text, strict=strict, layered=layered)
     print(res.summary())
     for e in res.errors:
         print(f"  ✗ [{e.where}] {e.issue}")
@@ -177,7 +180,8 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.check_only:
-        return cmd_check_only(args.check_only, strict=args.strict_time)
+        return cmd_check_only(args.check_only, strict=args.strict_time,
+                              layered=args.layered_lyrics)
 
     if not args.audio or not args.lyrics:
         print("错误：需要同时提供 --audio 和 --lyrics（或使用 --check-only）\n")
@@ -227,6 +231,7 @@ def main(argv=None) -> int:
         detect_muted=args.detect_muted,
         separate_vocals=args.separate_vocals,
         allow_same_agent_overlap=args.allow_same_agent_overlap,
+        layered_lyrics=args.layered_lyrics,
         extend_tails=args.extend_tails,
         demucs_model=args.demucs_model,
     )
