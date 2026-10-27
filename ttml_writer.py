@@ -110,6 +110,8 @@ def format_time(seconds: float, style: str = "clock") -> str:
     ``clock``   → ``HH:MM:SS.mmm``（W3C TTML1 §10.3.1 合法，AMLL / Apple 也接受；默认）
     ``mmss``    → ``MM:SS.mmm``（AMLL 宽松写法，**不是**合法 TTML1）
     ``seconds`` → ``SS.mmm``（AMLL 宽松写法，**不是**合法 TTML1）
+    ``auto``    → Apple/AMLL 常见混合写法：<1min 用 ``SS.mmm``，<1h 用 ``M:SS.mmm``，
+                  ≥1h 用 ``H:MM:SS.mmm``（分钟/小时不补前导零）
 
     先按毫秒四舍五入再拆分，避免 59.9999 出现 ``00:60.000`` 这类越界分钟/秒。
     """
@@ -127,6 +129,12 @@ def format_time(seconds: float, style: str = "clock") -> str:
     minutes, secs = divmod(rem, 60)
     if style == "seconds":
         return f"{total_seconds}.{ms:03d}"
+    if style == "auto":
+        if hours:
+            return f"{hours}:{minutes:02d}:{secs:02d}.{ms:03d}"
+        if minutes:
+            return f"{minutes}:{secs:02d}.{ms:03d}"
+        return f"{secs}.{ms:03d}"
     if style == "mmss":
         return f"{hours * 60 + minutes:02d}:{secs:02d}.{ms:03d}"
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
@@ -247,8 +255,8 @@ class TTMLWriter:
             raise ValueError("line_id 必须是 'itunes:key' / 'xml:id' / 'both'")
         if translation_style not in ("head", "inline", "both"):
             raise ValueError("translation_style 必须是 'head' / 'inline' / 'both'")
-        if time_format not in ("clock", "mmss", "seconds"):
-            raise ValueError("time_format 必须是 'clock' / 'mmss' / 'seconds'")
+        if time_format not in ("clock", "mmss", "seconds", "auto"):
+            raise ValueError("time_format 必须是 'clock' / 'mmss' / 'seconds' / 'auto'")
         self.mode = mode
         self.markers = markers
         self.line_id = line_id
@@ -400,8 +408,18 @@ class TTMLWriter:
                    if a not in narration
                    and (self.agent_types.get(a) or agent_type(a))
                    in ("person", "character", "organization")]
+
+        # **声明顺序 = 升序 v1, v2, v3, …**，不是"首次出现顺序"。
+        # 为什么：Apple Music 的对唱左右栏按声部顺序排 —— 若 v2 先开口就排到第一栏，
+        # 编辑台里「一声部」(v1) 的行会在 Apple Music 显示到第二栏（用户实测 bug：
+        # "选 1 声部显示成 2 声部，选 2 声部显示成 1 声部"）。
+        # v1000（合唱）/v2000 按数字自然排最后；非 vN 形式的未知 id 按字典序排在后面。
+        def _agent_order(a: str) -> Tuple[int, int, str]:
+            m = re.fullmatch(r"v(\d+)", a or "")
+            return (0, int(m.group(1)), "") if m else (1, 0, a or "")
+
         out = []
-        for agent in used:
+        for agent in sorted(used, key=_agent_order):
             atype = self.agent_types.get(agent) or agent_type(agent)
             name = ""
             if agent in persons:
