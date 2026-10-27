@@ -313,30 +313,27 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
 这说明真实 Apple/AMLL 文件对 `x-bg` 的时间包含关系比严格 TTML1 宽松：
 **主唱 p 的 end 可以只包住主唱，和声 span 可以伸到 p 外**。
 
-### 7.3 本项目当前的严格假设（需要改）
+### 7.3 本项目已支持的分层模式
 
-当前 `ttml_check` / `ttml_normalize` / `pipeline` 的规则：
+默认模式仍是严格 W3C；显式打开 **`--layered-lyrics`**（CLI / Web / WinUI）后：
 
-- 同一 agent 的 `<p>` 不允许重叠；
-- `span ⊆ p` 严格执行；
-- TIFA 后处理 `_enforce_agent_monotonic` 会主动压缩同 agent 重叠尾段。
+- 允许同一个 `<p>` 与前后 `<p>` 在时间上重叠（编辑台并行高亮支持多行同时亮）；
+- `<p>` 的 begin/end 只按**主唱单元**计算，`x-bg` 可以超出主唱 `<p>`；
+- `pipeline` 不再执行 `_enforce_agent_monotonic` 的同 agent 压缩；
+- `ttml_check(..., layered=True)` 允许同 agent 行重叠、`x-bg` 出界；
+- `ttml_reader` 会从“行重叠 / x-bg 出界”自动推断`layered`，`doc_to_ttml` 回写时保留；
+- `normalize_timeline(..., layered=True)` 跳过 R4 同 agent 去重叠，不清洗 `x-bg` 出界；
+- 编辑台保存链路（`edit_api`）会带 layered 标记，避免“打开 Apple 文件保存一次就把重叠修掉”。
 
-这会把上面 A/B/C 的分层歌词误判成“重叠错误”并裁掉。  
-要支持 Apple 的“同时出现”语义，需要新增一个 **layered/Apple 宽松 profile**：
-
-1. 允许同一个 `<p>` 与前后 `<p>` 在时间上重叠（editor 并行高亮已支持多行同时亮）；
-2. 允许 `x-bg` 超出主唱 `<p>` 的 end（主唱 p 的 end 只包主唱）；
-3. 不再把 `ttm:agent` 强行等价为“不同歌手/对唱”；
-4. 保留 `x-bg` 与主唱行、和声行的同一时刻叠加；
-5. 仍然禁止真正的零时长/文字缺失占位；
-6. 输出/校验使用独立 profile，不改变默认严格 W3C 模式。
+还剩的差异是**根属性/div/时间格式/agent 命名**这些“最小 Apple 导出”细节；它们属于另一个 profile，不是 layered 本身。默认 `amll`/严格 `apple` 行为不变。
 
 ## 8. 提交前检查清单
 
 - [ ] `<p>` 都有 `itunes:key`（L1 连续），都有 `ttm:agent`，head 定义了该 agent
 - [ ] 每行文本与 span 文本完全一致（空格也要保留）
 - [ ] `span ⊆ p ⊆ div ⊆ body@dur`，`begin < end`
-- [ ] 同一 agent 的 `<p>` 不重叠；`x-bg` 允许跨行重叠
+- [ ] 同一 agent 的 `<p>` 不重叠；`x-bg` 允许跨行重叠（若文件本身是分层歌词，用
+      `--layered-lyrics` / layered profile 校验，不要按严格 W3C 去压）
 - [ ] 和声用 `x-bg` 子 span，不单独成行
 - [ ] 元数据有 `musicName` / `artists` / `album`，至少一个平台 ID
 - [ ] 用目标格式的 profile 校验：Apple 内部样例允许 `MM:SS` + 无 `xml:lang`；
