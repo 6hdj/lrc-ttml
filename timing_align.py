@@ -794,6 +794,9 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
     from preprocess import detect_agent_switch, parse_lyrics
     from pipeline import _is_credit_line
 
+    apple_internal = mode == "apple-internal"
+    layered = bool(layered or apple_internal)
+
     t0 = time.time()
     notes: List[str] = []
     ok, why = available()
@@ -926,7 +929,8 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
         author_id=author_id, duration=duration,
         translation_lang=translation_lang or "zh-Hans",
         songwriters=list(songwriters or []))
-    check = check_ttml(ttml, strict=(time_format == "clock"), layered=layered)
+    check = check_ttml(ttml, strict=((time_format == "clock") and not apple_internal),
+                       layered=layered, apple_internal=apple_internal)
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         Path(output_path).write_text(ttml, encoding="utf-8", newline="\n")
