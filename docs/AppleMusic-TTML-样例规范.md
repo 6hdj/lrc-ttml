@@ -1,6 +1,6 @@
 # Apple Music 歌词 TTML 示例格式（对照分析）
 
-> 本文依据两份真实的 Apple Music / AMLL TTML DB 歌词文件整理，用于区分
+> 本文依据三份真实的 Apple Music / AMLL TTML DB 歌词文件整理，用于区分
 > **Apple Music 内部导出格式**、**AMLL TTML DB 格式** 与 **W3C TTML1 严格格式**。
 > 本项目自身的默认输出仍以 W3C TTML1 + AMLL 规范为准；本文是“样例事实”，
 > 不是 W3C 规范原文。
@@ -166,12 +166,40 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
    - `for` 必须对应 `<p>` 的 `itunes:key`；第二份示例有 4 种语言。
    - `<transliterations/>` 可以为空；`<songwriters>` 单独列。
 
+### 第三份样例：内联翻译 + 和声内翻译
+
+第三份（中文歌 + 英文和声）与第一份同属**最小 Apple 内部导出**：
+
+| 项 | 第三份 |
+|---|---|
+| 根 | 只有 ttml/ttm/itunes/amll；无 `xml:lang`、无 `itunes:timing`、无 `tts` |
+| 时间 | 全部 `MM:SS.mmm`（`00:24.200` / `03:16.770`） |
+| div | 1 个整首，`xmlns=""` |
+| p/span | 56 行 / 381 span；中文逐字，英文按词；`itunes:key` 连续 |
+| 和声 | 4 段 `x-bg`；其中 **`x-bg` 内嵌 `x-translation`** |
+| 翻译 | **行内** `<span ttm:role="x-translation" xml:lang="zh-CN">…</span>`，没有 `iTunesMetadata` |
+| agent | v1 person + v2 other，自闭合 |
+
+关键规则：
+
+1. **翻译有两种合法位置**：
+   - 头部：`<iTunesMetadata><translations><translation ...><text for="L1">`
+   - 行内：`<p>…<span ttm:role="x-translation" xml:lang="zh-CN">…</span></p>`
+   - 第三份还把 `x-translation` 放进 `x-bg` 内，用来翻译和声；
+2. **行内翻译的 `xml:lang` 用具体语言标签**（示例 `zh-CN`；我们的项目默认写 `zh-Hans`，两者都是合法 BCP-47，但提交时要统一）；
+3. **英文/混排的空格同样在 span 外**（如 `<span>Keep</span> <span>waving</span>`）；
+4. **样例里存在不合法的占位**：
+   - `L36` 是 `<p begin="00:00.000" end="00:00.000">Increasing…</p>`（零时长、文本没有 span）；
+   - 另一处 `x-bg begin="00:00.000" end="00:00.000"`；
+   - 这些是**数据错误/占位**，不要当作规则；我们的生成器会拒绝零时长 span，不应模仿。
+
 ### 结论：没有一份“唯一正确”的 Apple 文件
 
-- 第一份是**最小 Apple 内部导出**：无 xml:lang/tts、MM:SS、单 div、匿名 agent；
+- 第一、第三份是**最小 Apple 内部导出**：无 xml:lang/tts、MM:SS、单 div、匿名 agent；
 - 第二份是**完整 AMLL/Apple 导出**：严格根属性、混合自由时间、多 div/songPart、多语翻译；
-- 两者共同的不变量才是硬规则：`tt > head/metadata + body`、`p` 有 `itunes:key` 和
-  `ttm:agent`、`span ⊆ p ⊆ div ⊆ body@dur`、key 连续、文本/空格一致、翻译 `for` 对齐。
+- 翻译既可以在 head 的 `iTunesMetadata`，也可以在行内 `x-translation`（甚至 x-bg 内）；
+- 三份共同的不变量才是硬规则：`tt > head/metadata + body`、`p` 有 `itunes:key` 和
+  `ttm:agent`、`span ⊆ p ⊆ div ⊆ body@dur`、key 连续、文本/空格一致、翻译标签对齐。
 
 ## 6. 提交前检查清单
 
