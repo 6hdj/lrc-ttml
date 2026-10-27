@@ -70,6 +70,7 @@
                         <ComboBox x:Name="CbMode" Grid.Row="0" Grid.Column="1" HorizontalAlignment="Stretch">
                             <ComboBoxItem Content="AMLL（推荐）" Tag="amll" />
                             <ComboBoxItem Content="Apple Music" Tag="apple" />
+                            <ComboBoxItem Content="Apple Music 内部导出（MM:SS / 单 div / 分层）" Tag="apple-internal" />
                         </ComboBox>
 
                         <TextBlock Grid.Row="0" Grid.Column="2" Text="识别语言" VerticalAlignment="Center" />
