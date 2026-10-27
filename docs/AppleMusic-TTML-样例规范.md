@@ -235,7 +235,98 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
 - 七份共同的不变量才是硬规则：`tt > head/metadata + body`、`p` 有 `itunes:key` 和
   `ttm:agent`、`span ⊆ p ⊆ div ⊆ body@dur`、`begin < end`、key 连续、文本/空格一致、翻译标签对齐。
 
-## 7. 提交前检查清单
+## 7. 同时出现的分层歌词（不是对唱）
+
+这七份文件里，**5 份存在 `<p>` 时间重叠**；`ttm:agent` 不能简单当成“两位歌手”：
+
+| 文件 | 重叠对数 | 典型情况 |
+|---|---:|---|
+| 第一份（中文单曲） | 6 | 不同 agent 的主/副句、含 x-bg 的行跨到下一句 |
+| 第二份（英文完整导出） | 0 | 单 agent，无重叠 |
+| 第三份（内联翻译） | 6 | 不同 agent、同 agent v2 的两句主歌词重叠 |
+| 172369… | 3 | `Ha` 与下一句和声、同 agent v1 的 `Inside you`/`Yeah` |
+| 172534… | 0 | 单 agent，无重叠 |
+| 172543… | 1 | 同 agent v1 的相邻句重叠 0.057s（可能是取整/交界） |
+| 172543979… | 1 | v1 主句与 v2 主句重叠 2.26s |
+
+### 7.1 三种真实形态
+
+**A. 不同 agent 的两句同时唱（不一定是对唱）**
+
+```xml
+<p begin="00:51.740" end="01:00.460" ttm:agent="v2" itunes:key="L9">
+  却还是不肯翻开下一幅篇章
+</p>
+<p begin="00:58.480" end="01:05.090" ttm:agent="v1" itunes:key="L10">
+  不再害怕做不到的事情
+</p>
+```
+
+这里 v2/v1 重叠 1.98s；可能是第二声部/和声，不一定是双人对唱。  
+**不能用“agent 不同”直接推成对唱、也不能用声纹强行拆人。**
+
+**B. 上一句是主歌词 + 内嵌和声，下一句主歌词同时出现**
+
+```xml
+<p begin="01:05.480" end="01:13.550" ttm:agent="v1" itunes:key="L11">
+  ...主歌词...
+  <span ttm:role="x-bg" begin="01:10.590" end="01:13.550">
+    <span>(一</span><span>路</span><span>践</span><span>行)</span>
+  </span>
+</p>
+<p begin="01:12.390" end="01:18.430" ttm:agent="v2" itunes:key="L12">
+  那些美好或悲伤的记忆
+</p>
+```
+
+**C. 同 agent、两句独立主歌词同时出现**
+
+```xml
+<p begin="02:03.810" end="02:04.860" ttm:agent="v2" itunes:key="L39">
+  You are my shine ...
+</p>
+<p begin="02:04.120" end="02:07.660" ttm:agent="v2" itunes:key="L40">
+  你给的耳机 ...
+</p>
+```
+
+第三份里 v2 的两句主歌词重叠；172369 里 v1 的 `Inside you` 和 `Yeah` 也重叠。
+所以 **同一 agent 的 `<p>` 也可以重叠**，它不是“同一个人不能同时唱两行”的证据。
+
+### 7.2 样例里还有 x-bg 超出 p 的写法
+
+172369 的第一句：
+
+```xml
+<p begin="00:14.573" end="00:16.725" ttm:agent="v1" itunes:key="L1">
+  ...主歌词（到 00:16.725）...
+  <span ttm:role="x-bg" begin="00:17.060" end="00:17.977">(Hoh-hoh-hoh)</span>
+</p>
+```
+
+`x-bg` 的开始时间 **晚于 p 的 end**；172543 也有类似情况。  
+这说明真实 Apple/AMLL 文件对 `x-bg` 的时间包含关系比严格 TTML1 宽松：
+**主唱 p 的 end 可以只包住主唱，和声 span 可以伸到 p 外**。
+
+### 7.3 本项目当前的严格假设（需要改）
+
+当前 `ttml_check` / `ttml_normalize` / `pipeline` 的规则：
+
+- 同一 agent 的 `<p>` 不允许重叠；
+- `span ⊆ p` 严格执行；
+- TIFA 后处理 `_enforce_agent_monotonic` 会主动压缩同 agent 重叠尾段。
+
+这会把上面 A/B/C 的分层歌词误判成“重叠错误”并裁掉。  
+要支持 Apple 的“同时出现”语义，需要新增一个 **layered/Apple 宽松 profile**：
+
+1. 允许同一个 `<p>` 与前后 `<p>` 在时间上重叠（editor 并行高亮已支持多行同时亮）；
+2. 允许 `x-bg` 超出主唱 `<p>` 的 end（主唱 p 的 end 只包主唱）；
+3. 不再把 `ttm:agent` 强行等价为“不同歌手/对唱”；
+4. 保留 `x-bg` 与主唱行、和声行的同一时刻叠加；
+5. 仍然禁止真正的零时长/文字缺失占位；
+6. 输出/校验使用独立 profile，不改变默认严格 W3C 模式。
+
+## 8. 提交前检查清单
 
 - [ ] `<p>` 都有 `itunes:key`（L1 连续），都有 `ttm:agent`，head 定义了该 agent
 - [ ] 每行文本与 span 文本完全一致（空格也要保留）
