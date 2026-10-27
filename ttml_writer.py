@@ -222,6 +222,7 @@ class TTMLWriter:
         agent_types: Optional[Dict[str, str]] = None,
         label_sections: bool = True,
         layered: bool = False,
+        bg_outside_p: bool = False,
     ):
         """
         ``mode``         ``amll``=AMLL DB 格式；``apple``=按段落分 div 的提交格式
@@ -279,6 +280,9 @@ class TTMLWriter:
         # False = 不猜段落名（回写源文件本来没有 songPart 的情况，见 _split_sections）
         self.label_sections = label_sections
         self.layered = bool(layered)
+        # 默认 x-bg 仍包在 p 内（Apple/AMLL 显示和声层需要）；只有显式要求
+        # “和声伸到主唱 p 外”时才用 main-only 的 p 区间。
+        self.bg_outside_p = bool(bg_outside_p)
         self.inline_translation_lang = inline_translation_lang
         # agent id → type 的覆盖表（例如参考文件里 v2 是 type="other"）
         self.agent_types: Dict[str, str] = dict(agent_types or {})
@@ -325,7 +329,7 @@ class TTMLWriter:
         self._paragraphs = [getattr(l, "paragraph", 0) for l in lines]
 
         # 归一化每行的时间区间：保证 begin < end，且 span ⊆ p ⊆ div（TTML1 §10.4 / AMLL 规范 §6）
-        intervals = [self._line_interval(l, self.layered) for l in lines]
+        intervals = [self._line_interval(l, self.bg_outside_p) for l in lines]
         content_end = max(e for _, e in intervals)
         # 规范：单曲时专辑名应与歌曲名相同
         if not album and title:
@@ -446,12 +450,22 @@ class TTMLWriter:
 
         out = []
         for agent in sorted(used, key=_agent_order):
-            if self.apple_internal:
-                # Apple 内部样例的 agent 是匿名自闭合；非 v1 常写 type="other"
-                atype = self.agent_types.get(agent) or ("person" if agent == "v1" else "other")
-                out.append(f'<ttm:agent type={_attr(atype)} xml:id={_attr(agent)}/>')
-                continue
             atype = self.agent_types.get(agent) or agent_type(agent)
+            if self.apple_internal:
+                # Apple 内部导出也保留真实 person/name：强制双声部时 v2 若是
+                # type="other"，Apple Music 不会把它当第二位歌手（不出现左右分栏）。
+                # 只有 group/other 才匿名自闭合。
+                name = ""
+                if atype in ("person", "character", "organization") and agent in persons:
+                    idx = persons.index(agent)
+                    name = artists[idx] if idx < len(artists) else ""
+                if name:
+                    out.append(
+                        f'<ttm:agent type={_attr(atype)} xml:id={_attr(agent)}>'
+                        f'<ttm:name type="full">{_esc(name)}</ttm:name></ttm:agent>')
+                else:
+                    out.append(f'<ttm:agent type={_attr(atype)} xml:id={_attr(agent)}/>')
+                continue
             name = ""
             if agent in persons:
                 idx = persons.index(agent)
@@ -589,7 +603,7 @@ class TTMLWriter:
                   begin: Optional[float] = None, end: Optional[float] = None) -> str:
         """一行歌词 → 单行内联 XML（span 之间不能有换行，否则空白会丢）"""
         if begin is None or end is None:
-            begin, end = self._line_interval(line, self.layered)
+            begin, end = self._line_interval(line, self.bg_outside_p)
         key = f"L{key_index}"
         attrs = [("begin", self.t(begin)), ("end", self.t(end))]
         if self.markers in ("agent", "both") and line.agent:
@@ -628,7 +642,7 @@ class TTMLWriter:
             bounds: List[Tuple[float, float]] = []
             for i, u in enumerate(bg):
                 s0, s1 = self._unit_interval(u, begin, end)
-                if self.layered:
+                if self.bg_outside_p:
                     # 分层歌词：和声允许伸到主唱 <p> 之外
                     s0 = float(u.start) if u.start is not None else begin
                     s1 = float(u.end) if u.end is not None else end
