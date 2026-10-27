@@ -555,6 +555,33 @@ def _build_line(text: str, agent: str, role: str, paragraph: int,
                        anchored=True, role=role, paragraph=paragraph)
 
 
+def _spread_overlaps_to_other_agent(lines: List[AlignedLine],
+                                    log: Callable[[str], None]) -> int:
+    """同一 agent 的两行在时间上重叠时，把后一行改到另一个已用 agent。
+
+    真实音频里“同一歌手同时唱两句”偶尔可能，但 LRC 快速对白/对唱段更常见。
+    Apple Music 的左右分栏靠不同 agent；同 agent 重叠既可能是声纹分错，
+    也可能让 Apple Music 不显示分栏。至少有 2 个 agent 时做一次保守修正。
+    """
+    agents = sorted({getattr(l, "agent", "") or "v1" for l in lines})
+    if len(agents) < 2:
+        return 0
+    fixed = 0
+    for i, line in enumerate(lines):
+        if getattr(line, "asr_added", False):
+            continue
+        for prev in lines[:i]:
+            if (prev.agent == line.agent and prev.end > line.begin + 0.001):
+                other = next((a for a in agents if a != line.agent), line.agent)
+                if other != line.agent:
+                    log(f"      [重叠声部] L{i + 1}「{line.text[:8]}」由 "
+                        f"{line.agent} 改为 {other}（与上一行重叠）")
+                    line.agent = other
+                    fixed += 1
+                break
+    return fixed
+
+
 def _enforce_agent_monotonic(lines: List[AlignedLine], notes: List[str],
                              log: Callable[[str], None],
                              layered: bool = False) -> int:
@@ -1001,6 +1028,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
             notes.append(f"TIFA 后处理失败（{type(e).__name__}: {e}），保留原声部")
             log(f"      TIFA 后处理失败：{e}")
 
+    _spread_overlaps_to_other_agent(report.lines, log)
     _enforce_agent_monotonic(report.lines, notes, log, layered=layered)
 
     log("      写 TTML + 自检…")
@@ -1017,6 +1045,7 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                 notes.append(f"ASR 补充 {n} 行原歌词没有的句子")
         except Exception as e:                          # noqa: BLE001
             notes.append(f"ASR 补词失败（{type(e).__name__}: {e}）")
+        _spread_overlaps_to_other_agent(report.lines, log)
         _enforce_agent_monotonic(report.lines, notes, log, layered=layered)
     ttml = writer.write(
         report.lines, title=title, artists=list(artists or []), album=album,
