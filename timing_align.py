@@ -954,6 +954,15 @@ def align_lines(lyrics_text: str, audio_path: str, output_path: str,
                         time_format=time_format, song_part=song_part,
                         inline_translation_lang=translation_lang or "zh-Hans",
                         layered=layered)
+    if asr_words:
+        try:
+            from asr_supplement import supplement_report
+            n = supplement_report(report, asr_words, log=log)
+            if n:
+                notes.append(f"ASR 补充 {n} 行原歌词没有的句子")
+        except Exception as e:                          # noqa: BLE001
+            notes.append(f"ASR 补词失败（{type(e).__name__}: {e}）")
+        _enforce_agent_monotonic(report.lines, notes, log, layered=layered)
     ttml = writer.write(
         report.lines, title=title, artists=list(artists or []), album=album,
         language="zh-Hans", platform_ids=platform_ids or {}, author=author,
