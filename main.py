@@ -114,10 +114,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--layered-lyrics", dest="layered_lyrics", action="store_true", default=False,
                    help="分层歌词：允许同 agent 的 <p> 时间重叠；<p> 只包主唱，x-bg 可伸到 p 外。"
                         "对应 Apple/AMLL 的“主歌词/和声/附加句同时出现”，默认关闭")
-    p.add_argument("--asr-supplement", dest="asr_supplement", action="store_true", default=True,
-                   help="用 ASR 把音频里有、原歌词没写的句子补成新行（默认开）")
+    p.add_argument("--asr-supplement", dest="asr_supplement", action="store_true", default=False,
+                   help="用 ASR 把音频里有、原歌词没写的句子补成新行（默认关，开启前先接受 ASR 可能错字）")
     p.add_argument("--no-asr-supplement", dest="asr_supplement", action="store_false",
-                   help="关闭 ASR 补词，只输出原歌词已写的行")
+                   help="关闭 ASR 补词（默认）")
     p.add_argument("--separate-vocals", action="store_true",
                    help="先用 Demucs 分离出人声轨，再用它做识别与声纹（更准，但要多花时间）")
     p.add_argument("--extend-tails", dest="extend_tails", action="store_true",
