@@ -150,6 +150,12 @@ def supplement_report(report: AlignReport, asr_words: Sequence,
         # 大量重复字符（“若若朝朝着着…”）是 ASR 复读，不是新句子
         if len(n) >= 6 and len(set(n)) / len(n) < 0.7:
             continue
+        # 中英混杂的短串（“eyebr是”）通常是 ASR 噪声
+        if (_CJK.search(n) and re.search(r"[A-Za-z]{2,}", n)):
+            continue
+        avg_prob = sum(float(getattr(w, "prob", 0.0) or 0.0) for w in group) / len(group)
+        if avg_prob < 0.35:
+            continue
         # 不要用识别文本去“补”一段已有歌词的近似重复
         if any(n in k or k in n for k in known if len(n) >= 2 and len(k) >= 2):
             continue
@@ -158,7 +164,7 @@ def supplement_report(report: AlignReport, asr_words: Sequence,
             continue
         begin = min(u.start for u in units)
         end = max(u.end for u in units)
-        if end - begin < 0.45:
+        if end - begin < 0.60:
             continue
         # 与邻近已有行重复（ASR 在换气处重复上一句）
         near = [l for l in lines if abs(l.begin - begin) < 10.0 or abs(l.end - end) < 10.0]
@@ -171,6 +177,7 @@ def supplement_report(report: AlignReport, asr_words: Sequence,
                            begin=begin, end=end, matched=len(units),
                            total=len(units), anchored=False,
                            paragraph=getattr(anchor, "paragraph", 0) or 0)
+        line.asr_added = True
         lines.append(line)
         known.add(n)
         added += 1
