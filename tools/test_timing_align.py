@@ -159,6 +159,23 @@ def test_fuzzy_mapping():
        f"{times}")
 
 
+def test_asr_supplement():
+    from asr import AsrWord
+    from asr_supplement import supplement_report
+    from matcher import AlignedLine, AlignReport, Unit
+    line = AlignedLine(text="原句", agent="v1", begin=0.0, end=2.0,
+                       units=[Unit(core="原", start=0.0, end=1.0, matched=True),
+                              Unit(core="句", start=1.0, end=2.0, matched=True)])
+    rep = AlignReport(lines=[line], total_units=2, matched_units=2, anchored=True)
+    words = [AsrWord("原", 0.2, 0.8, 0.9), AsrWord("句", 1.2, 1.8, 0.9),
+             AsrWord("新", 5.0, 5.6, 0.9), AsrWord("句", 5.6, 6.2, 0.9)]
+    n = supplement_report(rep, words)
+    ok("ASR 补词新增 1 行", n == 1, f"n={n}")
+    ok("ASR 补词内容", any(l.text == "新句" for l in rep.lines),
+       [l.text for l in rep.lines])
+    ok("ASR 补词继承声部", rep.lines[-1].agent == "v1")
+
+
 def test_phone_split():
     from timing_align import _map_tifa_line
     times, matched = _map_tifa_line(
@@ -233,6 +250,7 @@ def main():
     test_vocal_end()
     test_phone_split()
     test_layered_lyrics()
+    test_asr_supplement()
     test_fuzzy_mapping()
     test_auto_harmony()
     test_bg_merge()
