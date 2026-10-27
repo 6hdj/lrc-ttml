@@ -635,10 +635,12 @@ class LyricToTTML:
         # 放在尾音补全**之后**：补全本身已按"同歌手不越过下一行"设了上限，
         # 但对齐原本就可能产出重叠（实测《让风告诉你》L35/L36），这里是兜底。
         # 分层歌词（layered_lyrics）允许同时出现，不做这一步压缩。
-        if not self.opt.layered_lyrics:
-            self._enforce_agent_monotonic(report.lines, notes)
-            snapshot.dump_lines("agent_monotonic", report.lines, source="pipeline.py",
-                                function="Pipeline._enforce_agent_monotonic", note="同歌手去重叠之后")
+        # 分层歌词（layered_lyrics）只允许“含和声的行”保留重叠；
+        # 纯主唱行的意外尾音重叠仍然要压掉，否则整首会变成每句都叠唱。
+        self._enforce_agent_monotonic(report.lines, notes,
+                                      layered=self.opt.layered_lyrics)
+        snapshot.dump_lines("agent_monotonic", report.lines, source="pipeline.py",
+                            function="Pipeline._enforce_agent_monotonic", note="同歌手去重叠之后")
 
         # 6. 输出 + 自检 ---------------------------------------------------
         if translation_text:
@@ -769,7 +771,7 @@ class LyricToTTML:
         )
 
     def _enforce_agent_monotonic(self, lines: Sequence[AlignedLine],
-                                 notes: List[str]) -> int:
+                                 notes: List[str], layered: bool = False) -> int:
         """保证**同一演唱者的相邻行不重叠**（TTML 铁律 4）。
 
         为什么要这一步：对齐是按行独立做的，某行的 ASR 字时间可能越过下一行的
@@ -792,6 +794,10 @@ class LyricToTTML:
             if prev is not None and prev[1] > line.begin and not edge_ok:
                 j, prev_end = prev
                 a, b = lines[j], line
+                if layered and (any(getattr(u, "is_bg", False) for u in (a.units or []))
+                                or any(getattr(u, "is_bg", False) for u in (b.units or []))):
+                    last_of[ag] = (i, line.end)
+                    continue
                 limit = float(b.begin)
                 span_old, span_new = a.end - a.begin, limit - a.begin
                 if span_old > 0 and span_new > 0:
