@@ -451,6 +451,10 @@
           <div class="switch" id="sameAgentSwitch" onclick="toggleSwitch(this)"></div>
           <span class="switch-label">允许同歌手拖音跨行重叠（实验：拖音更长；部分工具/商店可能不接受；需开启人声分离）</span>
         </div>
+        <div class="switch-row">
+          <div class="switch" id="layeredSwitch" onclick="toggleSwitch(this)"></div>
+          <span class="switch-label">分层歌词（允许主歌词/和声/附加句在时间上同时出现；不再压缩同一声部重叠）</span>
+        </div>
           <div class="form-group">
             <label>演唱者分段（CAM++ 声纹）</label>
             <select id="singers">
@@ -779,6 +783,7 @@ function startConversion() {
     detect_muted: false,
     separate_vocals: isOn('sepSwitch'),
     allow_same_agent_overlap: isOn('sameAgentSwitch'),
+    layered_lyrics: isOn('layeredSwitch'),
     chunked: isOn('chunkedSwitch'), refine: isOn('refineSwitch'), skip_credits: isOn('creditSwitch'),
     pause_space: parseFloat(val('pauseSpace')) || 0,
     title: val('songTitle'), artists: val('artists'), album: val('album'), author: val('author'),
