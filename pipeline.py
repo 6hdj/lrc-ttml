@@ -550,7 +550,7 @@ class LyricToTTML:
                                         alt_audio=alt, threshold=thr)
         else:
             matcher._fix_cross_line_overlaps(report.lines)
-            matcher._clamp_units_into_lines(report.lines)
+            matcher._clamp_units_into_lines(report.lines, layered=self.opt.layered_lyrics)
 
         # 4.5 丢掉开头那些"一个字都没对上"的行（多半是漏网的制作人员行）------
         if self.opt.skip_credits:
@@ -692,9 +692,12 @@ class LyricToTTML:
         self.log("[6/6] 格式与时间轴自检")
         # 只有 clock(HH:MM:SS.mmm) 是 W3C TTML1 合法写法；mmss/seconds 是 AMLL 宽松写法，
         # 用户显式选择时按宽松模式校验（降级为警告），避免自检把故意的格式判成错误
-        check = check_ttml(ttml, strict=(self.opt.time_format == "clock"),
+        check = check_ttml(ttml, strict=((self.opt.time_format == "clock")
+                                         and self.opt.mode != "apple-internal"),
                            allowed_overlaps=overlap_bundle["allowed_overlaps"],
-                           layered=self.opt.layered_lyrics)
+                           layered=bool(self.opt.layered_lyrics
+                                        or self.opt.mode == "apple-internal"),
+                           apple_internal=(self.opt.mode == "apple-internal"))
         self.log("      " + check.summary())
         if not check.ok:
             for e in check.errors[:5]:
@@ -1031,7 +1034,7 @@ class LyricToTTML:
                 msg += f"，其中 {alt_wins} 行改用原始混音更准"
             self.log(msg)
         matcher._fix_cross_line_overlaps(report.lines)
-        matcher._clamp_units_into_lines(report.lines)
+        matcher._clamp_units_into_lines(report.lines, layered=self.opt.layered_lyrics)
         report.matched_units = sum(l.matched for l in report.lines)
         report.total_units = sum(l.total for l in report.lines)
         # 精修可能改变了匹配率，重新生成提示
