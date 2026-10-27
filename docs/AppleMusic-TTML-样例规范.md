@@ -108,7 +108,7 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
 当前项目已实现 **`--mode apple-internal`**（CLI / Web / WinUI）：
 
 - 保留 `--layered-lyrics` 的行为（其实该 mode 默认就分层）；
-- 根只保留 4 个命名空间，不写 `xml:lang` / `itunes:timing` / `xmlns:tts`；
+- 根属性补齐 `xmlns:tts` / `xml:lang` / `itunes:timing="Word"`（Apple Music 应用需要它才会按字显示；AMLL DB 的最小样例没有它，但不适合直接导入 Apple Music 应用）；
 - `body dur`、`div/p/span` 时间统一 `MM:SS.mmm`；
 - 整首一个 `<div xmlns="" begin end>`；
 - `<p>` 只写 `begin/end/ttm:agent/itunes:key`（不写 `xml:id`）；
