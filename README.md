@@ -68,6 +68,7 @@ python main.py --help
 | 🎼 **LRC 锚点** | 有 LRC 行级时间戳时按乐句切片，把歌词本身当提示词 |
 | 🎼 **背景人声 / 对唱** | `（和声）` → `x-bg`；`[v1]/[v2]` → `ttm:agent` |
 | 🧩 **分层歌词** | `--layered-lyrics`：允许主歌词/和声/附加句同时出现，同 agent 的 `<p>` 可重叠；`p` 只包主唱，`x-bg` 可伸到 `p` 外 |
+| 🍎 **Apple 内部导出** | `--mode apple-internal`：按真实 Apple/AMLL 样例输出（无 xml:lang/tts、MM:SS、单 div、仅 itunes:key、匿名 agent、默认分层） |
 | 🌐 **翻译 / 音译** | Apple Music `<iTunesMetadata>` 或行内 `x-translation` |
 | ✅ **确定性自检** | AMLL 规范校验 + 真 AMLL 解析器验收（开发环境） |
 | 🪟 **WinUI 3 桌面** | 工作台 / 编辑台 / 任务 / 模型 / 运行库 / 设置 / 诊断，深浅色主题 |
