@@ -456,6 +456,10 @@
           <div class="switch" id="layeredSwitch" onclick="toggleSwitch(this)"></div>
           <span class="switch-label">分层歌词（允许主歌词/和声/附加句在时间上同时出现；不再压缩同一声部重叠）</span>
         </div>
+        <div class="switch-row">
+          <div class="switch active" id="asrSupplementSwitch" onclick="toggleSwitch(this)"></div>
+          <span class="switch-label">自动补充缺失歌词（ASR：音频里有、原歌词没写的句子也显示出来）</span>
+        </div>
           <div class="form-group">
             <label>演唱者分段（CAM++ 声纹）</label>
             <select id="singers">
@@ -785,6 +789,7 @@ function startConversion() {
     separate_vocals: isOn('sepSwitch'),
     allow_same_agent_overlap: isOn('sameAgentSwitch'),
     layered_lyrics: isOn('layeredSwitch'),
+    asr_supplement: isOn('asrSupplementSwitch'),
     chunked: isOn('chunkedSwitch'), refine: isOn('refineSwitch'), skip_credits: isOn('creditSwitch'),
     pause_space: parseFloat(val('pauseSpace')) || 0,
     title: val('songTitle'), artists: val('artists'), album: val('album'), author: val('author'),
