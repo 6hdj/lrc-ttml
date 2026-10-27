@@ -97,7 +97,7 @@ def _match_allowed_overlap(allowed, line_no: int, agent: str,
 
 
 def check_ttml(text: str, strict: bool = True, *, allowed_overlaps=None,
-               layered: bool = False) -> CheckResult:
+               layered: bool = False, apple_internal: bool = False) -> CheckResult:
     """校验一份 TTML。
 
     ``allowed_overlaps``（可选，默认 ``None`` —— 行为与以前**完全一致**）：
@@ -120,12 +120,16 @@ def check_ttml(text: str, strict: bool = True, *, allowed_overlaps=None,
         res.errors.append(CheckIssue("error", "XML", f"解析失败: {e}"))
         return res
 
+    layered = bool(layered or apple_internal)
+    if apple_internal:
+        strict = False
     if _local(root.tag) != "tt" or not root.tag.startswith("{" + NS_TTML + "}"):
         res.errors.append(CheckIssue("error", "根元素", f"根元素必须是 {NS_TTML} 命名空间下的 <tt>，实际 {root.tag}"))
 
     lang = root.get("{http://www.w3.org/XML/1998/namespace}lang")
     if lang is None:
-        res.errors.append(CheckIssue("error", "根元素", "缺少 xml:lang（BCP-47，如 zh-Hans / en / ja）"))
+        if not apple_internal:
+            res.errors.append(CheckIssue("error", "根元素", "缺少 xml:lang（BCP-47，如 zh-Hans / en / ja）"))
     elif not re.match(r"^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$", lang):
         res.errors.append(CheckIssue("error", "根元素", f"xml:lang={lang!r} 不是合法的 BCP-47 语言标签"))
 
