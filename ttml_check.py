@@ -96,7 +96,8 @@ def _match_allowed_overlap(allowed, line_no: int, agent: str,
     return False
 
 
-def check_ttml(text: str, strict: bool = True, *, allowed_overlaps=None) -> CheckResult:
+def check_ttml(text: str, strict: bool = True, *, allowed_overlaps=None,
+               layered: bool = False) -> CheckResult:
     """校验一份 TTML。
 
     ``allowed_overlaps``（可选，默认 ``None`` —— 行为与以前**完全一致**）：
@@ -345,7 +346,8 @@ def check_ttml(text: str, strict: bool = True, *, allowed_overlaps=None) -> Chec
                 s0, s1 = parse_time(span.get("begin")), parse_time(span.get("end"))
                 if s1 <= s0:
                     res.errors.append(CheckIssue("error", f"第{lines}行", f"span 时间非法 {span.get('begin')}~{span.get('end')} ({_text(span)[:8]})"))
-                if s0 < p_begin - 0.001 or s1 > p_end + 0.001:
+                if (not (layered and layer == "bg")
+                        and (s0 < p_begin - 0.001 or s1 > p_end + 0.001)):
                     res.errors.append(CheckIssue("error", f"第{lines}行",
                                                  f"span 超出行的 begin/end: {_text(span)[:8]} {span.get('begin')}~{span.get('end')} / {p.get('begin')}~{p.get('end')}"))
                 if layer in ("main", "bg"):
@@ -373,7 +375,7 @@ def check_ttml(text: str, strict: bool = True, *, allowed_overlaps=None) -> Chec
                 # 下一句开始之后，那是真实的混音重叠，不该判成"同行重叠"。
                 # 主唱层之间仍然必须严格不重叠。
                 main_end = max((s1 for _, s1, _ in layers["main"]), default=None)
-                if prev is not None and p_begin < prev - 0.001 and not has_role_layer:
+                if (not layered) and prev is not None and p_begin < prev - 0.001 and not has_role_layer:
                     if _match_allowed_overlap(allowed_overlaps, lines, agent, prev, p_begin):
                         res.warnings.append(CheckIssue(
                             "warning", f"第{lines}行",
