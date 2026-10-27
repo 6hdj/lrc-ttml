@@ -26,6 +26,8 @@ public sealed class EditWord
     public double Begin { get; set; }
     public double End { get; set; }
     public bool IsBg { get; set; }          // 背景和声（x-bg）
+    // 后端给的分层标记：main / bg / translation（删字要按**层内下标**操作，见 TextDeletion）
+    public string Layer { get; set; } = "";
     public bool Matched { get; set; } = true;  // false = 插值补出来的字
     public double? Confidence { get; set; } // 低可信（后端给的分数，可空）
 }
@@ -117,9 +119,22 @@ public static class HighlightEngine
             for (int wi = 0; wi < line.Words.Count; wi++)
             {
                 var w = line.Words[wi];
-                if (t >= w.Begin && t < w.End)
+                // 字唱完后高亮保持到同一层下一个字开始；最后一个字保持到本行 end。
+                // 这样字与字之间的空隙不会让上一个字提前灭掉。
+                double hold = w.End;
+                double nextBegin = double.PositiveInfinity;
+                for (int nj = 0; nj < line.Words.Count; nj++)
                 {
-                    hits.Add((li, wi, PhaseOf(w, t, median)));
+                    var n = line.Words[nj];
+                    if (n.IsBg == w.IsBg && n.Begin > w.Begin
+                        && n.Begin < nextBegin)
+                        nextBegin = n.Begin;
+                }
+                hold = Math.Max(hold, double.IsInfinity(nextBegin) ? line.End : nextBegin);
+                if (t >= w.Begin && t < hold)
+                {
+                    var phase = t < w.End ? PhaseOf(w, t, median) : WordPhase.Bite;
+                    hits.Add((li, wi, phase));
                     break;                                // 每行一个（并行靠多行实现）
                 }
             }
