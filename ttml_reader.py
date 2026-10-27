@@ -231,14 +231,50 @@ def _infer_write_options(root, body_el, doc: EditDoc, head_trans: Dict[str, str]
     else:
         opts["line_id"] = "itunes:key"
 
-    # time_format：看第一个时间串的形状
-    first = next((_get(p, "begin") for p in ps if _get(p, "begin")), "")
-    if first.count(":") == 2:
+    # time_format：看所有时间串，区分 clock / mmss / seconds / auto（混合）
+    all_times = []
+    for e in root.iter():
+        if _local(e.tag) not in ("p", "span", "div", "body"):
+            continue
+        for k in ("begin", "end", "dur"):
+            v = e.get(k)
+            if v:
+                all_times.append(v.strip())
+    has_clock = any(":" in t and t.count(":") == 2 for t in all_times)
+    has_mmss = any(":" in t and t.count(":") == 1 for t in all_times)
+    has_sec = any(":" not in t for t in all_times)
+    if has_clock:
         opts["time_format"] = "clock"
-    elif first.count(":") == 1:
+    elif has_mmss and has_sec:
+        opts["time_format"] = "auto"
+    elif has_mmss:
         opts["time_format"] = "mmss"
-    elif first:
+    elif has_sec:
         opts["time_format"] = "seconds"
+    else:
+        opts["time_format"] = "clock"
+
+    # layered：真正的分层特征 = 同 agent 的主唱层重叠，或 x-bg 超出 p。
+    # 不同 agent 的重叠只说明对唱/多声部，不能据此把文件当 layered
+    # （否则我们自己的 duet 产物往返会被改成另一种写法）。
+    layered = False
+    for i, line in enumerate(doc.lines):
+        for w in line.words:
+            if w.is_bg and (w.begin < line.begin - 1e-6 or w.end > line.end + 1e-6):
+                layered = True
+                break
+        if layered:
+            break
+        if i + 1 < len(doc.lines):
+            nxt = doc.lines[i + 1]
+            if line.agent == nxt.agent:
+                main_end = max((w.end for w in line.words if not w.is_bg), default=None)
+                next_main = min((w.begin for w in nxt.words if not w.is_bg), default=None)
+                if (main_end is not None and next_main is not None
+                        and main_end > next_main + 1e-6):
+                    layered = True
+                    break
+    opts["layered"] = bool(layered)
 
     # 翻译：head 里有没有；行内有没有 x-translation
     inline_tr = any("x-translation" in _role_of(e)
@@ -392,6 +428,7 @@ def make_writer(doc: EditDoc, **overrides):
         song_part="",
         inline_translation_lang=doc.lang,
         label_sections=True,
+        layered=False,
     )
     kwargs.update(getattr(doc, "write_options", {}) or {})
     kwargs.update(overrides)
