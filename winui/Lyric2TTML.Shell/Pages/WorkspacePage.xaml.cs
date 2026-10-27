@@ -193,7 +193,7 @@ public sealed partial class WorkspacePage : Page
             _taskId = await api.StartAsync(_audio, _lyrics, Tag(CbModel), Tag(CbMode),
                                            Tag(CbLang), Tag(CbSinger), Tag(CbAlignEngine),
                                            TgSeparate.IsOn, TgTails.IsOn, TgSameAgent.IsOn,
-                                           TgLayered.IsOn,
+                                           TgLayered.IsOn, TgAsrSupplement.IsOn,
                                            SettingsHost.Current.OutputDir,
                                            autoSave: false);   // 必须用户点「保存 TTML」才落盘
             Say(InfoBarSeverity.Informational, "任务已提交",
