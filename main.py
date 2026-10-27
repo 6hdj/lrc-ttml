@@ -84,9 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--agent-from", default="", metavar="REF.ttml",
                    help="从一份已有 TTML（如 AMLL TTML DB 里人工标注过的版本）复用每行的"
                         "演唱者归属。声纹对音色接近的对唱实测分不开，社区已有标注时用这个最可靠")
-    p.add_argument("--time-format", choices=["clock", "mmss", "seconds"], default="clock",
+    p.add_argument("--time-format", choices=["clock", "mmss", "seconds", "auto"], default="clock",
                    help="时间戳格式：clock=HH:MM:SS.mmm（默认，W3C TTML1 §10.3.1 合法）；"
-                        "mmss=MM:SS.mmm、seconds=SS.mmm（仅为 AMLL 宽松兼容，非合法 TTML1）")
+                        "mmss=MM:SS.mmm、seconds=SS.mmm（AMLL 宽松，非合法 TTML1）；"
+                        "auto=Apple/AMLL 混合写法（<1min 裸秒、<1h M:SS、≥1h H:MM:SS）")
     p.add_argument("--song-part", default="", help="在 <div> 上写 itunes:songPart（如 Verse / Chorus）")
     p.add_argument("--author-id", default="", help="TTML 制作者的 GitHub 数字 ID（amll:meta ttmlAuthorGithub）")
     p.add_argument("--singer-mode", choices=["off", "1", "2", "3"], default="off",
