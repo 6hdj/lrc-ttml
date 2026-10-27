@@ -72,6 +72,7 @@ _FIELDS = [
     ("singer_mode", _as_str, "off"),
     ("auto_agents", _as_bool, False),
     ("split_singers", _as_int, 0),
+    ("layered_lyrics", _as_bool, False),
     ("style", _as_str, "keep"),
     ("explicit_policy", _as_str, "keep"),
     ("detect_muted", _as_bool, False),
