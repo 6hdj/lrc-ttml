@@ -250,8 +250,16 @@ class TTMLWriter:
         （AMLL 规范 §7.3）。不要提供"和声单独成行"的开关：AMLL 解析器遇到
         整行只有 x-bg 的 ``<p>`` 时主歌词为空、整行丢弃，播放器里就是看不见。
         """
-        if mode not in ("amll", "apple"):
-            raise ValueError("mode 必须是 'amll' 或 'apple'")
+        if mode not in ("amll", "apple", "apple-internal"):
+            raise ValueError("mode 必须是 'amll' / 'apple' / 'apple-internal'")
+        self.apple_internal = mode == "apple-internal"
+        if self.apple_internal:
+            # 真实 Apple/AMLL 内部导出：MM:SS、单 div、仅 itunes:key、匿名 agent
+            time_format = "mmss"
+            line_id = "itunes:key"
+            markers = "agent"
+            label_sections = False
+            layered = True
         if markers == "auto":
             markers = "both" if mode == "apple" else "agent"
         if markers not in ("agent", "role", "both"):
@@ -323,21 +331,31 @@ class TTMLWriter:
         if not album and title:
             album = title
 
-        out: List[str] = ['<?xml version="1.0" encoding="UTF-8"?>']
-        tt_attrs = [
-            ("xmlns", NS_TTML),
-            ("xmlns:ttm", NS_TTM),
-            ("xmlns:tts", NS_TTS),
-            ("xmlns:itunes", NS_ITUNES),
-            ("xmlns:amll", NS_AMLL),
-            ("xml:lang", language or "zh-Hans"),
-            ("itunes:timing", "Word"),
-        ]
+        out: List[str] = []
+        if not self.apple_internal:
+            out.append('<?xml version="1.0" encoding="UTF-8"?>')
+        if self.apple_internal:
+            tt_attrs = [
+                ("xmlns", NS_TTML),
+                ("xmlns:ttm", NS_TTM),
+                ("xmlns:itunes", NS_ITUNES),
+                ("xmlns:amll", NS_AMLL),
+            ]
+        else:
+            tt_attrs = [
+                ("xmlns", NS_TTML),
+                ("xmlns:ttm", NS_TTM),
+                ("xmlns:tts", NS_TTS),
+                ("xmlns:itunes", NS_ITUNES),
+                ("xmlns:amll", NS_AMLL),
+                ("xml:lang", language or "zh-Hans"),
+                ("itunes:timing", "Word"),
+            ]
         out.append("<tt " + " ".join(f"{k}={_attr(v)}" for k, v in tt_attrs) + ">")
 
         # ---------------------------------------------------------- head
         out.append("  <head>")
-        out.append("    <metadata>")
+        out.append('    <metadata xmlns="">' if self.apple_internal else "    <metadata>")
         if include_agents:
             for xml in self._agent_elements(lines, artists):
                 out.append("      " + xml)
@@ -359,7 +377,9 @@ class TTMLWriter:
             div_begin = min(intervals[i - 1][0] for i, _ in group)
             div_end = max(intervals[i - 1][1] for i, _ in group)
             attrs = [("begin", self.t(div_begin)), ("end", self.t(div_end))]
-            if section:
+            if self.apple_internal:
+                attrs.insert(0, ("xmlns", ""))
+            if section and not self.apple_internal:
                 attrs.append(("itunes:songPart", section))
             out.append("  <div " + " ".join(f"{k}={_attr(v)}" for k, v in attrs) + ">")
             for key_index, line in group:
@@ -426,6 +446,11 @@ class TTMLWriter:
 
         out = []
         for agent in sorted(used, key=_agent_order):
+            if self.apple_internal:
+                # Apple 内部样例的 agent 是匿名自闭合；非 v1 常写 type="other"
+                atype = self.agent_types.get(agent) or ("person" if agent == "v1" else "other")
+                out.append(f'<ttm:agent type={_attr(atype)} xml:id={_attr(agent)}/>')
+                continue
             atype = self.agent_types.get(agent) or agent_type(agent)
             name = ""
             if agent in persons:
@@ -485,6 +510,8 @@ class TTMLWriter:
         # **整首歌的唱段分段会被合并成一个 <div>** —— 用户没碰过的东西被改了。
         # 正确做法：仍然按段落切，只是把**段名**统一用 song_part。
         groups: List[List[Tuple[int, AlignedLine]]] = []
+        if self.apple_internal:
+            return [("", items)]
         use_para = len(set(self._paragraphs)) > 1
         current: List[Tuple[int, AlignedLine]] = []
         cur_para = None
