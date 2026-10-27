@@ -103,12 +103,21 @@ Apple Music / AMLL DB，按样例；如果目标是严格 W3C/通用 TTML 工具
 | agent 名称 | 不写 `ttm:name` | 写 `ttm:name` | 样例匿名；名称不是必需 |
 | 元数据 | 双语重复值、作者 GitHub 登录 | 单值为主 | 信息量不同，不是结构错误 |
 
-## 4. 如果要做“Apple 内部导出”模式，需要这样生成
+## 4. 已实现的 Apple 内部导出模式
 
-> 当前项目已实现其中与“同时出现”相关的 **`--layered-lyrics`**（CLI / Web / WinUI）：
-> 允许同 agent 的 `<p>` 重叠、`<p>` 只按主唱层算 begin/end、`x-bg` 可以伸到 `<p>` 外；
-> 严格模式默认不变。完整的最小 Apple 导出（无 xml:lang/tts、整首单 div、匿名 agent）
-> 仍属于另一个输出 profile，尚未改变默认 writer 的根属性/div 策略。
+当前项目已实现 **`--mode apple-internal`**（CLI / Web / WinUI）：
+
+- 保留 `--layered-lyrics` 的行为（其实该 mode 默认就分层）；
+- 根只保留 4 个命名空间，不写 `xml:lang` / `itunes:timing` / `xmlns:tts`；
+- `body dur`、`div/p/span` 时间统一 `MM:SS.mmm`；
+- 整首一个 `<div xmlns="" begin end>`；
+- `<p>` 只写 `begin/end/ttm:agent/itunes:key`（不写 `xml:id`）；
+- agent 匿名自闭合，v2 默认 `type="other"`；
+- 元数据保留 `musicName/artists/album` 与平台 ID/ISRC/作者 GitHub。
+
+> 默认 `amll` / `apple` 行为不变；`apple-internal` 是独立 profile。
+> 仍然没有做到逐字节复刻的：英文按音节 span、纯文本 `<p>`、`x-bg` 内翻译、
+> 多值双语 metadata；这些属于后续增强。
 
 1. 根只保留 4 个命名空间，不写 `xml:lang` / `itunes:timing` / `xmlns:tts`；
 2. `body dur`、`div/p/span` 时间统一 `MM:SS.mmm`；
