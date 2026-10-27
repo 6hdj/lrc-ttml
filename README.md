@@ -197,6 +197,7 @@ WinUI 版通过本机 HTTP 调用 Python 后端；**算法与 Web 版是同一�
 | [`docs/实验-TIFA对齐引擎.md`](docs/实验-TIFA对齐引擎.md) | TIFA 接入、逐行语言、和声/间奏算法与评测 |
 | [`docs/调研-Timing对齐引擎.md`](docs/调研-Timing对齐引擎.md) | Timing 对齐引擎调研 |
 | [`docs/TTML1-AMLL歌词格式规范.md`](docs/TTML1-AMLL歌词格式规范.md) | TTML1 / AMLL 逐条规范 |
+| [`docs/AppleMusic-TTML-样例规范.md`](docs/AppleMusic-TTML-样例规范.md) | Apple Music 真实样例结构、与严格 TTML1 的差异、和声/元数据规则 |
 | [`docs/WinUI3-版本说明.md`](docs/WinUI3-版本说明.md) | WinUI 3 架构、构建、便携包 |
 | [`docs/项目总结.md`](docs/项目总结.md) / [`docs/模块说明.md`](docs/模块说明.md) | 项目/模块说明 |
 | [`docs/声纹评估协议.md`](docs/声纹评估协议.md) | CAM++ 分声部评估协议 |
