@@ -883,7 +883,7 @@ def _run_task(task: Task):
             separate_vocals=bool(p.get("separate_vocals", False)),
             allow_same_agent_overlap=bool(p.get("allow_same_agent_overlap", False)),
             layered_lyrics=bool(p.get("layered_lyrics", False)),
-            asr_supplement=bool(p.get("asr_supplement", True)),
+            asr_supplement=bool(p.get("asr_supplement", False)),
             demucs_model=p.get("demucs_model", "htdemucs"),
         )
 
