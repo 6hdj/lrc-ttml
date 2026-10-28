@@ -63,6 +63,14 @@ def _split_units(words: Sequence) -> List[Unit]:
                               end=float(w.start) + step * (k + 1),
                               prob=float(getattr(w, "prob", 1.0) or 0.0),
                               matched=True))
+    # ASR 词时间可能互相重叠；按文本顺序整理成不重叠的逐字区间
+    prev = None
+    for u in units:
+        if prev is not None and u.start < prev.end:
+            u.start = prev.end
+        if u.end <= u.start:
+            u.end = u.start + 0.05
+        prev = u
     return units
 
 
