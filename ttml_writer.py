@@ -340,18 +340,13 @@ class TTMLWriter:
         if not self.apple_internal:
             out.append('<?xml version="1.0" encoding="UTF-8"?>')
         if self.apple_internal:
-            # 真实 Apple Music 应用比 AMLL DB 的“最小样例”更严格：
-            # 没有 itunes:timing="Word" 时只按行显示（用户实测“没有逐字”），
-            # 没有 xml:lang/tts 时甚至可能整份不加载。这里保留 MM:SS/单 div/
-            # 匿名式 p，但补齐 Apple Music 需要的根属性。
+            # 与用户已验证能注入 Apple Music 的旧产物逐项一致：
+            # 只有 4 个命名空间，无 xml:lang / tts / itunes:timing，无 XML 声明。
             tt_attrs = [
                 ("xmlns", NS_TTML),
                 ("xmlns:ttm", NS_TTM),
-                ("xmlns:tts", NS_TTS),
                 ("xmlns:itunes", NS_ITUNES),
                 ("xmlns:amll", NS_AMLL),
-                ("xml:lang", language or "zh-Hans"),
-                ("itunes:timing", "Word"),
             ]
         else:
             tt_attrs = [
@@ -458,22 +453,12 @@ class TTMLWriter:
 
         out = []
         for agent in sorted(used, key=_agent_order):
-            atype = self.agent_types.get(agent) or agent_type(agent)
             if self.apple_internal:
-                # Apple 内部导出也保留真实 person/name：强制双声部时 v2 若是
-                # type="other"，Apple Music 不会把它当第二位歌手（不出现左右分栏）。
-                # 只有 group/other 才匿名自闭合。
-                name = ""
-                if atype in ("person", "character", "organization") and agent in persons:
-                    idx = persons.index(agent)
-                    name = artists[idx] if idx < len(artists) else ""
-                if name:
-                    out.append(
-                        f'<ttm:agent type={_attr(atype)} xml:id={_attr(agent)}>'
-                        f'<ttm:name type="full">{_esc(name)}</ttm:name></ttm:agent>')
-                else:
-                    out.append(f'<ttm:agent type={_attr(atype)} xml:id={_attr(agent)}/>')
+                # 与旧版可注入产物一致：匿名自闭合，v1=person，其余=other
+                atype = self.agent_types.get(agent) or ("person" if agent == "v1" else "other")
+                out.append(f'<ttm:agent type={_attr(atype)} xml:id={_attr(agent)}/>')
                 continue
+            atype = self.agent_types.get(agent) or agent_type(agent)
             name = ""
             if agent in persons:
                 idx = persons.index(agent)
