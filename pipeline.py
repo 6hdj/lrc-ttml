@@ -356,6 +356,8 @@ class LyricToTTML:
             try:
                 from desktop.fileguess import split_title_artists
                 guess_title, guess_artists = split_title_artists(audio_path)
+                # 文件名末尾的 _L / -L 是语言标记，不属于歌名
+                guess_title = re.sub(r"[\s_\-]+[Ll]$", "", guess_title or "")
                 song_title = song_title or guess_title
                 artists = artists or guess_artists
             except Exception:
