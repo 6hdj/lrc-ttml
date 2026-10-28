@@ -336,7 +336,7 @@ class TTMLWriter:
             album = title
 
         out: List[str] = []
-        if not self.apple_internal:
+        if not self.apple_internal and self.mode != "apple":
             out.append('<?xml version="1.0" encoding="UTF-8"?>')
         if self.apple_internal:
             # 真实 Apple Music 应用比 AMLL DB 的“最小样例”更严格：
@@ -392,6 +392,9 @@ class TTMLWriter:
                 attrs.insert(0, ("xmlns", ""))
             if section and not self.apple_internal:
                 attrs.append(("itunes:songPart", section))
+            elif self.mode == "apple":
+                # Apple 官方样例每个 div 都带 songPart；缺了某些 Android 版本会整份跳过
+                attrs.append(("itunes:songPart", "Verse"))
             out.append("  <div " + " ".join(f"{k}={_attr(v)}" for k, v in attrs) + ">")
             for key_index, line in group:
                 line_begin, line_end = intervals[key_index - 1]
