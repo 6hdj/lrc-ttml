@@ -260,7 +260,8 @@ class TTMLWriter:
             line_id = "itunes:key"
             markers = "agent"
             label_sections = False
-            layered = True
+            # 是否允许 p 重叠由 UI/CLI 的 layered 决定；Apple Music 对重叠行
+            # 的兼容性差，默认不强制分层。
         if markers == "auto":
             markers = "both" if mode == "apple" else "agent"
         if markers not in ("agent", "role", "both"):
