@@ -352,7 +352,7 @@ class LyricToTTML:
         artists = list(artists or [])
         # Apple Music 内部导出：metadata 缺失会直接导致 Apple Music 不显示歌词。
         # WinUI 没有歌名/艺人输入框，这里从文件名兜底（用户后续可在编辑台改）。
-        if self.opt.mode == "apple-internal" and (not song_title or not artists):
+        if self.opt.mode in ("apple", "apple-internal") and (not song_title or not artists):
             try:
                 from desktop.fileguess import split_title_artists
                 guess_title, guess_artists = split_title_artists(audio_path)
@@ -361,7 +361,7 @@ class LyricToTTML:
             except Exception:
                 if not song_title:
                     song_title = os.path.splitext(os.path.basename(audio_path))[0]
-        if self.opt.mode == "apple-internal" and not album:
+        if self.opt.mode in ("apple", "apple-internal") and not album:
             album = song_title
 
         if not audio_path or not os.path.exists(audio_path):
