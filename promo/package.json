@@ -19,5 +19,9 @@
   "devDependencies": {
     "@types/react": "19.0.0",
     "typescript": "5.8.3"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.9",
+    "zod": "^4.6.6"
   }
 }
